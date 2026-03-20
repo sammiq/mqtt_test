@@ -45,6 +45,7 @@ pub async fn run_selected(
             SuiteName::Disconnect => ("DISCONNECT",             disconnect::TEST_COUNT),
         };
         let pb = make_progress_bar(mp, name, count);
+        pb.println(format!("\n{name}\n{}", "-".repeat(name.len())));
 
         match suite {
             SuiteName::Connect    => report.add(connect::run(addr, recv_timeout, &pb).await),
@@ -56,7 +57,7 @@ pub async fn run_selected(
             SuiteName::Disconnect => report.add(disconnect::run(addr, recv_timeout, &pb).await),
         }
 
-        pb.finish();
+        pb.finish_and_clear();
     }
     report
 }

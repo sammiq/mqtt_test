@@ -8,6 +8,7 @@ use std::io::IsTerminal;
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
+use report::ReportOrder;
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use tracing_subscriber::filter::LevelFilter;
 
@@ -62,6 +63,10 @@ struct Args {
     /// Run only specific suites (comma-separated: connect,ping,publish,subscribe)
     #[arg(short, long, value_delimiter = ',')]
     suite: Option<Vec<SuiteName>>,
+
+    /// Report ordering: "suite" (default) groups by test suite, "requirement" sorts by spec section
+    #[arg(long, default_value = "suite")]
+    order: ReportOrder,
 }
 
 #[tokio::main]
@@ -119,8 +124,7 @@ async fn main() {
     }
 
     let report = tests::run_selected(&args.broker, recv_timeout, suites_to_run, &mp).await;
-    mp.clear().ok();
 
     println!();
-    report.print(args.verbose);
+    report.print(args.verbose, args.order);
 }

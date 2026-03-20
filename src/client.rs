@@ -78,6 +78,11 @@ impl RawClient {
     }
 
     #[allow(dead_code)]
+    pub async fn send_disconnect_with_properties(&mut self, reason_code: u8, properties: &Properties) -> Result<()> {
+        self.send_raw(&codec::encode_disconnect_with_properties(reason_code, properties)).await
+    }
+
+    #[allow(dead_code)]
     pub async fn send_auth(&mut self, reason_code: u8, properties: &Properties) -> Result<()> {
         self.send_raw(&codec::encode_auth(reason_code, properties)).await
     }

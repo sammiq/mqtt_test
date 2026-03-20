@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 15;
+pub const TEST_COUNT: usize = 16;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -31,6 +31,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             response_topic_preserved(addr, recv_timeout, pb).await,
             correlation_data_preserved(addr, recv_timeout, pb).await,
             user_properties_preserved(addr, recv_timeout, pb).await,
+            message_ordering(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -668,4 +669,92 @@ async fn user_properties_preserved(addr: &str, recv_timeout: Duration, pb: &Prog
     property_forwarding_test(addr, recv_timeout, USER_PROPS, pb, "mqtt/test/pub/up", props,
         |p| p.user_properties.contains(&("key".to_string(), "value".to_string())),
         "expected user_properties to contain (\"key\", \"value\")").await
+}
+
+const MSG_ORDERING: TestContext = TestContext {
+    id: "MQTT-4.6.0-1",
+    description: "Message ordering MUST be maintained for same-topic QoS 1 messages",
+    compliance: Compliance::Must,
+};
+
+/// When a server delivers messages to a subscriber, it MUST maintain the order
+/// of messages for each topic [MQTT-4.6.0-6]. We publish 5 QoS 1 messages in
+/// sequence and verify they arrive in order.
+async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = MSG_ORDERING;
+    run_test(ctx, pb, || async move {
+        let topic = "mqtt/test/pub/ordering";
+
+        // Subscriber at QoS 1
+        let sub_conn = ConnectParams::new("mqtt-test-order-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                topic.to_string(),
+                SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Publisher sends 5 messages in order
+        let pub_conn = ConnectParams::new("mqtt-test-order-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        for i in 0u16..5 {
+            let pub_params = PublishParams {
+                topic:      topic.to_string(),
+                payload:    format!("msg-{i}").into_bytes(),
+                qos:        QoS::AtLeastOnce,
+                retain:     false,
+                packet_id:  Some(i + 1),
+                properties: Properties::default(),
+            };
+            pub_client.send_publish(&pub_params).await?;
+        }
+
+        // Drain PUBACKs
+        for _ in 0..10 {
+            match pub_client.recv(recv_timeout).await {
+                Ok(Packet::PubAck(_)) => {}
+                _ => break,
+            }
+        }
+        let _ = pub_client.send_disconnect(0x00).await;
+
+        // Receive and verify order
+        let mut received = Vec::new();
+        for _ in 0..5 {
+            match sub_client.recv(recv_timeout).await {
+                Ok(Packet::Publish(p)) if p.topic == topic => {
+                    if let Some(pid) = p.packet_id {
+                        sub_client.send_puback(pid, 0x00).await?;
+                    }
+                    received.push(String::from_utf8_lossy(&p.payload).to_string());
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        let _ = sub_client.send_disconnect(0x00).await;
+
+        let expected: Vec<String> = (0..5).map(|i| format!("msg-{i}")).collect();
+        if received == expected {
+            Ok(TestResult::pass(&ctx))
+        } else if received.len() < 5 {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("Only received {}/5 messages: {received:?}", received.len()),
+            ))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("Messages out of order: expected {expected:?}, got {received:?}"),
+            ))
+        }
+    })
+    .await
 }

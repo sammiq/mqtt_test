@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 26;
+pub const TEST_COUNT: usize = 27;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -42,6 +42,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             server_receive_maximum(addr, recv_timeout, pb).await,
             enhanced_auth_method(addr, recv_timeout, pb).await,
             reason_string_in_connack(addr, recv_timeout, pb).await,
+            session_present_zero_on_reject(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -529,6 +530,66 @@ async fn invalid_protocol_version(addr: &str, recv_timeout: Duration, pb: &Progr
             }
             Err(_) => Ok(TestResult::pass(&ctx)),
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK or close", &other)),
+        }
+    })
+    .await
+}
+
+const SESSION_PRESENT_ZERO_ON_REJECT: TestContext = TestContext {
+    id: "MQTT-3.2.2-3",
+    description: "Session Present MUST be 0 when CONNACK reason code is non-zero",
+    compliance: Compliance::Must,
+};
+
+/// If the server rejects the CONNECT, session_present MUST be 0 in the
+/// CONNACK regardless of any prior session state [MQTT-3.2.2-3].
+async fn session_present_zero_on_reject(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SESSION_PRESENT_ZERO_ON_REJECT;
+    run_test(ctx, pb, || async move {
+        let mut client = RawClient::connect_tcp(addr).await?;
+
+        // Send a CONNECT with invalid protocol version to provoke a rejection.
+        #[rustfmt::skip]
+        let bad_connect: &[u8] = &[
+            0x10,                               // CONNECT fixed header
+            0x0C,                               // remaining length = 12
+            0x00, 0x04, b'M', b'Q', b'T', b'T', // protocol name "MQTT"
+            0x04,                               // protocol version 4 (3.1.1)
+            0x02,                               // connect flags: clean start
+            0x00, 0x3C,                         // keep alive = 60
+            0x00, 0x00,                         // client ID length = 0
+        ];
+        client.send_raw(bad_connect).await?;
+
+        match client.recv(recv_timeout).await {
+            Ok(Packet::ConnAck(connack)) if connack.reason_code != 0x00 => {
+                if connack.session_present {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!(
+                            "CONNACK with reason {:#04x} has session_present=1 (MUST be 0)",
+                            connack.reason_code
+                        ),
+                    ))
+                } else {
+                    Ok(TestResult::pass(&ctx))
+                }
+            }
+            Ok(Packet::ConnAck(_)) => {
+                // Broker accepted the v4 CONNECT — can't test this requirement.
+                Ok(TestResult::skip(
+                    &ctx,
+                    "Broker accepted MQTT v4 CONNECT; cannot provoke rejection",
+                ))
+            }
+            Err(_) => {
+                // Broker closed connection — acceptable but can't verify session_present.
+                Ok(TestResult::skip(
+                    &ctx,
+                    "Broker closed connection without CONNACK; cannot verify session_present",
+                ))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
         }
     })
     .await

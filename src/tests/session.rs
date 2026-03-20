@@ -166,8 +166,8 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         let _ = sub_client2.send_disconnect(0x00).await;
 
         // Clean up session.
-        let cleanup = ConnectParams::new(sub_id);
-        if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
+        let cleanup_qos1 = ConnectParams::new(sub_id);
+        if let Ok((mut c, _)) = client::connect(addr, &cleanup_qos1, recv_timeout).await {
             let _ = c.send_disconnect(0x00).await;
         }
 
@@ -282,8 +282,8 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         let _ = sub_client2.send_disconnect(0x00).await;
 
         // Clean up session.
-        let cleanup = ConnectParams::new(sub_id);
-        if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
+        let cleanup_qos2 = ConnectParams::new(sub_id);
+        if let Ok((mut c, _)) = client::connect(addr, &cleanup_qos2, recv_timeout).await {
             let _ = c.send_disconnect(0x00).await;
         }
 
@@ -369,8 +369,8 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
         let _ = c2.send_disconnect(0x00).await;
 
         // Clean up session.
-        let cleanup = ConnectParams::new(sub_id);
-        if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
+        let cleanup_sub = ConnectParams::new(sub_id);
+        if let Ok((mut c, _)) = client::connect(addr, &cleanup_sub, recv_timeout).await {
             let _ = c.send_disconnect(0x00).await;
         }
 
@@ -378,3 +378,4 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
     })
     .await
 }
+

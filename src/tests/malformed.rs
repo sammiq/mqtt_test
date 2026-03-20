@@ -14,7 +14,7 @@ use crate::codec::{ConnectParams, Packet};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 7;
+pub const TEST_COUNT: usize = 11;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -27,6 +27,10 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             subscribe_no_filters(addr, recv_timeout, pb).await,
             subscribe_invalid_qos(addr, recv_timeout, pb).await,
             subscribe_invalid_wildcard(addr, recv_timeout, pb).await,
+            unsubscribe_no_filters(addr, recv_timeout, pb).await,
+            unsubscribe_reserved_bits(addr, recv_timeout, pb).await,
+            topic_alias_exceeds_maximum(addr, recv_timeout, pb).await,
+            subscribe_invalid_plus_wildcard(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -263,6 +267,150 @@ async fn subscribe_invalid_wildcard(addr: &str, recv_timeout: Duration, pb: &Pro
                     Ok(TestResult::fail(
                         &ctx,
                         format!("SUBACK accepted invalid wildcard filter: reason codes {:?}", ack.reason_codes),
+                    ))
+                }
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect or error SUBACK", &other)),
+        }
+    })
+    .await
+}
+
+const UNSUB_NO_FILTERS: TestContext = TestContext {
+    id: "MQTT-3.10.3-1",
+    description: "UNSUBSCRIBE with no topic filters MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// An UNSUBSCRIBE packet MUST contain at least one topic filter [MQTT-3.10.3-2].
+async fn unsubscribe_no_filters(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UNSUB_NO_FILTERS;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-unsub-empty");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // UNSUBSCRIBE with packet ID but zero topic filters.
+        #[rustfmt::skip]
+        let bad_unsubscribe: &[u8] = &[
+            0xA2,               // UNSUBSCRIBE fixed header (0xA2 = type 10, reserved bits 0010)
+            0x03,               // remaining length = 3
+            0x00, 0x01,         // packet ID = 1
+            0x00,               // properties length = 0
+            // no topic filters follow — this is a protocol error
+        ];
+        client.send_raw(bad_unsubscribe).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const UNSUB_RESERVED_BITS: TestContext = TestContext {
+    id: "MQTT-3.10.1-1",
+    description: "UNSUBSCRIBE fixed header reserved bits MUST be 0010",
+    compliance: Compliance::Must,
+};
+
+/// The UNSUBSCRIBE fixed header byte must have bits 3-0 = 0010.
+/// Sending wrong reserved bits is a malformed packet [MQTT-3.10.1-1].
+async fn unsubscribe_reserved_bits(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UNSUB_RESERVED_BITS;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-unsub-reserved");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // UNSUBSCRIBE with reserved bits = 0000 instead of 0010.
+        // Correct first byte is 0xA2 (1010_0010); we send 0xA0 (1010_0000).
+        #[rustfmt::skip]
+        let bad_unsubscribe: &[u8] = &[
+            0xA0,                                               // UNSUBSCRIBE with wrong reserved bits
+            0x0C,                                               // remaining length = 12
+            0x00, 0x01,                                         // packet ID = 1
+            0x00,                                               // properties length = 0
+            0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/"
+        ];
+        client.send_raw(bad_unsubscribe).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
+    id: "MQTT-3.3.2-4",
+    description: "Topic Alias exceeding server's maximum MUST be a protocol error",
+    compliance: Compliance::Must,
+};
+
+/// A Topic Alias value that exceeds the server's Topic Alias Maximum is a
+/// protocol error — the server MUST disconnect [MQTT-3.3.2-9].
+async fn topic_alias_exceeds_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = TOPIC_ALIAS_EXCEEDS_MAX;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-alias-exceed");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        let max_alias = connack.properties.topic_alias_maximum.unwrap_or(0);
+        if max_alias == 0 {
+            // Topic aliases not supported — send alias=1 which exceeds max of 0.
+        }
+
+        // Send a PUBLISH with Topic Alias = max + 1 (always exceeds the maximum).
+        let bad_alias = max_alias.saturating_add(1);
+        #[rustfmt::skip]
+        let bad_publish: &[u8] = &[
+            0x30,                                       // PUBLISH | QoS=0
+            0x0C,                                       // remaining length = 12
+            0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/"
+            0x03,                                       // properties length = 3
+            0x23,                                       // Topic Alias property ID
+            (bad_alias >> 8) as u8, (bad_alias & 0xFF) as u8,
+        ];
+        client.send_raw(bad_publish).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const INVALID_PLUS_WILDCARD: TestContext = TestContext {
+    id: "MQTT-4.7.1-4",
+    description: "'+' wildcard MUST occupy an entire level of a topic filter",
+    compliance: Compliance::Must,
+};
+
+/// '+' wildcard not occupying an entire topic level is a protocol error [MQTT-4.7.1-1].
+/// E.g., "mqtt/te+st" is invalid.
+async fn subscribe_invalid_plus_wildcard(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = INVALID_PLUS_WILDCARD;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-bad-plus");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // SUBSCRIBE with topic filter "mqtt/te+st" — '+' not occupying entire level.
+        #[rustfmt::skip]
+        let bad_subscribe: &[u8] = &[
+            0x82,                                                       // SUBSCRIBE fixed header
+            0x10,                                                       // remaining length = 16
+            0x00, 0x01,                                                 // packet ID = 1
+            0x00,                                                       // properties length = 0
+            0x00, 0x0A, b'm', b'q', b't', b't', b'/', b't', b'e',     // topic "mqtt/te"
+            b'+', b's', b't',                                           // "+st"
+            0x00,                                                       // subscription options: QoS 0
+        ];
+        client.send_raw(bad_subscribe).await?;
+
+        // Server should either disconnect or return SUBACK with error reason code (0x80+).
+        match client.recv(recv_timeout).await {
+            Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::SubAck(ack)) => {
+                let _ = client.send_disconnect(0x00).await;
+                if ack.reason_codes.iter().all(|&c| c >= 0x80) {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!("SUBACK accepted invalid '+' wildcard filter: reason codes {:?}", ack.reason_codes),
                     ))
                 }
             }

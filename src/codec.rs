@@ -793,6 +793,14 @@ pub fn encode_disconnect(reason_code: u8) -> Vec<u8> {
     }
 }
 
+/// Encode a DISCONNECT packet with properties [MQTT-3.14].
+pub fn encode_disconnect_with_properties(reason_code: u8, properties: &Properties) -> Vec<u8> {
+    let mut body: Vec<u8> = Vec::new();
+    body.push(reason_code);
+    properties.encode(&mut body);
+    prepend_fixed_header(0xE0, body)
+}
+
 /// Encode an AUTH packet [MQTT-3.15].
 pub fn encode_auth(reason_code: u8, properties: &Properties) -> Vec<u8> {
     let mut body: Vec<u8> = Vec::new();

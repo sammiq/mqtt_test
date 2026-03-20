@@ -14,7 +14,7 @@ use crate::codec::{ConnectParams, Packet};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 5;
+pub const TEST_COUNT: usize = 7;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -23,8 +23,10 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             reserved_connect_flags(addr, recv_timeout, pb).await,
             malformed_remaining_length(addr, recv_timeout, pb).await,
             publish_empty_topic_no_alias(addr, recv_timeout, pb).await,
+            publish_topic_alias_zero(addr, recv_timeout, pb).await,
             subscribe_no_filters(addr, recv_timeout, pb).await,
             subscribe_invalid_qos(addr, recv_timeout, pb).await,
+            subscribe_invalid_wildcard(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -132,6 +134,36 @@ async fn publish_empty_topic_no_alias(addr: &str, recv_timeout: Duration, pb: &P
     .await
 }
 
+const TOPIC_ALIAS_ZERO: TestContext = TestContext {
+    id: "MQTT-3.3.2-2",
+    description: "PUBLISH with Topic Alias of 0 MUST be a protocol error",
+    compliance: Compliance::Must,
+};
+
+/// A Topic Alias of 0 is not permitted — the server MUST disconnect [MQTT-3.3.2-8].
+async fn publish_topic_alias_zero(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = TOPIC_ALIAS_ZERO;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-alias-zero");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // PUBLISH with Topic Alias property = 0 (protocol error).
+        // Properties: 0x23 (Topic Alias ID), 0x00 0x00 (value = 0).
+        #[rustfmt::skip]
+        let bad_publish: &[u8] = &[
+            0x30,                                       // PUBLISH | QoS=0
+            0x0C,                                       // remaining length = 12
+            0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/"
+            0x03,                                       // properties length = 3
+            0x23, 0x00, 0x00,                           // Topic Alias = 0
+        ];
+        client.send_raw(bad_publish).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
 const SUB_NO_FILTERS: TestContext = TestContext {
     id: "MQTT-3.8.3-1",
     description: "SUBSCRIBE with no topic filters MUST be rejected",
@@ -189,6 +221,53 @@ async fn subscribe_invalid_qos(addr: &str, recv_timeout: Duration, pb: &Progress
         client.send_raw(bad_subscribe).await?;
 
         Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const INVALID_WILDCARD: TestContext = TestContext {
+    id: "MQTT-4.7.1-1",
+    description: "'#' wildcard MUST only be the last character in a topic filter",
+    compliance: Compliance::Must,
+};
+
+/// '#' wildcard not at the end of a topic filter is a protocol error [MQTT-4.7.1-1].
+/// The server MUST treat a SUBSCRIBE with such a filter as a protocol error.
+async fn subscribe_invalid_wildcard(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = INVALID_WILDCARD;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-bad-wildcard");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // SUBSCRIBE with topic filter "mqtt/#/invalid" — '#' not at end.
+        #[rustfmt::skip]
+        let bad_subscribe: &[u8] = &[
+            0x82,                                                           // SUBSCRIBE fixed header
+            0x15,                                                           // remaining length = 21
+            0x00, 0x01,                                                     // packet ID = 1
+            0x00,                                                           // properties length = 0
+            0x00, 0x0E, b'm', b'q', b't', b't', b'/', b'#', b'/', b'i',   // topic "mqtt/#/i"
+            b'n', b'v', b'a', b'l', b'i', b'd',                            // "nvalid"
+            0x00,                                                           // subscription options: QoS 0
+        ];
+        client.send_raw(bad_subscribe).await?;
+
+        // Server should either disconnect or return SUBACK with error reason code (0x80+).
+        match client.recv(recv_timeout).await {
+            Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::SubAck(ack)) => {
+                let _ = client.send_disconnect(0x00).await;
+                if ack.reason_codes.iter().all(|&c| c >= 0x80) {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!("SUBACK accepted invalid wildcard filter: reason codes {:?}", ack.reason_codes),
+                    ))
+                }
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect or error SUBACK", &other)),
+        }
     })
     .await
 }

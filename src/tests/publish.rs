@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 13;
+pub const TEST_COUNT: usize = 14;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -19,6 +19,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             qos0_accepted(addr, recv_timeout, pb).await,
             qos1_gets_puback(addr, recv_timeout, pb).await,
             qos2_full_flow(addr, recv_timeout, pb).await,
+            qos_downgrade_on_delivery(addr, recv_timeout, pb).await,
             invalid_qos3(addr, recv_timeout, pb).await,
             dup_on_qos0(addr, recv_timeout, pb).await,
             retain_flag_accepted(addr, recv_timeout, pb).await,
@@ -242,6 +243,90 @@ async fn dup_on_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Te
                 ))
             }
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect (DUP=1, QoS=0)", &other)),
+        }
+    })
+    .await
+}
+
+const QOS_DOWNGRADE: TestContext = TestContext {
+    id: "MQTT-4.3.1-1",
+    description: "Delivered QoS MUST NOT exceed the subscription's maximum QoS",
+    compliance: Compliance::Must,
+};
+
+/// Server MUST deliver at the lower of the publisher's QoS and the subscriber's
+/// maximum QoS [MQTT-4.3.1-1]. Publishing QoS 2 to a QoS 0 subscription must
+/// deliver at QoS 0.
+async fn qos_downgrade_on_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = QOS_DOWNGRADE;
+    run_test(ctx, pb, || async move {
+        let topic = "mqtt/test/pub/qos_downgrade";
+
+        // Subscriber subscribes at QoS 0
+        let sub_conn = ConnectParams::new("mqtt-test-qos-dg-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                topic.to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Publisher publishes at QoS 2
+        let pub_conn = ConnectParams::new("mqtt-test-qos-dg-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        let pub_params = PublishParams {
+            topic:      topic.to_string(),
+            payload:    b"downgrade-test".to_vec(),
+            qos:        QoS::ExactlyOnce,
+            retain:     false,
+            packet_id:  Some(1),
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&pub_params).await?;
+
+        // Complete publisher QoS 2 flow
+        for _ in 0..5 {
+            match pub_client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 1 => {
+                    pub_client.send_pubrel(1, 0x00).await?;
+                }
+                Packet::PubComp(_) => break,
+                _ => {}
+            }
+        }
+        let _ = pub_client.send_disconnect(0x00).await;
+
+        // Subscriber should receive at QoS 0 (no packet_id field)
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                if p.qos == QoS::AtMostOnce {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!(
+                            "Message delivered at {:?}, expected AtMostOnce (subscription QoS 0)",
+                            p.qos
+                        ),
+                    ))
+                }
+            }
+            Ok(other) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, &format!("PUBLISH on topic \"{topic}\""), &other))
+            }
+            Err(_) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail(&ctx, "No message delivered to subscriber"))
+            }
         }
     })
     .await

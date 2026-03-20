@@ -12,7 +12,7 @@ use crate::codec::{
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 11;
+pub const TEST_COUNT: usize = 13;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -23,6 +23,8 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             wildcard_hash(addr, recv_timeout, pb).await,
             unsubscribe(addr, recv_timeout, pb).await,
             dollar_topic_no_wildcard_match(addr, recv_timeout, pb).await,
+            suback_reason_code_count(addr, recv_timeout, pb).await,
+            unsuback_reason_code_count(addr, recv_timeout, pb).await,
             shared_subscription(addr, recv_timeout, pb).await,
             subscription_identifier(addr, recv_timeout, pb).await,
             no_local_flag(addr, recv_timeout, pb).await,
@@ -302,6 +304,134 @@ async fn dollar_topic_no_wildcard_match(addr: &str, recv_timeout: Duration, pb: 
                 &ctx,
                 "Canary message not received — '#' subscription may not be working",
             ))
+        }
+    })
+    .await
+}
+
+const SUBACK_REASON_COUNT: TestContext = TestContext {
+    id: "MQTT-3.8.4-6",
+    description: "SUBACK MUST contain one reason code for each topic filter",
+    compliance: Compliance::Must,
+};
+
+/// SUBACK MUST contain a reason code for each Topic Filter in the SUBSCRIBE [MQTT-3.8.4-6].
+async fn suback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SUBACK_REASON_COUNT;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-suback-count");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![
+                (
+                    "mqtt/test/sub/count/a".to_string(),
+                    SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+                ),
+                (
+                    "mqtt/test/sub/count/b".to_string(),
+                    SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
+                ),
+                (
+                    "mqtt/test/sub/count/c".to_string(),
+                    SubscribeOptions { qos: QoS::ExactlyOnce, ..Default::default() },
+                ),
+            ],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(ack) if ack.packet_id == 1 => {
+                let _ = client.send_disconnect(0x00).await;
+                if ack.reason_codes.len() == 3 {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!(
+                            "Expected 3 reason codes, got {}",
+                            ack.reason_codes.len()
+                        ),
+                    ))
+                }
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other))
+            }
+        }
+    })
+    .await
+}
+
+const UNSUBACK_REASON_COUNT: TestContext = TestContext {
+    id: "MQTT-3.10.4-5",
+    description: "UNSUBACK MUST contain one reason code for each topic filter",
+    compliance: Compliance::Must,
+};
+
+/// UNSUBACK MUST contain a reason code for each Topic Filter in the UNSUBSCRIBE [MQTT-3.10.4-5].
+async fn unsuback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UNSUBACK_REASON_COUNT;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-unsuback-count");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Subscribe to 3 topics first
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![
+                (
+                    "mqtt/test/unsub/count/a".to_string(),
+                    SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+                ),
+                (
+                    "mqtt/test/unsub/count/b".to_string(),
+                    SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+                ),
+                (
+                    "mqtt/test/unsub/count/c".to_string(),
+                    SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+                ),
+            ],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        // Unsubscribe from all 3
+        let unsub = UnsubscribeParams {
+            packet_id:  2,
+            filters:    vec![
+                "mqtt/test/unsub/count/a".to_string(),
+                "mqtt/test/unsub/count/b".to_string(),
+                "mqtt/test/unsub/count/c".to_string(),
+            ],
+            properties: Properties::default(),
+        };
+        client.send_unsubscribe(&unsub).await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::UnsubAck(ack) if ack.packet_id == 2 => {
+                let _ = client.send_disconnect(0x00).await;
+                if ack.reason_codes.len() == 3 {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!(
+                            "Expected 3 reason codes, got {}",
+                            ack.reason_codes.len()
+                        ),
+                    ))
+                }
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "UNSUBACK(2)", &other))
+            }
         }
     })
     .await

@@ -154,3 +154,22 @@ pub async fn connect(
         other => bail!("expected CONNACK, got {other}"),
     }
 }
+
+/// Convenience: connect with a simple client ID, subscribe to one topic,
+/// consume the SUBACK, and return the ready client.
+pub async fn connect_and_subscribe(
+    addr: &str,
+    client_id: &str,
+    topic: &str,
+    qos: codec::QoS,
+    recv_timeout: Duration,
+) -> Result<RawClient> {
+    let params = ConnectParams::new(client_id);
+    let (mut client, _) = connect(addr, &params, recv_timeout).await?;
+
+    let sub = SubscribeParams::simple(1, topic, qos);
+    client.send_subscribe(&sub).await?;
+    client.recv(recv_timeout).await?; // SUBACK
+
+    Ok(client)
+}

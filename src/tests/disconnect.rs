@@ -5,7 +5,7 @@ use std::time::Duration;
 use indicatif::ProgressBar;
 
 use crate::client;
-use crate::codec::{ConnectParams, Packet, Properties, QoS, SubscribeParams, WillParams};
+use crate::codec::{ConnectParams, Packet, Properties, QoS, WillParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
@@ -32,7 +32,7 @@ const DISCONNECT_CLOSE: TestContext = TestContext {
 /// After receiving DISCONNECT from the client, the server MUST close the connection [MQTT-3.14.4-1].
 async fn server_closes_after_disconnect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = DISCONNECT_CLOSE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-disconnect");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -62,16 +62,11 @@ const DISCONNECT_WITH_WILL: TestContext = TestContext {
 /// the server to publish the will message [MQTT-3.14.2-3].
 async fn disconnect_with_will(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = DISCONNECT_WITH_WILL;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let will_topic = "mqtt/test/disconnect/will04";
 
         // Set up a subscriber
-        let sub_params = ConnectParams::new("mqtt-test-dc-will-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-dc-will-sub", will_topic, QoS::AtMostOnce, recv_timeout).await?;
 
         // Connect with a will message
         let mut will_params = ConnectParams::new("mqtt-test-dc-will-pub");
@@ -112,16 +107,11 @@ const NORMAL_DISCONNECT_DISCARDS_WILL: TestContext = TestContext {
 /// will message associated with the connection [MQTT-3.14.4-3].
 async fn normal_disconnect_discards_will(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = NORMAL_DISCONNECT_DISCARDS_WILL;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let will_topic = "mqtt/test/disconnect/will_discard";
 
         // Set up a subscriber
-        let sub_params = ConnectParams::new("mqtt-test-dc-discard-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-dc-discard-sub", will_topic, QoS::AtMostOnce, recv_timeout).await?;
 
         // Connect with a will message
         let mut will_params = ConnectParams::new("mqtt-test-dc-discard-pub");
@@ -165,7 +155,7 @@ const SESSION_EXPIRY_INCREASE: TestContext = TestContext {
 /// MUST treat this as a protocol error.
 async fn session_expiry_increase_rejected(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SESSION_EXPIRY_INCREASE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         // Connect with session_expiry_interval = 0 (or absent, which defaults to 0)
         let params = ConnectParams::new("mqtt-test-sei-increase");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;

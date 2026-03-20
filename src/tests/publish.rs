@@ -5,7 +5,7 @@ use std::time::Duration;
 use indicatif::ProgressBar;
 
 use crate::client;
-use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
+use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
@@ -47,13 +47,8 @@ const QOS0: TestContext = TestContext {
 /// QoS 0 PUBLISH MUST be accepted without error.
 async fn qos0_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS0;
-    run_test(ctx, pb, || async move {
-        let params = ConnectParams::new("mqtt-test-qos0-pub");
-        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, "mqtt/test/pub/qos0", QoS::AtMostOnce);
-        client.send_subscribe(&sub).await?;
-        client.recv(recv_timeout).await?; // SUBACK
+    run_test(ctx, pb, async {
+        let mut client = client::connect_and_subscribe(addr, "mqtt-test-qos0-pub", "mqtt/test/pub/qos0", QoS::AtMostOnce, recv_timeout).await?;
 
         let pub_params = PublishParams::qos0("mqtt/test/pub/qos0", b"hello".to_vec());
         client.send_publish(&pub_params).await?;
@@ -81,7 +76,7 @@ const QOS1: TestContext = TestContext {
 /// QoS 1 PUBLISH MUST receive a PUBACK [MQTT-4.3.2-1].
 async fn qos1_gets_puback(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS1;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-qos1-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -118,16 +113,11 @@ const QOS1_DELIVERY: TestContext = TestContext {
 /// QoS 1 with the same packet payload [MQTT-4.3.2-2].
 async fn qos1_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS1_DELIVERY;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let topic = "mqtt/test/pub/qos1_delivery";
 
         // Subscriber at QoS 1
-        let sub_conn = ConnectParams::new("mqtt-test-qos1-del-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-qos1-del-sub", topic, QoS::AtLeastOnce, recv_timeout).await?;
 
         // Publisher at QoS 1
         let pub_conn = ConnectParams::new("mqtt-test-qos1-del-pub");
@@ -183,7 +173,7 @@ const QOS2: TestContext = TestContext {
 /// QoS 2 PUBLISH MUST go through full PUBREC → PUBREL → PUBCOMP flow [MQTT-4.3.3-1].
 async fn qos2_full_flow(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS2;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-qos2-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -229,7 +219,7 @@ const INVALID_QOS3: TestContext = TestContext {
 /// QoS value of 3 (0b11) is malformed — server MUST close the connection [MQTT-3.3.1-4].
 async fn invalid_qos3(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_QOS3;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-qos3");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -263,7 +253,7 @@ const DUP_QOS0: TestContext = TestContext {
 /// DUP=1 with QoS=0 is a protocol error — server MUST close the connection [MQTT-3.3.1-2].
 async fn dup_on_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = DUP_QOS0;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-dup-qos0");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -306,16 +296,11 @@ const QOS_DOWNGRADE: TestContext = TestContext {
 /// deliver at QoS 0.
 async fn qos_downgrade_on_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS_DOWNGRADE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let topic = "mqtt/test/pub/qos_downgrade";
 
         // Subscriber subscribes at QoS 0
-        let sub_conn = ConnectParams::new("mqtt-test-qos-dg-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-qos-dg-sub", topic, QoS::AtMostOnce, recv_timeout).await?;
 
         // Publisher publishes at QoS 2
         let pub_conn = ConnectParams::new("mqtt-test-qos-dg-pub");
@@ -376,7 +361,7 @@ const RETAIN: TestContext = TestContext {
 /// Retain flag is accepted and message is stored [MQTT-3.3.1-5].
 async fn retain_flag_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RETAIN;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-retain-pub");
         let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -384,12 +369,7 @@ async fn retain_flag_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressB
         pub_client.send_publish(&pub_params).await?;
         let _ = pub_client.send_disconnect(0x00).await;
 
-        let sub_params = ConnectParams::new("mqtt-test-retain-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, "mqtt/test/pub/retain", QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-retain-sub", "mqtt/test/pub/retain", QoS::AtMostOnce, recv_timeout).await?;
 
         match sub_client.recv(recv_timeout).await {
             Ok(Packet::Publish(p)) if p.retain && p.topic == "mqtt/test/pub/retain" => {
@@ -422,7 +402,7 @@ const TOPIC_ALIAS: TestContext = TestContext {
 /// Topic Alias is accepted in PUBLISH [MQTT-3.3.2-11].
 async fn topic_alias_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = TOPIC_ALIAS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-topic-alias");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -483,13 +463,8 @@ async fn property_forwarding_test(
     check: fn(&Properties) -> bool,
     check_description: &'static str,
 ) -> TestResult {
-    run_test(ctx, pb, || async move {
-        let params = ConnectParams::new(format!("mqtt-test-{topic}"));
-        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
-        client.send_subscribe(&sub).await?;
-        client.recv(recv_timeout).await?; // SUBACK
+    run_test(ctx, pb, async {
+        let mut client = client::connect_and_subscribe(addr, &format!("mqtt-test-{topic}"), topic, QoS::AtMostOnce, recv_timeout).await?;
 
         let pub_params = PublishParams {
             topic:      topic.to_string(),
@@ -612,16 +587,11 @@ const MSG_ORDERING: TestContext = TestContext {
 /// sequence and verify they arrive in order.
 async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = MSG_ORDERING;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let topic = "mqtt/test/pub/ordering";
 
         // Subscriber at QoS 1
-        let sub_conn = ConnectParams::new("mqtt-test-order-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-order-sub", topic, QoS::AtLeastOnce, recv_timeout).await?;
 
         // Publisher sends 5 messages in order
         let pub_conn = ConnectParams::new("mqtt-test-order-pub");
@@ -687,7 +657,7 @@ const RETAIN_DELIVERY_FLAG: TestContext = TestContext {
 /// SHOULD set the RETAIN flag to 1 [MQTT-3.3.1-6].
 async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RETAIN_DELIVERY_FLAG;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let topic = "mqtt/test/pub/retain_flag";
 
         // Publish a retained message.
@@ -700,11 +670,7 @@ async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration,
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Subscribe from a new client — should get the retained message with Retain=1.
-        let sub_conn = ConnectParams::new("mqtt-test-retflag-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
-        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-retflag-sub", topic, QoS::AtMostOnce, recv_timeout).await?;
 
         let result = match sub_client.recv(recv_timeout).await {
             Ok(Packet::Publish(p)) if p.topic == topic && p.retain => {

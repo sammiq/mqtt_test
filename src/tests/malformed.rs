@@ -58,7 +58,7 @@ const RESERVED_FLAGS: TestContext = TestContext {
 /// MUST be 0. Sending it as 1 is a malformed packet [MQTT-3.1.2-3].
 async fn reserved_connect_flags(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RESERVED_FLAGS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Hand-craft a CONNECT with reserved flag bit 0 = 1.
@@ -91,7 +91,7 @@ const BAD_REMAINING_LEN: TestContext = TestContext {
 /// (continuation bit set on all 4 bytes) is malformed [MQTT-1.5.5-1].
 async fn malformed_remaining_length(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = BAD_REMAINING_LEN;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Send a CONNECT-like packet with a 5-byte remaining length (all continuation bits set).
@@ -118,7 +118,7 @@ const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
 /// a protocol error [MQTT-3.3.2-8].
 async fn publish_empty_topic_no_alias(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = EMPTY_TOPIC_NO_ALIAS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-empty-topic");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -147,7 +147,7 @@ const TOPIC_ALIAS_ZERO: TestContext = TestContext {
 /// A Topic Alias of 0 is not permitted — the server MUST disconnect [MQTT-3.3.2-8].
 async fn publish_topic_alias_zero(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = TOPIC_ALIAS_ZERO;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-alias-zero");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -178,7 +178,7 @@ const SUB_NO_FILTERS: TestContext = TestContext {
 /// The payload must be non-empty.
 async fn subscribe_no_filters(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SUB_NO_FILTERS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-sub-empty");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -208,7 +208,7 @@ const SUB_INVALID_QOS: TestContext = TestContext {
 /// MUST be 0. Setting them is a protocol error [MQTT-3.8.3-5].
 async fn subscribe_invalid_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SUB_INVALID_QOS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-sub-bad-qos");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -239,7 +239,7 @@ const INVALID_WILDCARD: TestContext = TestContext {
 /// The server MUST treat a SUBSCRIBE with such a filter as a protocol error.
 async fn subscribe_invalid_wildcard(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_WILDCARD;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-bad-wildcard");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -285,7 +285,7 @@ const UNSUB_NO_FILTERS: TestContext = TestContext {
 /// An UNSUBSCRIBE packet MUST contain at least one topic filter [MQTT-3.10.3-2].
 async fn unsubscribe_no_filters(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = UNSUB_NO_FILTERS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-unsub-empty");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -315,7 +315,7 @@ const UNSUB_RESERVED_BITS: TestContext = TestContext {
 /// Sending wrong reserved bits is a malformed packet [MQTT-3.10.1-1].
 async fn unsubscribe_reserved_bits(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = UNSUB_RESERVED_BITS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-unsub-reserved");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -346,7 +346,7 @@ const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
 /// protocol error — the server MUST disconnect [MQTT-3.3.2-9].
 async fn topic_alias_exceeds_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = TOPIC_ALIAS_EXCEEDS_MAX;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-alias-exceed");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -383,7 +383,7 @@ const INVALID_PLUS_WILDCARD: TestContext = TestContext {
 /// E.g., "mqtt/te+st" is invalid.
 async fn subscribe_invalid_plus_wildcard(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_PLUS_WILDCARD;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-bad-plus");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 

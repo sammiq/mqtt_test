@@ -46,7 +46,7 @@ const BASIC_SUB: TestContext = TestContext {
 /// Server MUST send SUBACK in response to SUBSCRIBE [MQTT-3.8.4-1].
 async fn basic_subscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = BASIC_SUB;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-subscribe");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -83,7 +83,7 @@ const WILDCARD_PLUS: TestContext = TestContext {
 /// `+` wildcard MUST match exactly one level [MQTT-4.7.1-2].
 async fn wildcard_plus(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILDCARD_PLUS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-wildcard-plus");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -124,7 +124,7 @@ const WILDCARD_HASH: TestContext = TestContext {
 /// `#` wildcard MUST match the parent and all sub-levels [MQTT-4.7.1-2].
 async fn wildcard_hash(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILDCARD_HASH;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-wildcard-hash");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -168,13 +168,8 @@ const UNSUB: TestContext = TestContext {
 /// Server MUST send UNSUBACK in response to UNSUBSCRIBE [MQTT-3.10.4-4].
 async fn unsubscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = UNSUB;
-    run_test(ctx, pb, || async move {
-        let params = ConnectParams::new("mqtt-test-unsubscribe");
-        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, "mqtt/test/sub/unsub", QoS::AtMostOnce);
-        client.send_subscribe(&sub).await?;
-        client.recv(recv_timeout).await?; // SUBACK
+    run_test(ctx, pb, async {
+        let mut client = client::connect_and_subscribe(addr, "mqtt-test-unsubscribe", "mqtt/test/sub/unsub", QoS::AtMostOnce, recv_timeout).await?;
 
         let unsub = UnsubscribeParams::simple(2, "mqtt/test/sub/unsub");
         client.send_unsubscribe(&unsub).await?;
@@ -202,7 +197,7 @@ const DOLLAR_TOPIC: TestContext = TestContext {
 /// Topics starting with `$` MUST NOT be matched by subscriptions starting with `#` or `+` [MQTT-4.7.2-1].
 async fn dollar_topic_no_wildcard_match(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = DOLLAR_TOPIC;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-dollar-topic");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -279,7 +274,7 @@ const SUBACK_REASON_COUNT: TestContext = TestContext {
 /// SUBACK MUST contain a reason code for each Topic Filter in the SUBSCRIBE [MQTT-3.8.4-6].
 async fn suback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SUBACK_REASON_COUNT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-suback-count");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -336,7 +331,7 @@ const UNSUBACK_REASON_COUNT: TestContext = TestContext {
 /// UNSUBACK MUST contain a reason code for each Topic Filter in the UNSUBSCRIBE [MQTT-3.10.4-5].
 async fn unsuback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = UNSUBACK_REASON_COUNT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-unsuback-count");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -409,7 +404,7 @@ const SHARED_SUB: TestContext = TestContext {
 /// Shared subscriptions ($share/group/topic) are accepted [MQTT-4.8.2].
 async fn shared_subscription(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SHARED_SUB;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-shared-sub");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -456,7 +451,7 @@ const SUB_ID: TestContext = TestContext {
 /// Subscription Identifier MUST be returned in matching PUBLISH [MQTT-3.8.2-2].
 async fn subscription_identifier(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SUB_ID;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-sub-id");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -516,7 +511,7 @@ const NO_LOCAL: TestContext = TestContext {
 /// no_local=true: server MUST NOT send messages published by the same client [MQTT-3.8.3-3].
 async fn no_local_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = NO_LOCAL;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-no-local");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -570,7 +565,7 @@ const RETAIN_AS_PUB: TestContext = TestContext {
 /// retain_as_published=true: retain flag MUST be preserved on delivery [MQTT-3.8.3-4].
 async fn retain_as_published(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RETAIN_AS_PUB;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let pub_params_conn = ConnectParams::new("mqtt-test-rap-pub");
         let (mut pub_client, connack) =
             client::connect(addr, &pub_params_conn, recv_timeout).await?;
@@ -645,7 +640,7 @@ const RETAIN_HANDLING_1: TestContext = TestContext {
 /// retain_handling=1: retained messages sent only on NEW subscription [MQTT-3.8.3-5].
 async fn retain_handling_1(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RETAIN_HANDLING_1;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         // Publish a retained message
         let pub_conn = ConnectParams::new("mqtt-test-rh1-pub");
         let (mut pub_client, connack) =
@@ -739,7 +734,7 @@ const RETAIN_HANDLING_2: TestContext = TestContext {
 /// retain_handling=2: retained messages MUST NOT be sent on subscribe [MQTT-3.8.3-5].
 async fn retain_handling_2(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RETAIN_HANDLING_2;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         // Publish a retained message
         let pub_conn = ConnectParams::new("mqtt-test-rh2-pub");
         let (mut pub_client, connack) =

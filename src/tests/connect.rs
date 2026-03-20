@@ -66,7 +66,7 @@ const BASIC_CONNECT: TestContext = TestContext {
 /// A valid CONNECT MUST receive a CONNACK in return [MQTT-3.2.0-1].
 async fn basic_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = BASIC_CONNECT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-basic-connect");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -92,7 +92,7 @@ const CLEAN_START_TRUE: TestContext = TestContext {
 /// Clean Start = 1 MUST create a new session [MQTT-3.1.2-4].
 async fn clean_start_true(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CLEAN_START_TRUE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-clean-start");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -115,7 +115,7 @@ const CLEAN_START_FALSE: TestContext = TestContext {
 /// Clean Start = 0 with no existing session MUST set session_present=0 [MQTT-3.2.2-4].
 async fn clean_start_false_no_session(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CLEAN_START_FALSE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         // Use a unique client ID unlikely to have an existing session.
         let id = format!("mqtt-test-no-session-{}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -145,7 +145,7 @@ const ZERO_LEN_CLIENT_ID: TestContext = TestContext {
 /// Zero-length client ID with Clean Start=1 MUST be accepted [MQTT-3.1.3-7].
 async fn zero_length_client_id(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ZERO_LEN_CLIENT_ID;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -170,7 +170,7 @@ const ZERO_LEN_NO_CLEAN: TestContext = TestContext {
 /// Zero-length client ID with Clean Start=0 MAY be rejected [MQTT-3.1.3-8].
 async fn zero_length_client_id_no_clean_start(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ZERO_LEN_NO_CLEAN;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut params = ConnectParams::new("");
         params.clean_start = false;
 
@@ -214,7 +214,7 @@ const ASSIGNED_CLIENT_ID: TestContext = TestContext {
 /// Assigned Client Identifier property in CONNACK [MQTT-3.2.2-16].
 async fn assigned_client_id(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ASSIGNED_CLIENT_ID;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -247,7 +247,7 @@ const FIRST_CONNECT: TestContext = TestContext {
 /// First packet on a connection MUST be CONNECT [MQTT-3.1.0-1].
 async fn first_packet_must_be_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = FIRST_CONNECT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Send a PINGREQ as the first packet instead of CONNECT
@@ -276,7 +276,7 @@ const SESSION_EXPIRY: TestContext = TestContext {
 /// Session Expiry Interval property is accepted [MQTT-3.1.2-11].
 async fn session_expiry_interval_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SESSION_EXPIRY;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut params = ConnectParams::new("mqtt-test-sei");
         params.properties.session_expiry_interval = Some(60);
 
@@ -301,7 +301,7 @@ const RECEIVE_MAX: TestContext = TestContext {
 /// Receive Maximum property is accepted [MQTT-3.1.2-11].
 async fn receive_maximum_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RECEIVE_MAX;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut params = ConnectParams::new("mqtt-test-recv-max");
         params.properties.receive_maximum = Some(10);
 
@@ -326,7 +326,7 @@ const MAX_PACKET_SIZE: TestContext = TestContext {
 /// Maximum Packet Size property is accepted [MQTT-3.2.2-17].
 async fn maximum_packet_size_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = MAX_PACKET_SIZE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut params = ConnectParams::new("mqtt-test-max-pkt");
         params.properties.maximum_packet_size = Some(65536);
 
@@ -352,7 +352,7 @@ const SERVER_KEEP_ALIVE: TestContext = TestContext {
 /// requested keep-alive interval [MQTT-3.2.2-21].
 async fn server_keep_alive(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SERVER_KEEP_ALIVE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-server-ka");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -378,7 +378,7 @@ const TOPIC_ALIAS_MAX: TestContext = TestContext {
 /// Server MAY include Topic Alias Maximum in CONNACK [MQTT-3.2.2-9].
 async fn topic_alias_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = TOPIC_ALIAS_MAX;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-ta-max");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -412,7 +412,7 @@ const WILDCARD_SUB_AVAIL: TestContext = TestContext {
 /// Most brokers support wildcards so this checks if the property is present and true.
 async fn wildcard_subscription_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILDCARD_SUB_AVAIL;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-wildcard-avail");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -444,7 +444,7 @@ const DUP_CONNECT: TestContext = TestContext {
 /// Server MUST disconnect a client that sends a second CONNECT [MQTT-3.1.0-2].
 async fn duplicate_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = DUP_CONNECT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-dup-connect");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -473,7 +473,7 @@ const INVALID_PROTO_NAME: TestContext = TestContext {
 /// Server MUST close connection if protocol name is not 'MQTT' [MQTT-3.1.2-1].
 async fn invalid_protocol_name(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_PROTO_NAME;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // CONNECT with protocol name "XQTT" instead of "MQTT"
@@ -507,7 +507,7 @@ const INVALID_PROTO_VER: TestContext = TestContext {
 /// Server MAY respond with 0x84 for unsupported protocol version [MQTT-3.1.2-2].
 async fn invalid_protocol_version(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_PROTO_VER;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // CONNECT with protocol version 4 (MQTT 3.1.1) — no properties field
@@ -553,7 +553,7 @@ const SESSION_PRESENT_ZERO_ON_REJECT: TestContext = TestContext {
 /// CONNACK regardless of any prior session state [MQTT-3.2.2-3].
 async fn session_present_zero_on_reject(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SESSION_PRESENT_ZERO_ON_REJECT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Send a CONNECT with invalid protocol version to provoke a rejection.
@@ -612,7 +612,7 @@ const KEEP_ALIVE: TestContext = TestContext {
 /// Server MUST disconnect client that exceeds 1.5× keep-alive without activity [MQTT-3.1.2-22].
 async fn keep_alive_timeout(addr: &str, _recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = KEEP_ALIVE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut params = ConnectParams::new("mqtt-test-keepalive");
         params.keep_alive = 2; // 2 seconds → broker should disconnect after ~3s
 
@@ -641,16 +641,11 @@ const WILL_ON_CLOSE: TestContext = TestContext {
 /// Will message MUST be published on unexpected connection close [MQTT-3.1.2-8].
 async fn will_message_on_unexpected_close(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILL_ON_CLOSE;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let will_topic = "mqtt/test/will/unexpected";
 
         // Set up a subscriber to receive the will message
-        let sub_params = ConnectParams::new("mqtt-test-will-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-will-sub", will_topic, QoS::AtMostOnce, recv_timeout).await?;
 
         // Connect a client with a will message
         let mut will_params = ConnectParams::new("mqtt-test-will-pub");
@@ -695,16 +690,11 @@ const WILL_REMOVED_ON_DISCONNECT: TestContext = TestContext {
 /// Will message MUST be removed from session on normal DISCONNECT [MQTT-3.1.2-10].
 async fn will_message_removed_on_disconnect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILL_REMOVED_ON_DISCONNECT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let will_topic = "mqtt/test/will/normal";
 
         // Set up a subscriber
-        let sub_params = ConnectParams::new("mqtt-test-will-norm-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-will-norm-sub", will_topic, QoS::AtMostOnce, recv_timeout).await?;
 
         // Connect with a will message, then disconnect normally
         let mut will_params = ConnectParams::new("mqtt-test-will-norm-pub");
@@ -745,7 +735,7 @@ const WILL_RETAIN: TestContext = TestContext {
 /// Will Retain flag MUST be respected [MQTT-3.1.2-13].
 async fn will_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILL_RETAIN;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let will_topic = "mqtt/test/will/retain";
 
         // Check if broker supports retain
@@ -781,12 +771,7 @@ async fn will_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         // New subscriber should receive the retained will message
-        let sub_params = ConnectParams::new("mqtt-test-will-retain-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-will-retain-sub", will_topic, QoS::AtMostOnce, recv_timeout).await?;
 
         match sub_client.recv(recv_timeout).await {
             Ok(Packet::Publish(p)) if p.topic == will_topic && p.retain => {
@@ -827,7 +812,7 @@ const SERVER_MAX_QOS: TestContext = TestContext {
 /// If server advertises Maximum QoS, publishing above it MUST result in DISCONNECT [MQTT-3.2.2-19].
 async fn server_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SERVER_MAX_QOS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-max-qos");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -916,7 +901,7 @@ const SERVER_RECV_MAX: TestContext = TestContext {
 /// Server MUST respect client's Receive Maximum [MQTT-3.2.2-14].
 async fn server_receive_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SERVER_RECV_MAX;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         // Connect with a very low Receive Maximum
         let recv_max: u16 = 2;
         let mut sub_params = ConnectParams::new("mqtt-test-recv-max-sub");
@@ -984,16 +969,11 @@ const WILL_DELAY: TestContext = TestContext {
 /// immediately but IS published after the delay expires.
 async fn will_delay_interval(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILL_DELAY;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let will_topic = "mqtt/test/will/delay";
 
         // Subscriber
-        let sub_params = ConnectParams::new("mqtt-test-will-delay-sub");
-        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
-
-        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
-        sub_client.send_subscribe(&sub).await?;
-        sub_client.recv(recv_timeout).await?; // SUBACK
+        let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-will-delay-sub", will_topic, QoS::AtMostOnce, recv_timeout).await?;
 
         // Connect with will delay = 2 seconds
         let mut will_params = ConnectParams::new("mqtt-test-will-delay-pub");
@@ -1059,7 +1039,7 @@ const REQ_RESP_INFO: TestContext = TestContext {
 /// include Response Information in the CONNACK [MQTT-3.1.2-28].
 async fn request_response_information(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = REQ_RESP_INFO;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut params = ConnectParams::new("mqtt-test-resp-info");
         params.properties.request_response_information = Some(true);
 
@@ -1093,7 +1073,7 @@ const ENHANCED_AUTH: TestContext = TestContext {
 /// If it does support it, it may respond with an AUTH packet to continue the exchange.
 async fn enhanced_auth_method(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ENHANCED_AUTH;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut params = ConnectParams::new("mqtt-test-enhanced-auth");
         params.properties.authentication_method = Some("SCRAM-SHA-256".to_string());
         params.properties.authentication_data = Some(b"client-first-message".to_vec());
@@ -1150,7 +1130,7 @@ const REASON_STRING: TestContext = TestContext {
 /// We trigger a rejection with an invalid protocol name and check for a Reason String.
 async fn reason_string_in_connack(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = REASON_STRING;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // CONNECT with protocol version 4 to trigger a CONNACK rejection
@@ -1207,7 +1187,7 @@ const ACCEPTABLE_CLIENT_ID: TestContext = TestContext {
 /// [0-9a-zA-Z] and are between 1 and 23 bytes long [MQTT-3.1.3-5].
 async fn acceptable_client_id_chars(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ACCEPTABLE_CLIENT_ID;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         // A 23-char ID using the recommended character set.
         let client_id = "abcABC0123456789xyzXYZw";
         let params = ConnectParams::new(client_id);
@@ -1241,7 +1221,7 @@ const FLOW_CONTROL: TestContext = TestContext {
 /// does not exceed it when delivering QoS 1 messages without client PUBACK.
 async fn flow_control_receive_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = FLOW_CONTROL;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         // Connect subscriber — inspect server's Receive Maximum from CONNACK.
         let sub_params = ConnectParams::new("mqtt-test-flow-ctrl-sub");
         let (mut sub_client, connack) = client::connect(addr, &sub_params, recv_timeout).await?;
@@ -1311,7 +1291,7 @@ const CONNACK_MAX_QOS: TestContext = TestContext {
 /// supported QoS level [MQTT-3.2.2-7].
 async fn connack_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CONNACK_MAX_QOS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-max-qos-prop");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -1340,7 +1320,7 @@ const CONNACK_RETAIN_AVAIL: TestContext = TestContext {
 /// Server MAY include Retain Available in CONNACK [MQTT-3.2.2-10].
 async fn connack_retain_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CONNACK_RETAIN_AVAIL;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-retain-avail");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -1365,7 +1345,7 @@ const CONNACK_SUB_IDS: TestContext = TestContext {
 /// Server MAY include Subscription Identifiers Available in CONNACK [MQTT-3.2.2-13].
 async fn connack_subscription_ids_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CONNACK_SUB_IDS;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-subid-avail");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -1390,7 +1370,7 @@ const CONNACK_SHARED_SUB: TestContext = TestContext {
 /// Server MAY include Shared Subscription Available in CONNACK [MQTT-3.2.2-15].
 async fn connack_shared_subscription_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CONNACK_SHARED_SUB;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-shared-sub-avail");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -1416,7 +1396,7 @@ const CONNACK_SERVER_REF: TestContext = TestContext {
 /// to redirect the client [MQTT-3.2.2-18].
 async fn connack_server_reference(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CONNACK_SERVER_REF;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Send MQTT v4 CONNECT to trigger a rejection
@@ -1472,7 +1452,7 @@ const SERVER_REDIRECT: TestContext = TestContext {
 /// CONNACK includes a Server Reference, indicating redirection support.
 async fn server_redirection(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SERVER_REDIRECT;
-    run_test(ctx, pb, || async move {
+    run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-redirect");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;

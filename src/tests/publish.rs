@@ -2,29 +2,33 @@
 
 use std::time::Duration;
 
+use indicatif::ProgressBar;
+
 use crate::client;
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions,
                    SubscribeParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub async fn run(addr: &str, recv_timeout: Duration) -> Suite {
+pub const TEST_COUNT: usize = 13;
+
+pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
         name: "PUBLISH",
         results: vec![
-            qos0_accepted(addr, recv_timeout).await,
-            qos1_gets_puback(addr, recv_timeout).await,
-            qos2_full_flow(addr, recv_timeout).await,
-            invalid_qos3(addr, recv_timeout).await,
-            dup_on_qos0(addr, recv_timeout).await,
-            retain_flag_accepted(addr, recv_timeout).await,
-            topic_alias_accepted(addr, recv_timeout).await,
-            payload_format_indicator_preserved(addr, recv_timeout).await,
-            message_expiry_interval_present(addr, recv_timeout).await,
-            content_type_preserved(addr, recv_timeout).await,
-            response_topic_preserved(addr, recv_timeout).await,
-            correlation_data_preserved(addr, recv_timeout).await,
-            user_properties_preserved(addr, recv_timeout).await,
+            qos0_accepted(addr, recv_timeout, pb).await,
+            qos1_gets_puback(addr, recv_timeout, pb).await,
+            qos2_full_flow(addr, recv_timeout, pb).await,
+            invalid_qos3(addr, recv_timeout, pb).await,
+            dup_on_qos0(addr, recv_timeout, pb).await,
+            retain_flag_accepted(addr, recv_timeout, pb).await,
+            topic_alias_accepted(addr, recv_timeout, pb).await,
+            payload_format_indicator_preserved(addr, recv_timeout, pb).await,
+            message_expiry_interval_present(addr, recv_timeout, pb).await,
+            content_type_preserved(addr, recv_timeout, pb).await,
+            response_topic_preserved(addr, recv_timeout, pb).await,
+            correlation_data_preserved(addr, recv_timeout, pb).await,
+            user_properties_preserved(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -38,9 +42,9 @@ const QOS0: TestContext = TestContext {
 };
 
 /// QoS 0 PUBLISH MUST be accepted without error.
-async fn qos0_accepted(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn qos0_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS0;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-qos0-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -79,9 +83,9 @@ const QOS1: TestContext = TestContext {
 };
 
 /// QoS 1 PUBLISH MUST receive a PUBACK [MQTT-4.3.2-1].
-async fn qos1_gets_puback(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn qos1_gets_puback(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS1;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-qos1-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -122,9 +126,9 @@ const QOS2: TestContext = TestContext {
 };
 
 /// QoS 2 PUBLISH MUST go through full PUBREC → PUBREL → PUBCOMP flow [MQTT-4.3.3-1].
-async fn qos2_full_flow(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn qos2_full_flow(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS2;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-qos2-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -175,9 +179,9 @@ const INVALID_QOS3: TestContext = TestContext {
 };
 
 /// QoS value of 3 (0b11) is malformed — server MUST close the connection [MQTT-3.3.1-4].
-async fn invalid_qos3(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn invalid_qos3(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_QOS3;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-qos3");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -209,9 +213,9 @@ const DUP_QOS0: TestContext = TestContext {
 };
 
 /// DUP=1 with QoS=0 is a protocol error — server MUST close the connection [MQTT-3.3.1-2].
-async fn dup_on_qos0(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn dup_on_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = DUP_QOS0;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-dup-qos0");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -252,9 +256,9 @@ const RETAIN: TestContext = TestContext {
 };
 
 /// Retain flag is accepted and message is stored [MQTT-3.3.1-5].
-async fn retain_flag_accepted(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn retain_flag_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RETAIN;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-retain-pub");
         let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -312,9 +316,9 @@ const TOPIC_ALIAS: TestContext = TestContext {
 };
 
 /// Topic Alias is accepted in PUBLISH [MQTT-3.3.2-11].
-async fn topic_alias_accepted(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn topic_alias_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = TOPIC_ALIAS;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-topic-alias");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -364,16 +368,18 @@ async fn topic_alias_accepted(addr: &str, recv_timeout: Duration) -> TestResult 
 // ── Property forwarding ─────────────────────────────────────────────────────
 
 /// Helper: subscribe, publish with custom properties, verify a property is preserved.
+#[allow(clippy::too_many_arguments)]
 async fn property_forwarding_test(
     addr: &str,
     recv_timeout: Duration,
     ctx: TestContext,
+    pb: &ProgressBar,
     topic: &'static str,
     props: Properties,
     check: fn(&Properties) -> bool,
     check_description: &'static str,
 ) -> TestResult {
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new(format!("mqtt-test-{topic}"));
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -426,9 +432,9 @@ const PFI: TestContext = TestContext {
 };
 
 /// Payload Format Indicator SHOULD be forwarded unchanged [MQTT-3.3.2-7].
-async fn payload_format_indicator_preserved(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn payload_format_indicator_preserved(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let props = Properties { payload_format_indicator: Some(1), ..Properties::default() };
-    property_forwarding_test(addr, recv_timeout, PFI, "mqtt/test/pub/pfi", props,
+    property_forwarding_test(addr, recv_timeout, PFI, pb, "mqtt/test/pub/pfi", props,
         |p| p.payload_format_indicator == Some(1), "expected payload_format_indicator=1").await
 }
 
@@ -439,9 +445,9 @@ const MEI: TestContext = TestContext {
 };
 
 /// Message Expiry Interval MUST be present in forwarded PUBLISH [MQTT-3.3.2-8].
-async fn message_expiry_interval_present(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn message_expiry_interval_present(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let props = Properties { message_expiry_interval: Some(3600), ..Properties::default() };
-    property_forwarding_test(addr, recv_timeout, MEI, "mqtt/test/pub/mei", props,
+    property_forwarding_test(addr, recv_timeout, MEI, pb, "mqtt/test/pub/mei", props,
         |p| p.message_expiry_interval.is_some(), "expected message_expiry_interval to be present").await
 }
 
@@ -452,9 +458,9 @@ const CONTENT_TYPE: TestContext = TestContext {
 };
 
 /// Content Type SHOULD be forwarded unchanged [MQTT-3.3.2-12].
-async fn content_type_preserved(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn content_type_preserved(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let props = Properties { content_type: Some("application/json".to_string()), ..Properties::default() };
-    property_forwarding_test(addr, recv_timeout, CONTENT_TYPE, "mqtt/test/pub/ct", props,
+    property_forwarding_test(addr, recv_timeout, CONTENT_TYPE, pb, "mqtt/test/pub/ct", props,
         |p| p.content_type.as_deref() == Some("application/json"), "expected content_type=\"application/json\"").await
 }
 
@@ -465,9 +471,9 @@ const RESPONSE_TOPIC: TestContext = TestContext {
 };
 
 /// Response Topic SHOULD be forwarded unchanged [MQTT-3.3.2-13].
-async fn response_topic_preserved(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn response_topic_preserved(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let props = Properties { response_topic: Some("mqtt/test/pub/reply".to_string()), ..Properties::default() };
-    property_forwarding_test(addr, recv_timeout, RESPONSE_TOPIC, "mqtt/test/pub/rt", props,
+    property_forwarding_test(addr, recv_timeout, RESPONSE_TOPIC, pb, "mqtt/test/pub/rt", props,
         |p| p.response_topic.as_deref() == Some("mqtt/test/pub/reply"), "expected response_topic=\"mqtt/test/pub/reply\"").await
 }
 
@@ -478,9 +484,9 @@ const CORRELATION_DATA: TestContext = TestContext {
 };
 
 /// Correlation Data SHOULD be forwarded unchanged [MQTT-3.3.2-14].
-async fn correlation_data_preserved(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn correlation_data_preserved(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let props = Properties { correlation_data: Some(b"corr-123".to_vec()), ..Properties::default() };
-    property_forwarding_test(addr, recv_timeout, CORRELATION_DATA, "mqtt/test/pub/cd", props,
+    property_forwarding_test(addr, recv_timeout, CORRELATION_DATA, pb, "mqtt/test/pub/cd", props,
         |p| p.correlation_data.as_deref() == Some(b"corr-123"), "expected correlation_data=b\"corr-123\"").await
 }
 
@@ -491,9 +497,9 @@ const USER_PROPS: TestContext = TestContext {
 };
 
 /// User Properties SHOULD be forwarded unchanged [MQTT-3.3.2-18].
-async fn user_properties_preserved(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn user_properties_preserved(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let props = Properties { user_properties: vec![("key".to_string(), "value".to_string())], ..Properties::default() };
-    property_forwarding_test(addr, recv_timeout, USER_PROPS, "mqtt/test/pub/up", props,
+    property_forwarding_test(addr, recv_timeout, USER_PROPS, pb, "mqtt/test/pub/up", props,
         |p| p.user_properties.contains(&("key".to_string(), "value".to_string())),
         "expected user_properties to contain (\"key\", \"value\")").await
 }

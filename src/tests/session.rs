@@ -2,20 +2,24 @@
 
 use std::time::Duration;
 
+use indicatif::ProgressBar;
+
 use crate::client;
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions,
                    SubscribeParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub async fn run(addr: &str, recv_timeout: Duration) -> Suite {
+pub const TEST_COUNT: usize = 4;
+
+pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
         name: "SESSION",
         results: vec![
-            session_present_on_resume(addr, recv_timeout).await,
-            qos1_redelivery_on_resume(addr, recv_timeout).await,
-            qos2_redelivery_on_resume(addr, recv_timeout).await,
-            subscription_persists_across_sessions(addr, recv_timeout).await,
+            session_present_on_resume(addr, recv_timeout, pb).await,
+            qos1_redelivery_on_resume(addr, recv_timeout, pb).await,
+            qos2_redelivery_on_resume(addr, recv_timeout, pb).await,
+            subscription_persists_across_sessions(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -30,9 +34,9 @@ const SESSION_PRESENT: TestContext = TestContext {
 
 /// If a session exists and the client reconnects with Clean Start=0,
 /// session_present MUST be 1 in the CONNACK [MQTT-3.1.2-5].
-async fn session_present_on_resume(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn session_present_on_resume(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SESSION_PRESENT;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let client_id = "mqtt-test-session-present";
 
         // First connection: Clean Start=1, set Session Expiry so the session survives.
@@ -78,9 +82,9 @@ const QOS1_REDELIVER: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, any QoS 1 messages that were
 /// not acknowledged MUST be redelivered [MQTT-4.4.0-1].
-async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS1_REDELIVER;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let sub_id = "mqtt-test-qos1-redel-sub";
         let pub_id = "mqtt-test-qos1-redel-pub";
         let topic = "mqtt/test/session/qos1";
@@ -180,9 +184,9 @@ const QOS2_REDELIVER: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, incomplete QoS 2 flows
 /// MUST be resumed [MQTT-4.3.3 / MQTT-4.4].
-async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = QOS2_REDELIVER;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let sub_id = "mqtt-test-qos2-redel-sub";
         let pub_id = "mqtt-test-qos2-redel-pub";
         let topic = "mqtt/test/session/qos2";
@@ -296,9 +300,9 @@ const SUB_PERSISTS: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, its subscriptions from
 /// the previous session MUST still be active [MQTT-3.1.2-6].
-async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SUB_PERSISTS;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let sub_id = "mqtt-test-sub-persist";
         let pub_id = "mqtt-test-sub-persist-pub";
         let topic = "mqtt/test/session/persist";

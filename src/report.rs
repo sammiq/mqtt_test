@@ -1,3 +1,5 @@
+use indicatif::ProgressBar;
+
 use crate::types::{Compliance, Outcome, Suite, TestContext, TestResult};
 
 pub struct Report {
@@ -93,8 +95,10 @@ impl Report {
 }
 
 /// Convenience: wrap a test body so any `anyhow::Error` becomes a Fail result.
+/// Ticks the progress bar and prints a per-test status line when each test completes.
 pub fn run_test<F, Fut>(
     ctx: TestContext,
+    pb: &ProgressBar,
     f: F,
 ) -> impl std::future::Future<Output = TestResult>
 where
@@ -102,13 +106,27 @@ where
     Fut: std::future::Future<Output = anyhow::Result<TestResult>>,
 {
     tracing::debug!(id = ctx.id, ctx.description, "running test");
+    pb.set_message(ctx.id);
     let fut = f();
+    let pb = pb.clone();
     async move {
         let result = match fut.await {
             Ok(r)  => r,
             Err(e) => TestResult::fail(&ctx, format!("test error: {e:#}")),
         };
         tracing::debug!(id = ctx.id, outcome = ?result.outcome, "test complete");
+
+        let is_may = ctx.compliance == Compliance::May;
+        let symbol = match (&result.outcome, is_may) {
+            (Outcome::Pass,      false) => "\x1b[32m✓\x1b[0m",  // green check
+            (Outcome::Pass,      true)  => "\x1b[36m●\x1b[0m",  // cyan dot (supported)
+            (Outcome::Fail {..}, false) => "\x1b[31m✗\x1b[0m",  // red cross
+            (Outcome::Fail {..}, true)  => "\x1b[90m·\x1b[0m",  // dim dot (not supported)
+            (Outcome::Skip(_),   _)     => "\x1b[90m○\x1b[0m",  // dim circle (skipped)
+        };
+        pb.println(format!("  {symbol} {}", ctx.description));
+        pb.inc(1);
+
         result
     }
 }

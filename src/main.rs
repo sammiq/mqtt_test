@@ -4,9 +4,11 @@ mod report;
 mod tests;
 mod types;
 
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
+use indicatif::{MultiProgress, ProgressDrawTarget};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -108,6 +110,17 @@ async fn main() {
     }
 
     println!();
-    let report = tests::run_selected(&args.broker, recv_timeout, suites_to_run).await;
+
+    // Set up progress bars — hide when debug logging is active or stdout is not a TTY.
+    let mp = MultiProgress::new();
+    let show_progress = !args.debug && !args.trace && std::io::stderr().is_terminal();
+    if !show_progress {
+        mp.set_draw_target(ProgressDrawTarget::hidden());
+    }
+
+    let report = tests::run_selected(&args.broker, recv_timeout, suites_to_run, &mp).await;
+    mp.clear().ok();
+
+    println!();
     report.print(args.verbose);
 }

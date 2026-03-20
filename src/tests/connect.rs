@@ -2,35 +2,39 @@
 
 use std::time::Duration;
 
+use indicatif::ProgressBar;
+
 use crate::client::{self, RawClient};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions,
                    SubscribeParams, WillParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub async fn run(addr: &str, recv_timeout: Duration) -> Suite {
+pub const TEST_COUNT: usize = 19;
+
+pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
         name: "CONNECT / CONNACK",
         results: vec![
-            basic_connect(addr, recv_timeout).await,
-            clean_start_true(addr, recv_timeout).await,
-            clean_start_false_no_session(addr, recv_timeout).await,
-            zero_length_client_id(addr, recv_timeout).await,
-            zero_length_client_id_no_clean_start(addr, recv_timeout).await,
-            first_packet_must_be_connect(addr, recv_timeout).await,
-            session_expiry_interval_accepted(addr, recv_timeout).await,
-            receive_maximum_accepted(addr, recv_timeout).await,
-            maximum_packet_size_accepted(addr, recv_timeout).await,
-            duplicate_connect(addr, recv_timeout).await,
-            invalid_protocol_name(addr, recv_timeout).await,
-            invalid_protocol_version(addr, recv_timeout).await,
-            keep_alive_timeout(addr, recv_timeout).await,
-            will_message_on_unexpected_close(addr, recv_timeout).await,
-            will_message_removed_on_disconnect(addr, recv_timeout).await,
-            will_retain_flag(addr, recv_timeout).await,
-            server_maximum_qos(addr, recv_timeout).await,
-            server_receive_maximum(addr, recv_timeout).await,
-            enhanced_auth_method(addr, recv_timeout).await,
+            basic_connect(addr, recv_timeout, pb).await,
+            clean_start_true(addr, recv_timeout, pb).await,
+            clean_start_false_no_session(addr, recv_timeout, pb).await,
+            zero_length_client_id(addr, recv_timeout, pb).await,
+            zero_length_client_id_no_clean_start(addr, recv_timeout, pb).await,
+            first_packet_must_be_connect(addr, recv_timeout, pb).await,
+            session_expiry_interval_accepted(addr, recv_timeout, pb).await,
+            receive_maximum_accepted(addr, recv_timeout, pb).await,
+            maximum_packet_size_accepted(addr, recv_timeout, pb).await,
+            duplicate_connect(addr, recv_timeout, pb).await,
+            invalid_protocol_name(addr, recv_timeout, pb).await,
+            invalid_protocol_version(addr, recv_timeout, pb).await,
+            keep_alive_timeout(addr, recv_timeout, pb).await,
+            will_message_on_unexpected_close(addr, recv_timeout, pb).await,
+            will_message_removed_on_disconnect(addr, recv_timeout, pb).await,
+            will_retain_flag(addr, recv_timeout, pb).await,
+            server_maximum_qos(addr, recv_timeout, pb).await,
+            server_receive_maximum(addr, recv_timeout, pb).await,
+            enhanced_auth_method(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -44,9 +48,9 @@ const BASIC_CONNECT: TestContext = TestContext {
 };
 
 /// A valid CONNECT MUST receive a CONNACK in return [MQTT-3.2.0-1].
-async fn basic_connect(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn basic_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = BASIC_CONNECT;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-basic-connect");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -70,9 +74,9 @@ const CLEAN_START_TRUE: TestContext = TestContext {
 };
 
 /// Clean Start = 1 MUST create a new session [MQTT-3.1.2-4].
-async fn clean_start_true(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn clean_start_true(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CLEAN_START_TRUE;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-clean-start");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -93,9 +97,9 @@ const CLEAN_START_FALSE: TestContext = TestContext {
 };
 
 /// Clean Start = 0 with no existing session MUST set session_present=0 [MQTT-3.2.2-4].
-async fn clean_start_false_no_session(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn clean_start_false_no_session(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = CLEAN_START_FALSE;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         // Use a unique client ID unlikely to have an existing session.
         let id = format!("mqtt-test-no-session-{}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -123,9 +127,9 @@ const ZERO_LEN_CLIENT_ID: TestContext = TestContext {
 };
 
 /// Zero-length client ID with Clean Start=1 MUST be accepted [MQTT-3.1.3-7].
-async fn zero_length_client_id(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn zero_length_client_id(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ZERO_LEN_CLIENT_ID;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
         let _ = client.send_disconnect(0x00).await;
@@ -148,9 +152,9 @@ const ZERO_LEN_NO_CLEAN: TestContext = TestContext {
 };
 
 /// Zero-length client ID with Clean Start=0 MAY be rejected [MQTT-3.1.3-8].
-async fn zero_length_client_id_no_clean_start(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn zero_length_client_id_no_clean_start(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ZERO_LEN_NO_CLEAN;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut params = ConnectParams::new("");
         params.clean_start = false;
 
@@ -191,9 +195,9 @@ const FIRST_CONNECT: TestContext = TestContext {
 };
 
 /// First packet on a connection MUST be CONNECT [MQTT-3.1.0-1].
-async fn first_packet_must_be_connect(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn first_packet_must_be_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = FIRST_CONNECT;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Send a PINGREQ as the first packet instead of CONNECT
@@ -220,9 +224,9 @@ const SESSION_EXPIRY: TestContext = TestContext {
 };
 
 /// Session Expiry Interval property is accepted [MQTT-3.1.2-11].
-async fn session_expiry_interval_accepted(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn session_expiry_interval_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SESSION_EXPIRY;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut params = ConnectParams::new("mqtt-test-sei");
         params.properties.session_expiry_interval = Some(60);
 
@@ -245,9 +249,9 @@ const RECEIVE_MAX: TestContext = TestContext {
 };
 
 /// Receive Maximum property is accepted [MQTT-3.1.2-11].
-async fn receive_maximum_accepted(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn receive_maximum_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RECEIVE_MAX;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut params = ConnectParams::new("mqtt-test-recv-max");
         params.properties.receive_maximum = Some(10);
 
@@ -270,9 +274,9 @@ const MAX_PACKET_SIZE: TestContext = TestContext {
 };
 
 /// Maximum Packet Size property is accepted [MQTT-3.2.2-17].
-async fn maximum_packet_size_accepted(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn maximum_packet_size_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = MAX_PACKET_SIZE;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut params = ConnectParams::new("mqtt-test-max-pkt");
         params.properties.maximum_packet_size = Some(65536);
 
@@ -297,9 +301,9 @@ const DUP_CONNECT: TestContext = TestContext {
 };
 
 /// Server MUST disconnect a client that sends a second CONNECT [MQTT-3.1.0-2].
-async fn duplicate_connect(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn duplicate_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = DUP_CONNECT;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-dup-connect");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -326,9 +330,9 @@ const INVALID_PROTO_NAME: TestContext = TestContext {
 };
 
 /// Server MUST close connection if protocol name is not 'MQTT' [MQTT-3.1.2-1].
-async fn invalid_protocol_name(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn invalid_protocol_name(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_PROTO_NAME;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // CONNECT with protocol name "XQTT" instead of "MQTT"
@@ -360,9 +364,9 @@ const INVALID_PROTO_VER: TestContext = TestContext {
 };
 
 /// Server MAY respond with 0x84 for unsupported protocol version [MQTT-3.1.2-2].
-async fn invalid_protocol_version(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn invalid_protocol_version(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = INVALID_PROTO_VER;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // CONNECT with protocol version 4 (MQTT 3.1.1) — no properties field
@@ -405,9 +409,9 @@ const KEEP_ALIVE: TestContext = TestContext {
 };
 
 /// Server MUST disconnect client that exceeds 1.5× keep-alive without activity [MQTT-3.1.2-22].
-async fn keep_alive_timeout(addr: &str, _recv_timeout: Duration) -> TestResult {
+async fn keep_alive_timeout(addr: &str, _recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = KEEP_ALIVE;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut params = ConnectParams::new("mqtt-test-keepalive");
         params.keep_alive = 2; // 2 seconds → broker should disconnect after ~3s
 
@@ -434,9 +438,9 @@ const WILL_ON_CLOSE: TestContext = TestContext {
 };
 
 /// Will message MUST be published on unexpected connection close [MQTT-3.1.2-8].
-async fn will_message_on_unexpected_close(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn will_message_on_unexpected_close(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILL_ON_CLOSE;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let will_topic = "mqtt/test/will/unexpected";
 
         // Set up a subscriber to receive the will message
@@ -501,9 +505,9 @@ const WILL_REMOVED_ON_DISCONNECT: TestContext = TestContext {
 };
 
 /// Will message MUST be removed from session on normal DISCONNECT [MQTT-3.1.2-10].
-async fn will_message_removed_on_disconnect(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn will_message_removed_on_disconnect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILL_REMOVED_ON_DISCONNECT;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let will_topic = "mqtt/test/will/normal";
 
         // Set up a subscriber
@@ -564,9 +568,9 @@ const WILL_RETAIN: TestContext = TestContext {
 };
 
 /// Will Retain flag MUST be respected [MQTT-3.1.2-13].
-async fn will_retain_flag(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn will_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = WILL_RETAIN;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let will_topic = "mqtt/test/will/retain";
 
         // Check if broker supports retain
@@ -660,9 +664,9 @@ const SERVER_MAX_QOS: TestContext = TestContext {
 };
 
 /// If server advertises Maximum QoS, publishing above it MUST result in DISCONNECT [MQTT-3.2.2-19].
-async fn server_maximum_qos(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn server_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SERVER_MAX_QOS;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-max-qos");
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -763,9 +767,9 @@ const SERVER_RECV_MAX: TestContext = TestContext {
 };
 
 /// Server MUST respect client's Receive Maximum [MQTT-3.2.2-14].
-async fn server_receive_maximum(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn server_receive_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SERVER_RECV_MAX;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         // Connect with a very low Receive Maximum
         let recv_max: u16 = 2;
         let mut sub_params = ConnectParams::new("mqtt-test-recv-max-sub");
@@ -846,9 +850,9 @@ const ENHANCED_AUTH: TestContext = TestContext {
 /// If the broker does not support the method, it should respond with a CONNACK
 /// containing reason code 0x8C (Bad authentication method) or 0x87 (Not Authorized).
 /// If it does support it, it may respond with an AUTH packet to continue the exchange.
-async fn enhanced_auth_method(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn enhanced_auth_method(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = ENHANCED_AUTH;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut params = ConnectParams::new("mqtt-test-enhanced-auth");
         params.properties.authentication_method = Some("SCRAM-SHA-256".to_string());
         params.properties.authentication_data = Some(b"client-first-message".to_vec());

@@ -7,20 +7,24 @@
 
 use std::time::Duration;
 
+use indicatif::ProgressBar;
+
 use crate::client::{self, RawClient};
 use crate::codec::{ConnectParams, Packet};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub async fn run(addr: &str, recv_timeout: Duration) -> Suite {
+pub const TEST_COUNT: usize = 5;
+
+pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
         name: "MALFORMED PACKETS",
         results: vec![
-            reserved_connect_flags(addr, recv_timeout).await,
-            malformed_remaining_length(addr, recv_timeout).await,
-            publish_empty_topic_no_alias(addr, recv_timeout).await,
-            subscribe_no_filters(addr, recv_timeout).await,
-            subscribe_invalid_qos(addr, recv_timeout).await,
+            reserved_connect_flags(addr, recv_timeout, pb).await,
+            malformed_remaining_length(addr, recv_timeout, pb).await,
+            publish_empty_topic_no_alias(addr, recv_timeout, pb).await,
+            subscribe_no_filters(addr, recv_timeout, pb).await,
+            subscribe_invalid_qos(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -46,9 +50,9 @@ const RESERVED_FLAGS: TestContext = TestContext {
 
 /// The CONNECT packet's connect-flags byte has a reserved bit (bit 0) that
 /// MUST be 0. Sending it as 1 is a malformed packet [MQTT-3.1.2-3].
-async fn reserved_connect_flags(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn reserved_connect_flags(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = RESERVED_FLAGS;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Hand-craft a CONNECT with reserved flag bit 0 = 1.
@@ -79,9 +83,9 @@ const BAD_REMAINING_LEN: TestContext = TestContext {
 
 /// A packet with a remaining-length field that uses more than 4 bytes
 /// (continuation bit set on all 4 bytes) is malformed [MQTT-1.5.5-1].
-async fn malformed_remaining_length(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn malformed_remaining_length(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = BAD_REMAINING_LEN;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let mut client = RawClient::connect_tcp(addr).await?;
 
         // Send a CONNECT-like packet with a 5-byte remaining length (all continuation bits set).
@@ -106,9 +110,9 @@ const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
 
 /// A PUBLISH with an empty topic string and no Topic Alias property is
 /// a protocol error [MQTT-3.3.2-8].
-async fn publish_empty_topic_no_alias(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn publish_empty_topic_no_alias(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = EMPTY_TOPIC_NO_ALIAS;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-empty-topic");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -136,9 +140,9 @@ const SUB_NO_FILTERS: TestContext = TestContext {
 
 /// A SUBSCRIBE packet MUST contain at least one topic filter [MQTT-3.8.3-3].
 /// The payload must be non-empty.
-async fn subscribe_no_filters(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn subscribe_no_filters(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SUB_NO_FILTERS;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-sub-empty");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
@@ -166,9 +170,9 @@ const SUB_INVALID_QOS: TestContext = TestContext {
 
 /// The subscription options byte's upper 2 QoS bits (6-7) are reserved and
 /// MUST be 0. Setting them is a protocol error [MQTT-3.8.3-5].
-async fn subscribe_invalid_qos(addr: &str, recv_timeout: Duration) -> TestResult {
+async fn subscribe_invalid_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
     let ctx = SUB_INVALID_QOS;
-    run_test(ctx, || async move {
+    run_test(ctx, pb, || async move {
         let params = ConnectParams::new("mqtt-test-sub-bad-qos");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 

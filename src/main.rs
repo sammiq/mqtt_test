@@ -15,6 +15,8 @@ pub enum SuiteName {
     Ping,
     Publish,
     Subscribe,
+    Session,
+    Malformed,
     Disconnect,
 }
 
@@ -25,6 +27,8 @@ impl std::fmt::Display for SuiteName {
             Self::Ping       => write!(f, "ping"),
             Self::Publish    => write!(f, "publish"),
             Self::Subscribe  => write!(f, "subscribe"),
+            Self::Session    => write!(f, "session"),
+            Self::Malformed  => write!(f, "malformed"),
             Self::Disconnect => write!(f, "disconnect"),
         }
     }
@@ -75,7 +79,7 @@ async fn main() {
     let recv_timeout = Duration::from_millis(args.timeout_ms);
 
     // Resolve which suites to run
-    let all_suites = [SuiteName::Connect, SuiteName::Ping, SuiteName::Publish, SuiteName::Subscribe, SuiteName::Disconnect];
+    let all_suites = [SuiteName::Connect, SuiteName::Ping, SuiteName::Publish, SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed, SuiteName::Disconnect];
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 
     println!("Testing broker at {} (timeout: {}ms)", args.broker, args.timeout_ms);

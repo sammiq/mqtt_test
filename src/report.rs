@@ -27,15 +27,16 @@ impl Report {
                     Compliance::Should => "SHOULD",
                     Compliance::May    => "MAY   ",
                 };
+                let is_may = r.ctx.compliance == Compliance::May;
                 let (status, detail) = match &r.outcome {
-                    Outcome::Pass => ("PASS", String::new()),
+                    Outcome::Pass => (if is_may { " YES" } else { "PASS" }, String::new()),
                     Outcome::Fail { message, verbose: verbose_detail } => {
                         let msg = if verbose {
                             verbose_detail.as_deref().unwrap_or(message)
                         } else {
                             message
                         };
-                        ("FAIL", format!(" — {msg}"))
+                        (if is_may { "  NO" } else { "FAIL" }, format!(" — {msg}"))
                     }
                     Outcome::Skip(msg) => ("SKIP", format!(" — {msg}")),
                 };

@@ -55,11 +55,9 @@ async fn qos0_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 
         match client.recv(recv_timeout).await? {
             Packet::Publish(p) if p.topic == "mqtt/test/pub/qos0" => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/pub/qos0\"", &other))
             }
         }
@@ -86,18 +84,15 @@ async fn qos1_gets_puback(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
         for _ in 0..5 {
             match client.recv(recv_timeout).await? {
                 Packet::PubAck(ack) if ack.packet_id == 1 => {
-                    let _ = client.send_disconnect(0x00).await;
                     return Ok(TestResult::pass(&ctx));
                 }
                 Packet::Publish(_) => {} // may receive own loopback — ignore
                 other => {
-                    let _ = client.send_disconnect(0x00).await;
                     return Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other));
                 }
             }
         }
 
-        let _ = client.send_disconnect(0x00).await;
         Ok(TestResult::fail(&ctx, "PUBACK not received within packet limit"))
     })
     .await
@@ -132,7 +127,6 @@ async fn qos1_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
                 break;
             }
         }
-        let _ = pub_client.send_disconnect(0x00).await;
 
         // Subscriber should receive at QoS 1
         match sub_client.recv(recv_timeout).await {
@@ -141,7 +135,6 @@ async fn qos1_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
                 if let Some(pid) = p.packet_id {
                     sub_client.send_puback(pid, 0x00).await?;
                 }
-                let _ = sub_client.send_disconnect(0x00).await;
                 if p.qos == QoS::AtLeastOnce {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -152,11 +145,9 @@ async fn qos1_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
                 }
             }
             Ok(other) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, &format!("PUBLISH on topic \"{topic}\""), &other))
             }
             Err(_) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(&ctx, "No message delivered to QoS 1 subscriber"))
             }
         }
@@ -187,24 +178,20 @@ async fn qos2_full_flow(addr: &str, recv_timeout: Duration, pb: &ProgressBar) ->
 
                     match client.recv(recv_timeout).await? {
                         Packet::PubComp(comp) if comp.packet_id == 2 => {
-                            let _ = client.send_disconnect(0x00).await;
                             return Ok(TestResult::pass(&ctx));
                         }
                         other => {
-                            let _ = client.send_disconnect(0x00).await;
                             return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(2)", &other));
                         }
                     }
                 }
                 Packet::Publish(_) => {} // loopback — ignore
                 other => {
-                    let _ = client.send_disconnect(0x00).await;
                     return Ok(TestResult::fail_packet(&ctx, "PUBREC(2)", &other));
                 }
             }
         }
 
-        let _ = client.send_disconnect(0x00).await;
         Ok(TestResult::fail(&ctx, "PUBREC not received within packet limit"))
     })
     .await
@@ -273,7 +260,6 @@ async fn dup_on_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Te
             Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
             Ok(Packet::Publish(_)) => {
                 // Some brokers may silently accept and forward — this is non-compliant
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(
                     &ctx,
                     "Broker accepted PUBLISH with DUP=1 and QoS=0 (should disconnect)",
@@ -319,12 +305,10 @@ async fn qos_downgrade_on_delivery(addr: &str, recv_timeout: Duration, pb: &Prog
                 _ => {}
             }
         }
-        let _ = pub_client.send_disconnect(0x00).await;
 
         // Subscriber should receive at QoS 0 (no packet_id field)
         match sub_client.recv(recv_timeout).await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 if p.qos == QoS::AtMostOnce {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -338,11 +322,9 @@ async fn qos_downgrade_on_delivery(addr: &str, recv_timeout: Duration, pb: &Prog
                 }
             }
             Ok(other) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, &format!("PUBLISH on topic \"{topic}\""), &other))
             }
             Err(_) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(&ctx, "No message delivered to subscriber"))
             }
         }
@@ -367,25 +349,20 @@ async fn retain_flag_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressB
 
         let pub_params = PublishParams::retained("mqtt/test/pub/retain", b"retained-payload".to_vec());
         pub_client.send_publish(&pub_params).await?;
-        let _ = pub_client.send_disconnect(0x00).await;
 
         let mut sub_client = client::connect_and_subscribe(addr, "mqtt-test-retain-sub", "mqtt/test/pub/retain", QoS::AtMostOnce, recv_timeout).await?;
 
         match sub_client.recv(recv_timeout).await {
             Ok(Packet::Publish(p)) if p.retain && p.topic == "mqtt/test/pub/retain" => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
             Ok(Packet::Publish(_)) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(&ctx, "Received PUBLISH but retain flag not set on delivery"))
             }
             Ok(other) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "retained PUBLISH", &other))
             }
             Err(_) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(&ctx, "No retained message delivered to new subscriber"))
             }
         }
@@ -407,7 +384,6 @@ async fn topic_alias_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressB
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
         if connack.properties.topic_alias_maximum == Some(0) {
-            let _ = client.send_disconnect(0x00).await;
             return Ok(TestResult::skip(&ctx, "Broker reported Topic Alias Maximum = 0 (not supported)"));
         }
 
@@ -426,7 +402,6 @@ async fn topic_alias_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressB
         for _ in 0..5 {
             match client.recv(recv_timeout).await? {
                 Packet::PubAck(ack) if ack.packet_id == 1 => {
-                    let _ = client.send_disconnect(0x00).await;
                     return Ok(TestResult::pass(&ctx));
                 }
                 Packet::Disconnect(d) => {
@@ -437,13 +412,11 @@ async fn topic_alias_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressB
                 }
                 Packet::Publish(_) => {} // loopback
                 other => {
-                    let _ = client.send_disconnect(0x00).await;
                     return Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other));
                 }
             }
         }
 
-        let _ = client.send_disconnect(0x00).await;
         Ok(TestResult::fail(&ctx, "No PUBACK received"))
     })
     .await
@@ -478,7 +451,6 @@ async fn property_forwarding_test(
 
         match client.recv(recv_timeout).await? {
             Packet::Publish(p) if p.topic == topic => {
-                let _ = client.send_disconnect(0x00).await;
                 if check(&p.properties) {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -489,7 +461,6 @@ async fn property_forwarding_test(
                 }
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, &format!("PUBLISH on topic \"{topic}\""), &other))
             }
         }
@@ -609,7 +580,6 @@ async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
                 _ => break,
             }
         }
-        let _ = pub_client.send_disconnect(0x00).await;
 
         // Receive and verify order
         let mut received = Vec::new();
@@ -625,7 +595,6 @@ async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
                 Err(_) => break,
             }
         }
-        let _ = sub_client.send_disconnect(0x00).await;
 
         let expected: Vec<String> = (0..5).map(|i| format!("msg-{i}")).collect();
         if received == expected {
@@ -665,7 +634,6 @@ async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration,
         let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
         let pub_params = PublishParams::retained(topic, b"retain-flag-test".to_vec());
         pub_client.send_publish(&pub_params).await?;
-        let _ = pub_client.send_disconnect(0x00).await;
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -692,14 +660,12 @@ async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration,
                 )
             }
         };
-        let _ = sub_client.send_disconnect(0x00).await;
 
         // Clean up: remove retained message by publishing empty payload with retain.
         let cleanup_conn = ConnectParams::new("mqtt-test-retflag-cleanup");
         if let Ok((mut c, _)) = client::connect(addr, &cleanup_conn, recv_timeout).await {
             let clear = PublishParams::retained(topic, Vec::new());
             let _ = c.send_publish(&clear).await;
-            let _ = c.send_disconnect(0x00).await;
         }
 
         Ok(result)

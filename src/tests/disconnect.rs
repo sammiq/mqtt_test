@@ -34,7 +34,8 @@ async fn server_closes_after_disconnect(addr: &str, recv_timeout: Duration, pb: 
     let ctx = DISCONNECT_CLOSE;
     run_test(ctx, pb, async {
         let params = ConnectParams::new("mqtt-test-disconnect");
-        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+        let (client, _) = client::connect(addr, &params, recv_timeout).await?;
+        let mut client = client.into_raw();
 
         client.send_disconnect(0x00).await?;
 
@@ -78,15 +79,12 @@ async fn disconnect_with_will(addr: &str, recv_timeout: Duration, pb: &ProgressB
 
         match sub_client.recv(Duration::from_secs(5)).await {
             Ok(Packet::Publish(p)) if p.topic == will_topic => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
             Ok(other) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "PUBLISH (will message)", &other))
             }
             Err(_) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(
                     &ctx,
                     "Will message not received after DISCONNECT with reason 0x04",
@@ -116,27 +114,23 @@ async fn normal_disconnect_discards_will(addr: &str, recv_timeout: Duration, pb:
         // Connect with a will message
         let mut will_params = ConnectParams::new("mqtt-test-dc-discard-pub");
         will_params.will = Some(WillParams::new(will_topic, b"should-not-appear"));
-        let (mut will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
+        let (will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
 
         // Disconnect normally — will MUST be discarded
-        will_client.send_disconnect(0x00).await?;
         drop(will_client);
 
         // Wait briefly — should NOT receive the will message
         match sub_client.recv(Duration::from_secs(2)).await {
             Err(_) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
             Ok(Packet::Publish(p)) if p.topic == will_topic => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(
                     &ctx,
                     "Will message was published despite normal DISCONNECT (0x00)",
                 ))
             }
             Ok(_) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
         }

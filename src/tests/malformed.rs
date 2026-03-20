@@ -260,7 +260,6 @@ async fn subscribe_invalid_wildcard(addr: &str, recv_timeout: Duration, pb: &Pro
         match client.recv(recv_timeout).await {
             Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
             Ok(Packet::SubAck(ack)) => {
-                let _ = client.send_disconnect(0x00).await;
                 if ack.reason_codes.iter().all(|&c| c >= 0x80) {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -404,7 +403,6 @@ async fn subscribe_invalid_plus_wildcard(addr: &str, recv_timeout: Duration, pb:
         match client.recv(recv_timeout).await {
             Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
             Ok(Packet::SubAck(ack)) => {
-                let _ = client.send_disconnect(0x00).await;
                 if ack.reason_codes.iter().all(|&c| c >= 0x80) {
                     Ok(TestResult::pass(&ctx))
                 } else {

@@ -55,7 +55,6 @@ async fn basic_subscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -
 
         match client.recv(recv_timeout).await? {
             Packet::SubAck(ack) if ack.packet_id == 1 => {
-                let _ = client.send_disconnect(0x00).await;
                 if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -66,7 +65,6 @@ async fn basic_subscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -
                 }
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other))
             }
         }
@@ -92,7 +90,6 @@ async fn wildcard_plus(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         match client.recv(recv_timeout).await? {
             Packet::SubAck(_) => {}
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
             }
         }
@@ -103,11 +100,9 @@ async fn wildcard_plus(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 
         match client.recv(recv_timeout).await? {
             Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_plus/match" => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/wc_plus/match\"", &other))
             }
         }
@@ -133,7 +128,6 @@ async fn wildcard_hash(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         match client.recv(recv_timeout).await? {
             Packet::SubAck(_) => {}
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
             }
         }
@@ -147,11 +141,9 @@ async fn wildcard_hash(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 
         match client.recv(recv_timeout).await? {
             Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_hash/deep/nested/topic" => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/wc_hash/deep/nested/topic\"", &other))
             }
         }
@@ -176,11 +168,9 @@ async fn unsubscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Te
 
         match client.recv(recv_timeout).await? {
             Packet::UnsubAck(ack) if ack.packet_id == 2 => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::pass(&ctx))
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "UNSUBACK(2)", &other))
             }
         }
@@ -207,7 +197,6 @@ async fn dollar_topic_no_wildcard_match(addr: &str, recv_timeout: Duration, pb: 
         match client.recv(recv_timeout).await? {
             Packet::SubAck(_) => {}
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
             }
         }
@@ -245,8 +234,6 @@ async fn dollar_topic_no_wildcard_match(addr: &str, recv_timeout: Duration, pb: 
                 Ok(_) => {}
             }
         }
-
-        let _ = client.send_disconnect(0x00).await;
 
         if received_dollar {
             Ok(TestResult::fail(
@@ -300,7 +287,6 @@ async fn suback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &Progr
 
         match client.recv(recv_timeout).await? {
             Packet::SubAck(ack) if ack.packet_id == 1 => {
-                let _ = client.send_disconnect(0x00).await;
                 if ack.reason_codes.len() == 3 {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -314,7 +300,6 @@ async fn suback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &Progr
                 }
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other))
             }
         }
@@ -371,7 +356,6 @@ async fn unsuback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &Pro
 
         match client.recv(recv_timeout).await? {
             Packet::UnsubAck(ack) if ack.packet_id == 2 => {
-                let _ = client.send_disconnect(0x00).await;
                 if ack.reason_codes.len() == 3 {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -385,7 +369,6 @@ async fn unsuback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &Pro
                 }
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "UNSUBACK(2)", &other))
             }
         }
@@ -409,7 +392,6 @@ async fn shared_subscription(addr: &str, recv_timeout: Duration, pb: &ProgressBa
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
         if connack.properties.shared_subscription_available == Some(false) {
-            let _ = client.send_disconnect(0x00).await;
             return Ok(TestResult::skip(
                 &ctx,
                 "Broker reported Shared Subscription Available = false",
@@ -421,7 +403,6 @@ async fn shared_subscription(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 
         match client.recv(recv_timeout).await? {
             Packet::SubAck(ack) if ack.packet_id == 1 => {
-                let _ = client.send_disconnect(0x00).await;
                 if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -432,7 +413,6 @@ async fn shared_subscription(addr: &str, recv_timeout: Duration, pb: &ProgressBa
                 }
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other))
             }
         }
@@ -456,7 +436,6 @@ async fn subscription_identifier(addr: &str, recv_timeout: Duration, pb: &Progre
         let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
 
         if connack.properties.subscription_ids_available == Some(false) {
-            let _ = client.send_disconnect(0x00).await;
             return Ok(TestResult::skip(
                 &ctx,
                 "Broker reported Subscription Identifiers Available = false",
@@ -480,7 +459,6 @@ async fn subscription_identifier(addr: &str, recv_timeout: Duration, pb: &Progre
 
         match client.recv(recv_timeout).await? {
             Packet::Publish(p) if p.topic == "mqtt/test/sub/subid" => {
-                let _ = client.send_disconnect(0x00).await;
                 if p.properties.subscription_identifier == Some(42) {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -494,7 +472,6 @@ async fn subscription_identifier(addr: &str, recv_timeout: Duration, pb: &Progre
                 }
             }
             other => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/subid\"", &other))
             }
         }
@@ -541,14 +518,12 @@ async fn no_local_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         match client.recv(Duration::from_secs(1)).await {
             Err(_) => Ok(TestResult::pass(&ctx)),
             Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/no_local" => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(
                     &ctx,
                     "Received own PUBLISH despite no_local=true",
                 ))
             }
             Ok(other) => {
-                let _ = client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "no packet (no_local)", &other))
             }
         }
@@ -571,7 +546,6 @@ async fn retain_as_published(addr: &str, recv_timeout: Duration, pb: &ProgressBa
             client::connect(addr, &pub_params_conn, recv_timeout).await?;
 
         if connack.properties.retain_available == Some(false) {
-            let _ = pub_client.send_disconnect(0x00).await;
             return Ok(TestResult::skip(
                 &ctx,
                 "Broker reported Retain Available = false",
@@ -582,7 +556,6 @@ async fn retain_as_published(addr: &str, recv_timeout: Duration, pb: &ProgressBa
         pub_client
             .send_publish(&PublishParams::retained("mqtt/test/sub/rap", b"rap-test".to_vec()))
             .await?;
-        let _ = pub_client.send_disconnect(0x00).await;
 
         // New client subscribes with retain_as_published
         let sub_conn = ConnectParams::new("mqtt-test-rap-sub");
@@ -605,7 +578,6 @@ async fn retain_as_published(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 
         match sub_client.recv(recv_timeout).await {
             Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rap" => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 if p.retain {
                     Ok(TestResult::pass(&ctx))
                 } else {
@@ -616,11 +588,9 @@ async fn retain_as_published(addr: &str, recv_timeout: Duration, pb: &ProgressBa
                 }
             }
             Ok(other) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/rap\"", &other))
             }
             Err(_) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(
                     &ctx,
                     "No retained message delivered to subscriber",
@@ -647,7 +617,6 @@ async fn retain_handling_1(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
             client::connect(addr, &pub_conn, recv_timeout).await?;
 
         if connack.properties.retain_available == Some(false) {
-            let _ = pub_client.send_disconnect(0x00).await;
             return Ok(TestResult::skip(
                 &ctx,
                 "Broker reported Retain Available = false",
@@ -657,7 +626,6 @@ async fn retain_handling_1(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
         pub_client
             .send_publish(&PublishParams::retained("mqtt/test/sub/rh1", b"rh1-test".to_vec()))
             .await?;
-        let _ = pub_client.send_disconnect(0x00).await;
 
         // Subscribe with retain_handling=1
         let sub_conn = ConnectParams::new("mqtt-test-rh1-sub");
@@ -682,7 +650,6 @@ async fn retain_handling_1(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
         match sub_client.recv(recv_timeout).await {
             Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => {}
             _ => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 return Ok(TestResult::fail(
                     &ctx,
                     "No retained message on first subscription",
@@ -710,14 +677,12 @@ async fn retain_handling_1(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
         match sub_client.recv(Duration::from_secs(1)).await {
             Err(_) => Ok(TestResult::pass(&ctx)),
             Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(
                     &ctx,
                     "Retained message sent again on re-subscription",
                 ))
             }
             Ok(other) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "no packet on re-subscription", &other))
             }
         }
@@ -741,7 +706,6 @@ async fn retain_handling_2(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
             client::connect(addr, &pub_conn, recv_timeout).await?;
 
         if connack.properties.retain_available == Some(false) {
-            let _ = pub_client.send_disconnect(0x00).await;
             return Ok(TestResult::skip(
                 &ctx,
                 "Broker reported Retain Available = false",
@@ -751,7 +715,6 @@ async fn retain_handling_2(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
         pub_client
             .send_publish(&PublishParams::retained("mqtt/test/sub/rh2", b"rh2-test".to_vec()))
             .await?;
-        let _ = pub_client.send_disconnect(0x00).await;
 
         // Subscribe with retain_handling=2
         let sub_conn = ConnectParams::new("mqtt-test-rh2-sub");
@@ -776,14 +739,12 @@ async fn retain_handling_2(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
         match sub_client.recv(Duration::from_secs(1)).await {
             Err(_) => Ok(TestResult::pass(&ctx)),
             Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh2" => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail(
                     &ctx,
                     "Retained message delivered despite retain_handling=2",
                 ))
             }
             Ok(other) => {
-                let _ = sub_client.send_disconnect(0x00).await;
                 Ok(TestResult::fail_packet(&ctx, "no packet (retain_handling=2)", &other))
             }
         }

@@ -14,8 +14,8 @@ pub const TEST_COUNT: usize = 4;
 /// Clean up a persistent session by reconnecting with clean_start=true.
 async fn cleanup_session(addr: &str, client_id: &str, recv_timeout: Duration) {
     let params = ConnectParams::new(client_id);
-    if let Ok((mut c, _)) = client::connect(addr, &params, recv_timeout).await {
-        let _ = c.send_disconnect(0x00).await;
+    if let Ok((_c, _)) = client::connect(addr, &params, recv_timeout).await {
+        // AutoDisconnect handles the clean disconnect on drop.
     }
 }
 
@@ -49,9 +49,8 @@ async fn session_present_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         // First connection: Clean Start=1, set Session Expiry so the session survives.
         let mut params = ConnectParams::new(client_id);
         params.properties.session_expiry_interval = Some(60);
-        let (mut c1, _) = client::connect(addr, &params, recv_timeout).await?;
-        let _ = c1.send_disconnect(0x00).await;
-        drop(c1);
+        let (c1, _) = client::connect(addr, &params, recv_timeout).await?;
+        drop(c1); // AutoDisconnect sends DISCONNECT on drop.
 
         // Small delay so the broker has processed the disconnect.
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -60,8 +59,7 @@ async fn session_present_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         let mut params2 = ConnectParams::new(client_id);
         params2.clean_start = false;
         params2.properties.session_expiry_interval = Some(60);
-        let (mut c2, connack) = client::connect(addr, &params2, recv_timeout).await?;
-        let _ = c2.send_disconnect(0x00).await;
+        let (_c2, connack) = client::connect(addr, &params2, recv_timeout).await?;
 
         // Clean up the session.
         cleanup_session(addr, client_id, recv_timeout).await;
@@ -103,7 +101,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         sub_client.recv(recv_timeout).await?; // SUBACK
 
         // 2. Disconnect the subscriber abruptly (no DISCONNECT packet) so messages queue.
-        drop(sub_client);
+        drop(sub_client.into_raw());
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // 3. Publish a QoS 1 message while subscriber is offline.
@@ -115,8 +113,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         for _ in 0..5 {
             if let Packet::PubAck(_) = pub_client.recv(recv_timeout).await? { break }
         }
-        let _ = pub_client.send_disconnect(0x00).await;
-        drop(pub_client);
+        drop(pub_client); // AutoDisconnect sends DISCONNECT on drop.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // 4. Reconnect subscriber with Clean Start=0 — should receive the queued message.
@@ -126,7 +123,6 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         let (mut sub_client2, connack) = client::connect(addr, &sub_params2, recv_timeout).await?;
 
         if !connack.session_present {
-            let _ = sub_client2.send_disconnect(0x00).await;
             cleanup_session(addr, sub_id, recv_timeout).await;
             return Ok(TestResult::fail(
                 &ctx,
@@ -149,7 +145,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
                 )
             }
         };
-        let _ = sub_client2.send_disconnect(0x00).await;
+        // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
         cleanup_session(addr, sub_id, recv_timeout).await;
 
@@ -183,7 +179,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         sub_client.recv(recv_timeout).await?; // SUBACK
 
         // 2. Disconnect subscriber abruptly.
-        drop(sub_client);
+        drop(sub_client.into_raw());
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // 3. Publish a QoS 2 message while subscriber is offline.
@@ -206,8 +202,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
                 _ => {}
             }
         }
-        let _ = pub_client.send_disconnect(0x00).await;
-        drop(pub_client);
+        drop(pub_client); // AutoDisconnect sends DISCONNECT on drop.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // 4. Reconnect subscriber with Clean Start=0.
@@ -217,7 +212,6 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         let (mut sub_client2, connack) = client::connect(addr, &sub_params2, recv_timeout).await?;
 
         if !connack.session_present {
-            let _ = sub_client2.send_disconnect(0x00).await;
             cleanup_session(addr, sub_id, recv_timeout).await;
             return Ok(TestResult::fail(
                 &ctx,
@@ -244,7 +238,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
                 )
             }
         };
-        let _ = sub_client2.send_disconnect(0x00).await;
+        // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
         cleanup_session(addr, sub_id, recv_timeout).await;
 
@@ -276,8 +270,7 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
         let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
         c1.send_subscribe(&sub).await?;
         c1.recv(recv_timeout).await?; // SUBACK
-        let _ = c1.send_disconnect(0x00).await;
-        drop(c1);
+        drop(c1); // AutoDisconnect sends DISCONNECT on drop.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // 2. Reconnect with Clean Start=0 — do NOT re-subscribe.
@@ -287,7 +280,6 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
         let (mut c2, connack) = client::connect(addr, &params2, recv_timeout).await?;
 
         if !connack.session_present {
-            let _ = c2.send_disconnect(0x00).await;
             cleanup_session(addr, sub_id, recv_timeout).await;
             return Ok(TestResult::fail(
                 &ctx,
@@ -300,7 +292,7 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
         let (mut pub_client, _) = client::connect(addr, &pub_params_conn, recv_timeout).await?;
         let pub_msg = PublishParams::qos0(topic, b"persist-test".to_vec());
         pub_client.send_publish(&pub_msg).await?;
-        let _ = pub_client.send_disconnect(0x00).await;
+        // AutoDisconnect on pub_client sends DISCONNECT on drop.
 
         // 4. The reconnected subscriber should receive it without re-subscribing.
         let result = match c2.recv(recv_timeout).await {
@@ -317,7 +309,7 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
                 )
             }
         };
-        let _ = c2.send_disconnect(0x00).await;
+        // AutoDisconnect on c2 sends DISCONNECT on drop.
 
         cleanup_session(addr, sub_id, recv_timeout).await;
 

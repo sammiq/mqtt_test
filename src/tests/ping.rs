@@ -37,10 +37,7 @@ async fn pingreq_gets_pingresp(addr: &str, recv_timeout: Duration, pb: &Progress
         client.send_pingreq().await?;
 
         match client.recv(recv_timeout).await? {
-            Packet::PingResp => {
-                let _ = client.send_disconnect(0x00).await;
-                Ok(TestResult::pass(&ctx))
-            }
+            Packet::PingResp => Ok(TestResult::pass(&ctx)),
             other => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
         }
     })
@@ -65,7 +62,6 @@ async fn multiple_pings(addr: &str, recv_timeout: Duration, pb: &ProgressBar) ->
             match client.recv(recv_timeout).await? {
                 Packet::PingResp => {}
                 other => {
-                    let _ = client.send_disconnect(0x00).await;
                     return Ok(TestResult::fail_packet(
                         &ctx,
                         format!("Ping {i}: expected PINGRESP").as_str(),
@@ -75,7 +71,6 @@ async fn multiple_pings(addr: &str, recv_timeout: Duration, pb: &ProgressBar) ->
             }
         }
 
-        let _ = client.send_disconnect(0x00).await;
         Ok(TestResult::pass(&ctx))
     })
     .await

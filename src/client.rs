@@ -4,6 +4,7 @@
 //! receive-with-timeout methods. Each compliance test creates its own client
 //! so that tests are fully isolated.
 
+use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -137,6 +138,44 @@ impl RawClient {
     }
 }
 
+// ── AutoDisconnect wrapper ──────────────────────────────────────────────────
+
+/// Wraps a [`RawClient`] and sends a DISCONNECT (reason 0x00) when dropped.
+///
+/// Use [`into_raw`](AutoDisconnect::into_raw) to take the inner client without
+/// sending DISCONNECT — needed for tests that intentionally drop a connection
+/// without a clean shutdown.
+pub struct AutoDisconnect(Option<RawClient>);
+
+impl AutoDisconnect {
+    /// Take the inner [`RawClient`], preventing the automatic DISCONNECT.
+    pub fn into_raw(mut self) -> RawClient {
+        self.0.take().expect("AutoDisconnect already consumed")
+    }
+}
+
+impl Deref for AutoDisconnect {
+    type Target = RawClient;
+    fn deref(&self) -> &RawClient {
+        self.0.as_ref().expect("AutoDisconnect already consumed")
+    }
+}
+
+impl DerefMut for AutoDisconnect {
+    fn deref_mut(&mut self) -> &mut RawClient {
+        self.0.as_mut().expect("AutoDisconnect already consumed")
+    }
+}
+
+impl Drop for AutoDisconnect {
+    fn drop(&mut self) {
+        if let Some(ref inner) = self.0 {
+            // DISCONNECT with reason 0x00: fixed two-byte packet.
+            let _ = inner.stream.try_write(&[0xE0, 0x00]);
+        }
+    }
+}
+
 /// Convenience: open TCP, send CONNECT, return the client and the CONNACK.
 ///
 /// Most tests call this rather than managing the handshake themselves.
@@ -144,13 +183,13 @@ pub async fn connect(
     addr: &str,
     params: &ConnectParams,
     recv_timeout: Duration,
-) -> Result<(RawClient, crate::codec::ConnAck)> {
+) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
     debug!(addr, client_id = %params.client_id, "CONNECT");
     let mut client = RawClient::connect_tcp(addr).await?;
     client.send_connect(params).await?;
 
     match client.recv(recv_timeout).await? {
-        Packet::ConnAck(connack) => Ok((client, connack)),
+        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
         other => bail!("expected CONNACK, got {other}"),
     }
 }
@@ -163,7 +202,7 @@ pub async fn connect_and_subscribe(
     topic: &str,
     qos: codec::QoS,
     recv_timeout: Duration,
-) -> Result<RawClient> {
+) -> Result<AutoDisconnect> {
     let params = ConnectParams::new(client_id);
     let (mut client, _) = connect(addr, &params, recv_timeout).await?;
 

@@ -1,0 +1,727 @@
+//! SUBSCRIBE / SUBACK / UNSUBSCRIBE / UNSUBACK compliance tests [MQTT-3.8 / MQTT-3.10].
+
+use std::time::Duration;
+
+use crate::client;
+use crate::codec::{
+    ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions, SubscribeParams,
+    UnsubscribeParams,
+};
+use crate::report::run_test;
+use crate::types::{Compliance, Suite, TestContext, TestResult};
+
+pub async fn run(addr: &str, recv_timeout: Duration) -> Suite {
+    Suite {
+        name: "SUBSCRIBE / UNSUBSCRIBE",
+        results: vec![
+            basic_subscribe(addr, recv_timeout).await,
+            wildcard_plus(addr, recv_timeout).await,
+            wildcard_hash(addr, recv_timeout).await,
+            unsubscribe(addr, recv_timeout).await,
+            dollar_topic_no_wildcard_match(addr, recv_timeout).await,
+            shared_subscription(addr, recv_timeout).await,
+            subscription_identifier(addr, recv_timeout).await,
+            no_local_flag(addr, recv_timeout).await,
+            retain_as_published(addr, recv_timeout).await,
+            retain_handling_1(addr, recv_timeout).await,
+            retain_handling_2(addr, recv_timeout).await,
+        ],
+    }
+}
+
+// ── MUST ─────────────────────────────────────────────────────────────────────
+
+const BASIC_SUB: TestContext = TestContext {
+    id: "MQTT-3.8.4-1",
+    description: "Server MUST send SUBACK in response to SUBSCRIBE",
+    compliance: Compliance::Must,
+};
+
+/// Server MUST send SUBACK in response to SUBSCRIBE [MQTT-3.8.4-1].
+async fn basic_subscribe(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = BASIC_SUB;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-subscribe");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/basic".to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(ack) if ack.packet_id == 1 => {
+                let _ = client.send_disconnect(0x00).await;
+                if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!("SUBACK reason code indicates failure: {:?}", ack.reason_codes),
+                    ))
+                }
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other))
+            }
+        }
+    })
+    .await
+}
+
+const WILDCARD_PLUS: TestContext = TestContext {
+    id: "MQTT-4.7.1-2",
+    description: "'+' wildcard MUST match exactly one topic level",
+    compliance: Compliance::Must,
+};
+
+/// `+` wildcard MUST match exactly one level [MQTT-4.7.1-2].
+async fn wildcard_plus(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = WILDCARD_PLUS;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-wildcard-plus");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/wc_plus/+".to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(_) => {}
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
+            }
+        }
+
+        client
+            .send_publish(&PublishParams::qos0("mqtt/test/sub/wc_plus/match", b"plus".to_vec()))
+            .await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_plus/match" => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::pass(&ctx))
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/wc_plus/match\"", &other))
+            }
+        }
+    })
+    .await
+}
+
+const WILDCARD_HASH: TestContext = TestContext {
+    id: "MQTT-4.7.1-3",
+    description: "'#' wildcard MUST match all sub-levels",
+    compliance: Compliance::Must,
+};
+
+/// `#` wildcard MUST match the parent and all sub-levels [MQTT-4.7.1-2].
+async fn wildcard_hash(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = WILDCARD_HASH;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-wildcard-hash");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/wc_hash/#".to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(_) => {}
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
+            }
+        }
+
+        client
+            .send_publish(&PublishParams::qos0(
+                "mqtt/test/sub/wc_hash/deep/nested/topic",
+                b"hash".to_vec(),
+            ))
+            .await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_hash/deep/nested/topic" => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::pass(&ctx))
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/wc_hash/deep/nested/topic\"", &other))
+            }
+        }
+    })
+    .await
+}
+
+const UNSUB: TestContext = TestContext {
+    id: "MQTT-3.10.4-4",
+    description: "Server MUST send UNSUBACK in response to UNSUBSCRIBE",
+    compliance: Compliance::Must,
+};
+
+/// Server MUST send UNSUBACK in response to UNSUBSCRIBE [MQTT-3.10.4-4].
+async fn unsubscribe(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = UNSUB;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-unsubscribe");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/unsub".to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        let unsub = UnsubscribeParams {
+            packet_id:  2,
+            filters:    vec!["mqtt/test/sub/unsub".to_string()],
+            properties: Properties::default(),
+        };
+        client.send_unsubscribe(&unsub).await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::UnsubAck(ack) if ack.packet_id == 2 => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::pass(&ctx))
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "UNSUBACK(2)", &other))
+            }
+        }
+    })
+    .await
+}
+
+const DOLLAR_TOPIC: TestContext = TestContext {
+    id: "MQTT-4.7.2-1",
+    description: "Topics starting with $ MUST NOT match wildcard subscriptions (#, +/...)",
+    compliance: Compliance::Must,
+};
+
+/// Topics starting with `$` MUST NOT be matched by subscriptions starting with `#` or `+` [MQTT-4.7.2-1].
+async fn dollar_topic_no_wildcard_match(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = DOLLAR_TOPIC;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-dollar-topic");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Subscribe to "#" which should match everything EXCEPT $-prefixed topics
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "#".to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(_) => {}
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
+            }
+        }
+
+        // Publish to a $SYS topic — subscriber to "#" should NOT receive it
+        client
+            .send_publish(&PublishParams::qos0(
+                "$SYS/mqtt/test/dollar",
+                b"dollar-test".to_vec(),
+            ))
+            .await?;
+
+        // Also publish a normal message so we know the subscription is active
+        client
+            .send_publish(&PublishParams::qos0(
+                "mqtt/test/sub/dollar_canary",
+                b"canary".to_vec(),
+            ))
+            .await?;
+
+        // We should receive the canary but NOT the $SYS message
+        let mut received_dollar = false;
+        let mut received_canary = false;
+        for _ in 0..5 {
+            match client.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Publish(p)) if p.topic.starts_with("$SYS") => {
+                    received_dollar = true;
+                }
+                Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/dollar_canary" => {
+                    received_canary = true;
+                    break;
+                }
+                Ok(Packet::Publish(_)) => {} // other messages on # — ignore
+                Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+
+        let _ = client.send_disconnect(0x00).await;
+
+        if received_dollar {
+            Ok(TestResult::fail(
+                &ctx,
+                "$SYS topic was delivered to '#' subscriber",
+            ))
+        } else if received_canary {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "Canary message not received — '#' subscription may not be working",
+            ))
+        }
+    })
+    .await
+}
+
+// ── MAY ──────────────────────────────────────────────────────────────────────
+
+const SHARED_SUB: TestContext = TestContext {
+    id: "MQTT-4.8.2-1",
+    description: "Shared subscriptions ($share/...) are supported",
+    compliance: Compliance::May,
+};
+
+/// Shared subscriptions ($share/group/topic) are accepted [MQTT-4.8.2].
+async fn shared_subscription(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = SHARED_SUB;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-shared-sub");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.properties.shared_subscription_available == Some(false) {
+            let _ = client.send_disconnect(0x00).await;
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker reported Shared Subscription Available = false",
+            ));
+        }
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "$share/testgroup/mqtt/test/sub/shared".to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(ack) if ack.packet_id == 1 => {
+                let _ = client.send_disconnect(0x00).await;
+                if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!("SUBACK reason code indicates failure: {:?}", ack.reason_codes),
+                    ))
+                }
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other))
+            }
+        }
+    })
+    .await
+}
+
+// ── Subscribe options ───────────────────────────────────────────────────────
+
+const SUB_ID: TestContext = TestContext {
+    id: "MQTT-3.8.2-2",
+    description: "Subscription Identifier MUST be returned in matching PUBLISH",
+    compliance: Compliance::Must,
+};
+
+/// Subscription Identifier MUST be returned in matching PUBLISH [MQTT-3.8.2-2].
+async fn subscription_identifier(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = SUB_ID;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-sub-id");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.properties.subscription_ids_available == Some(false) {
+            let _ = client.send_disconnect(0x00).await;
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker reported Subscription Identifiers Available = false",
+            ));
+        }
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/subid".to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties { subscription_identifier: Some(42), ..Properties::default() },
+        };
+        client.send_subscribe(&sub).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        client
+            .send_publish(&PublishParams::qos0("mqtt/test/sub/subid", b"subid-test".to_vec()))
+            .await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::Publish(p) if p.topic == "mqtt/test/sub/subid" => {
+                let _ = client.send_disconnect(0x00).await;
+                if p.properties.subscription_identifier == Some(42) {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!(
+                            "Expected subscription_identifier=42, got {:?}",
+                            p.properties.subscription_identifier
+                        ),
+                    ))
+                }
+            }
+            other => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/subid\"", &other))
+            }
+        }
+    })
+    .await
+}
+
+const NO_LOCAL: TestContext = TestContext {
+    id: "MQTT-3.8.3-3",
+    description: "no_local=true: server MUST NOT deliver messages from the same client",
+    compliance: Compliance::Must,
+};
+
+/// no_local=true: server MUST NOT send messages published by the same client [MQTT-3.8.3-3].
+async fn no_local_flag(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = NO_LOCAL;
+    run_test(ctx, || async move {
+        let params = ConnectParams::new("mqtt-test-no-local");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/no_local".to_string(),
+                SubscribeOptions {
+                    qos:      QoS::AtMostOnce,
+                    no_local: true,
+                    ..Default::default()
+                },
+            )],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        client
+            .send_publish(&PublishParams::qos0(
+                "mqtt/test/sub/no_local",
+                b"no-local-test".to_vec(),
+            ))
+            .await?;
+
+        // Expect NO message — short timeout is sufficient to confirm absence.
+        match client.recv(Duration::from_secs(1)).await {
+            Err(_) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/no_local" => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Received own PUBLISH despite no_local=true",
+                ))
+            }
+            Ok(other) => {
+                let _ = client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "no packet (no_local)", &other))
+            }
+        }
+    })
+    .await
+}
+
+const RETAIN_AS_PUB: TestContext = TestContext {
+    id: "MQTT-3.8.3-4",
+    description: "retain_as_published=true: retain flag MUST be preserved on delivery",
+    compliance: Compliance::Must,
+};
+
+/// retain_as_published=true: retain flag MUST be preserved on delivery [MQTT-3.8.3-4].
+async fn retain_as_published(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = RETAIN_AS_PUB;
+    run_test(ctx, || async move {
+        let pub_params_conn = ConnectParams::new("mqtt-test-rap-pub");
+        let (mut pub_client, connack) =
+            client::connect(addr, &pub_params_conn, recv_timeout).await?;
+
+        if connack.properties.retain_available == Some(false) {
+            let _ = pub_client.send_disconnect(0x00).await;
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker reported Retain Available = false",
+            ));
+        }
+
+        // Publish retained message
+        let pub_params = PublishParams {
+            topic:      "mqtt/test/sub/rap".to_string(),
+            payload:    b"rap-test".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     true,
+            packet_id:  None,
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&pub_params).await?;
+        let _ = pub_client.send_disconnect(0x00).await;
+
+        // New client subscribes with retain_as_published
+        let sub_conn = ConnectParams::new("mqtt-test-rap-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/rap".to_string(),
+                SubscribeOptions {
+                    qos:                  QoS::AtMostOnce,
+                    retain_as_published:  true,
+                    ..Default::default()
+                },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rap" => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                if p.retain {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        "Received PUBLISH but retain flag was cleared",
+                    ))
+                }
+            }
+            Ok(other) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic \"mqtt/test/sub/rap\"", &other))
+            }
+            Err(_) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail(
+                    &ctx,
+                    "No retained message delivered to subscriber",
+                ))
+            }
+        }
+    })
+    .await
+}
+
+const RETAIN_HANDLING_1: TestContext = TestContext {
+    id: "MQTT-3.8.3-5a",
+    description: "retain_handling=1: retained messages only on new subscription",
+    compliance: Compliance::Must,
+};
+
+/// retain_handling=1: retained messages sent only on NEW subscription [MQTT-3.8.3-5].
+async fn retain_handling_1(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = RETAIN_HANDLING_1;
+    run_test(ctx, || async move {
+        // Publish a retained message
+        let pub_conn = ConnectParams::new("mqtt-test-rh1-pub");
+        let (mut pub_client, connack) =
+            client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        if connack.properties.retain_available == Some(false) {
+            let _ = pub_client.send_disconnect(0x00).await;
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker reported Retain Available = false",
+            ));
+        }
+
+        let pub_params = PublishParams {
+            topic:      "mqtt/test/sub/rh1".to_string(),
+            payload:    b"rh1-test".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     true,
+            packet_id:  None,
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&pub_params).await?;
+        let _ = pub_client.send_disconnect(0x00).await;
+
+        // Subscribe with retain_handling=1
+        let sub_conn = ConnectParams::new("mqtt-test-rh1-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/rh1".to_string(),
+                SubscribeOptions {
+                    qos:              QoS::AtMostOnce,
+                    retain_handling:  1,
+                    ..Default::default()
+                },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Should receive retained message on first subscribe
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => {}
+            _ => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "No retained message on first subscription",
+                ));
+            }
+        }
+
+        // Subscribe again on same connection (not a new subscription)
+        let sub2 = SubscribeParams {
+            packet_id:  2,
+            filters:    vec![(
+                "mqtt/test/sub/rh1".to_string(),
+                SubscribeOptions {
+                    qos:              QoS::AtMostOnce,
+                    retain_handling:  1,
+                    ..Default::default()
+                },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub2).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Should NOT receive retained message again — short timeout.
+        match sub_client.recv(Duration::from_secs(1)).await {
+            Err(_) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Retained message sent again on re-subscription",
+                ))
+            }
+            Ok(other) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "no packet on re-subscription", &other))
+            }
+        }
+    })
+    .await
+}
+
+const RETAIN_HANDLING_2: TestContext = TestContext {
+    id: "MQTT-3.8.3-5b",
+    description: "retain_handling=2: retained messages MUST NOT be sent on subscribe",
+    compliance: Compliance::Must,
+};
+
+/// retain_handling=2: retained messages MUST NOT be sent on subscribe [MQTT-3.8.3-5].
+async fn retain_handling_2(addr: &str, recv_timeout: Duration) -> TestResult {
+    let ctx = RETAIN_HANDLING_2;
+    run_test(ctx, || async move {
+        // Publish a retained message
+        let pub_conn = ConnectParams::new("mqtt-test-rh2-pub");
+        let (mut pub_client, connack) =
+            client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        if connack.properties.retain_available == Some(false) {
+            let _ = pub_client.send_disconnect(0x00).await;
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker reported Retain Available = false",
+            ));
+        }
+
+        let pub_params = PublishParams {
+            topic:      "mqtt/test/sub/rh2".to_string(),
+            payload:    b"rh2-test".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     true,
+            packet_id:  None,
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&pub_params).await?;
+        let _ = pub_client.send_disconnect(0x00).await;
+
+        // Subscribe with retain_handling=2
+        let sub_conn = ConnectParams::new("mqtt-test-rh2-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                "mqtt/test/sub/rh2".to_string(),
+                SubscribeOptions {
+                    qos:              QoS::AtMostOnce,
+                    retain_handling:  2,
+                    ..Default::default()
+                },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Should NOT receive any retained message — short timeout.
+        match sub_client.recv(Duration::from_secs(1)).await {
+            Err(_) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh2" => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Retained message delivered despite retain_handling=2",
+                ))
+            }
+            Ok(other) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "no packet (retain_handling=2)", &other))
+            }
+        }
+    })
+    .await
+}

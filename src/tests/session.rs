@@ -5,12 +5,19 @@ use std::time::Duration;
 use indicatif::ProgressBar;
 
 use crate::client;
-use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions,
-                   SubscribeParams};
+use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
 pub const TEST_COUNT: usize = 4;
+
+/// Clean up a persistent session by reconnecting with clean_start=true.
+async fn cleanup_session(addr: &str, client_id: &str, recv_timeout: Duration) {
+    let params = ConnectParams::new(client_id);
+    if let Ok((mut c, _)) = client::connect(addr, &params, recv_timeout).await {
+        let _ = c.send_disconnect(0x00).await;
+    }
+}
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -57,10 +64,7 @@ async fn session_present_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         let _ = c2.send_disconnect(0x00).await;
 
         // Clean up the session.
-        let cleanup = ConnectParams::new(client_id);
-        if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
-            let _ = c.send_disconnect(0x00).await;
-        }
+        cleanup_session(addr, client_id, recv_timeout).await;
 
         if connack.session_present {
             Ok(TestResult::pass(&ctx))
@@ -94,14 +98,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         sub_params.properties.session_expiry_interval = Some(60);
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -112,14 +109,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         // 3. Publish a QoS 1 message while subscriber is offline.
         let pub_params_conn = ConnectParams::new(pub_id);
         let (mut pub_client, _) = client::connect(addr, &pub_params_conn, recv_timeout).await?;
-        let pub_msg = PublishParams {
-            topic:      topic.to_string(),
-            payload:    b"queued-qos1".to_vec(),
-            qos:        QoS::AtLeastOnce,
-            retain:     false,
-            packet_id:  Some(1),
-            properties: Properties::default(),
-        };
+        let pub_msg = PublishParams::qos1(topic, b"queued-qos1".to_vec(), 1);
         pub_client.send_publish(&pub_msg).await?;
         // Wait for PUBACK.
         for _ in 0..5 {
@@ -137,11 +127,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
 
         if !connack.session_present {
             let _ = sub_client2.send_disconnect(0x00).await;
-            // Clean up
-            let cleanup = ConnectParams::new(sub_id);
-            if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
-                let _ = c.send_disconnect(0x00).await;
-            }
+            cleanup_session(addr, sub_id, recv_timeout).await;
             return Ok(TestResult::fail(
                 &ctx,
                 "Broker did not preserve session (session_present=0); cannot test redelivery",
@@ -165,11 +151,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         };
         let _ = sub_client2.send_disconnect(0x00).await;
 
-        // Clean up session.
-        let cleanup_qos1 = ConnectParams::new(sub_id);
-        if let Ok((mut c, _)) = client::connect(addr, &cleanup_qos1, recv_timeout).await {
-            let _ = c.send_disconnect(0x00).await;
-        }
+        cleanup_session(addr, sub_id, recv_timeout).await;
 
         Ok(result)
     })
@@ -196,14 +178,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         sub_params.properties.session_expiry_interval = Some(60);
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::ExactlyOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::ExactlyOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -214,14 +189,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         // 3. Publish a QoS 2 message while subscriber is offline.
         let pub_params_conn = ConnectParams::new(pub_id);
         let (mut pub_client, _) = client::connect(addr, &pub_params_conn, recv_timeout).await?;
-        let pub_msg = PublishParams {
-            topic:      topic.to_string(),
-            payload:    b"queued-qos2".to_vec(),
-            qos:        QoS::ExactlyOnce,
-            retain:     false,
-            packet_id:  Some(1),
-            properties: Properties::default(),
-        };
+        let pub_msg = PublishParams::qos2(topic, b"queued-qos2".to_vec(), 1);
         pub_client.send_publish(&pub_msg).await?;
 
         // Complete the QoS 2 handshake on the publisher side.
@@ -250,10 +218,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
 
         if !connack.session_present {
             let _ = sub_client2.send_disconnect(0x00).await;
-            let cleanup = ConnectParams::new(sub_id);
-            if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
-                let _ = c.send_disconnect(0x00).await;
-            }
+            cleanup_session(addr, sub_id, recv_timeout).await;
             return Ok(TestResult::fail(
                 &ctx,
                 "Broker did not preserve session (session_present=0); cannot test redelivery",
@@ -281,11 +246,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
         };
         let _ = sub_client2.send_disconnect(0x00).await;
 
-        // Clean up session.
-        let cleanup_qos2 = ConnectParams::new(sub_id);
-        if let Ok((mut c, _)) = client::connect(addr, &cleanup_qos2, recv_timeout).await {
-            let _ = c.send_disconnect(0x00).await;
-        }
+        cleanup_session(addr, sub_id, recv_timeout).await;
 
         Ok(result)
     })
@@ -312,14 +273,7 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
         params.properties.session_expiry_interval = Some(60);
         let (mut c1, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
         c1.send_subscribe(&sub).await?;
         c1.recv(recv_timeout).await?; // SUBACK
         let _ = c1.send_disconnect(0x00).await;
@@ -334,10 +288,7 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
 
         if !connack.session_present {
             let _ = c2.send_disconnect(0x00).await;
-            let cleanup = ConnectParams::new(sub_id);
-            if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
-                let _ = c.send_disconnect(0x00).await;
-            }
+            cleanup_session(addr, sub_id, recv_timeout).await;
             return Ok(TestResult::fail(
                 &ctx,
                 "Broker did not preserve session (session_present=0); cannot test subscription persistence",
@@ -368,11 +319,7 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
         };
         let _ = c2.send_disconnect(0x00).await;
 
-        // Clean up session.
-        let cleanup_sub = ConnectParams::new(sub_id);
-        if let Ok((mut c, _)) = client::connect(addr, &cleanup_sub, recv_timeout).await {
-            let _ = c.send_disconnect(0x00).await;
-        }
+        cleanup_session(addr, sub_id, recv_timeout).await;
 
         Ok(result)
     })

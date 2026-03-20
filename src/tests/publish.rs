@@ -5,8 +5,7 @@ use std::time::Duration;
 use indicatif::ProgressBar;
 
 use crate::client;
-use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions,
-                   SubscribeParams};
+use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
@@ -52,14 +51,7 @@ async fn qos0_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         let params = ConnectParams::new("mqtt-test-qos0-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "mqtt/test/pub/qos0".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "mqtt/test/pub/qos0", QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
         client.recv(recv_timeout).await?; // SUBACK
 
@@ -93,14 +85,7 @@ async fn qos1_gets_puback(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
         let params = ConnectParams::new("mqtt-test-qos1-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let pub_params = PublishParams {
-            topic:      "mqtt/test/pub/qos1".to_string(),
-            payload:    b"qos1-test".to_vec(),
-            qos:        QoS::AtLeastOnce,
-            retain:     false,
-            packet_id:  Some(1),
-            properties: Properties::default(),
-        };
+        let pub_params = PublishParams::qos1("mqtt/test/pub/qos1", b"qos1-test".to_vec(), 1);
         client.send_publish(&pub_params).await?;
 
         for _ in 0..5 {
@@ -140,14 +125,7 @@ async fn qos1_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         let sub_conn = ConnectParams::new("mqtt-test-qos1-del-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -155,14 +133,7 @@ async fn qos1_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         let pub_conn = ConnectParams::new("mqtt-test-qos1-del-pub");
         let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
 
-        let pub_params = PublishParams {
-            topic:      topic.to_string(),
-            payload:    b"qos1-delivery-test".to_vec(),
-            qos:        QoS::AtLeastOnce,
-            retain:     false,
-            packet_id:  Some(1),
-            properties: Properties::default(),
-        };
+        let pub_params = PublishParams::qos1(topic, b"qos1-delivery-test".to_vec(), 1);
         pub_client.send_publish(&pub_params).await?;
 
         // Drain publisher PUBACK
@@ -216,14 +187,7 @@ async fn qos2_full_flow(addr: &str, recv_timeout: Duration, pb: &ProgressBar) ->
         let params = ConnectParams::new("mqtt-test-qos2-pub");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let pub_params = PublishParams {
-            topic:      "mqtt/test/pub/qos2".to_string(),
-            payload:    b"qos2-test".to_vec(),
-            qos:        QoS::ExactlyOnce,
-            retain:     false,
-            packet_id:  Some(2),
-            properties: Properties::default(),
-        };
+        let pub_params = PublishParams::qos2("mqtt/test/pub/qos2", b"qos2-test".to_vec(), 2);
         client.send_publish(&pub_params).await?;
 
         for _ in 0..5 {
@@ -349,14 +313,7 @@ async fn qos_downgrade_on_delivery(addr: &str, recv_timeout: Duration, pb: &Prog
         let sub_conn = ConnectParams::new("mqtt-test-qos-dg-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -364,14 +321,7 @@ async fn qos_downgrade_on_delivery(addr: &str, recv_timeout: Duration, pb: &Prog
         let pub_conn = ConnectParams::new("mqtt-test-qos-dg-pub");
         let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
 
-        let pub_params = PublishParams {
-            topic:      topic.to_string(),
-            payload:    b"downgrade-test".to_vec(),
-            qos:        QoS::ExactlyOnce,
-            retain:     false,
-            packet_id:  Some(1),
-            properties: Properties::default(),
-        };
+        let pub_params = PublishParams::qos2(topic, b"downgrade-test".to_vec(), 1);
         pub_client.send_publish(&pub_params).await?;
 
         // Complete publisher QoS 2 flow
@@ -430,28 +380,14 @@ async fn retain_flag_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressB
         let params = ConnectParams::new("mqtt-test-retain-pub");
         let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let pub_params = PublishParams {
-            topic:      "mqtt/test/pub/retain".to_string(),
-            payload:    b"retained-payload".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     true,
-            packet_id:  None,
-            properties: Properties::default(),
-        };
+        let pub_params = PublishParams::retained("mqtt/test/pub/retain", b"retained-payload".to_vec());
         pub_client.send_publish(&pub_params).await?;
         let _ = pub_client.send_disconnect(0x00).await;
 
         let sub_params = ConnectParams::new("mqtt-test-retain-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "mqtt/test/pub/retain".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "mqtt/test/pub/retain", QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -551,14 +487,7 @@ async fn property_forwarding_test(
         let params = ConnectParams::new(format!("mqtt-test-{topic}"));
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
         client.recv(recv_timeout).await?; // SUBACK
 
@@ -690,14 +619,7 @@ async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
         let sub_conn = ConnectParams::new("mqtt-test-order-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -706,14 +628,7 @@ async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
         let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
 
         for i in 0u16..5 {
-            let pub_params = PublishParams {
-                topic:      topic.to_string(),
-                payload:    format!("msg-{i}").into_bytes(),
-                qos:        QoS::AtLeastOnce,
-                retain:     false,
-                packet_id:  Some(i + 1),
-                properties: Properties::default(),
-            };
+            let pub_params = PublishParams::qos1(topic, format!("msg-{i}").into_bytes(), i + 1);
             pub_client.send_publish(&pub_params).await?;
         }
 
@@ -778,14 +693,7 @@ async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration,
         // Publish a retained message.
         let pub_conn = ConnectParams::new("mqtt-test-retflag-pub");
         let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
-        let pub_params = PublishParams {
-            topic:      topic.to_string(),
-            payload:    b"retain-flag-test".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     true,
-            packet_id:  None,
-            properties: Properties::default(),
-        };
+        let pub_params = PublishParams::retained(topic, b"retain-flag-test".to_vec());
         pub_client.send_publish(&pub_params).await?;
         let _ = pub_client.send_disconnect(0x00).await;
 
@@ -794,14 +702,7 @@ async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration,
         // Subscribe from a new client — should get the retained message with Retain=1.
         let sub_conn = ConnectParams::new("mqtt-test-retflag-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -830,14 +731,7 @@ async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration,
         // Clean up: remove retained message by publishing empty payload with retain.
         let cleanup_conn = ConnectParams::new("mqtt-test-retflag-cleanup");
         if let Ok((mut c, _)) = client::connect(addr, &cleanup_conn, recv_timeout).await {
-            let clear = PublishParams {
-                topic:      topic.to_string(),
-                payload:    Vec::new(),
-                qos:        QoS::AtMostOnce,
-                retain:     true,
-                packet_id:  None,
-                properties: Properties::default(),
-            };
+            let clear = PublishParams::retained(topic, Vec::new());
             let _ = c.send_publish(&clear).await;
             let _ = c.send_disconnect(0x00).await;
         }

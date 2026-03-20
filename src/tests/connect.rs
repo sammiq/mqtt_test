@@ -5,8 +5,8 @@ use std::time::Duration;
 use indicatif::ProgressBar;
 
 use crate::client::{self, RawClient};
-use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions,
-                   SubscribeParams, WillParams};
+use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams,
+                   WillParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
@@ -648,26 +648,13 @@ async fn will_message_on_unexpected_close(addr: &str, recv_timeout: Duration, pb
         let sub_params = ConnectParams::new("mqtt-test-will-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                will_topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
         // Connect a client with a will message
         let mut will_params = ConnectParams::new("mqtt-test-will-pub");
-        will_params.will = Some(WillParams {
-            topic:      will_topic.to_string(),
-            payload:    b"will-triggered".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     false,
-            properties: Properties::default(),
-        });
+        will_params.will = Some(WillParams::new(will_topic, b"will-triggered".as_slice()));
         let (will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
 
         // Drop the client without sending DISCONNECT — simulates unexpected close
@@ -715,26 +702,13 @@ async fn will_message_removed_on_disconnect(addr: &str, recv_timeout: Duration, 
         let sub_params = ConnectParams::new("mqtt-test-will-norm-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                will_topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
         // Connect with a will message, then disconnect normally
         let mut will_params = ConnectParams::new("mqtt-test-will-norm-pub");
-        will_params.will = Some(WillParams {
-            topic:      will_topic.to_string(),
-            payload:    b"should-not-arrive".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     false,
-            properties: Properties::default(),
-        });
+        will_params.will = Some(WillParams::new(will_topic, b"should-not-arrive".as_slice()));
         let (mut will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
 
         // Normal disconnect — will message should NOT be published
@@ -786,14 +760,7 @@ async fn will_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
         // Clear any existing retained message on this topic
         let clear_params = ConnectParams::new("mqtt-test-will-retain-clear");
         let (mut clear_client, _) = client::connect(addr, &clear_params, recv_timeout).await?;
-        clear_client.send_publish(&PublishParams {
-            topic:      will_topic.to_string(),
-            payload:    vec![],
-            qos:        QoS::AtMostOnce,
-            retain:     true,
-            packet_id:  None,
-            properties: Properties::default(),
-        }).await?;
+        clear_client.send_publish(&PublishParams::retained(will_topic, vec![])).await?;
         let _ = clear_client.send_disconnect(0x00).await;
 
         // Connect with a retained will message
@@ -817,14 +784,7 @@ async fn will_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
         let sub_params = ConnectParams::new("mqtt-test-will-retain-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                will_topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -876,14 +836,7 @@ async fn server_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar
         match max_qos {
             Some(0) => {
                 // Server only supports QoS 0 — sending QoS 1 should be rejected
-                let pub_params = PublishParams {
-                    topic:      "mqtt/test/connack/maxqos".to_string(),
-                    payload:    b"qos1-over-max".to_vec(),
-                    qos:        QoS::AtLeastOnce,
-                    retain:     false,
-                    packet_id:  Some(1),
-                    properties: Properties::default(),
-                };
+                let pub_params = PublishParams::qos1("mqtt/test/connack/maxqos", b"qos1-over-max".as_slice(), 1);
                 client.send_publish(&pub_params).await?;
 
                 match client.recv(recv_timeout).await {
@@ -914,14 +867,7 @@ async fn server_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar
             }
             Some(1) => {
                 // Server supports up to QoS 1 — sending QoS 2 should be rejected
-                let pub_params = PublishParams {
-                    topic:      "mqtt/test/connack/maxqos".to_string(),
-                    payload:    b"qos2-over-max".to_vec(),
-                    qos:        QoS::ExactlyOnce,
-                    retain:     false,
-                    packet_id:  Some(1),
-                    properties: Properties::default(),
-                };
+                let pub_params = PublishParams::qos2("mqtt/test/connack/maxqos", b"qos2-over-max".as_slice(), 1);
                 client.send_publish(&pub_params).await?;
 
                 match client.recv(recv_timeout).await {
@@ -978,14 +924,7 @@ async fn server_receive_maximum(addr: &str, recv_timeout: Duration, pb: &Progres
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
         let topic = "mqtt/test/connack/recvmax";
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -995,14 +934,7 @@ async fn server_receive_maximum(addr: &str, recv_timeout: Duration, pb: &Progres
 
         let msg_count = (recv_max + 2) as usize;
         for i in 0..msg_count {
-            let p = PublishParams {
-                topic:      topic.to_string(),
-                payload:    format!("msg-{i}").into_bytes(),
-                qos:        QoS::AtLeastOnce,
-                retain:     false,
-                packet_id:  Some((i + 1) as u16),
-                properties: Properties::default(),
-            };
+            let p = PublishParams::qos1(topic, format!("msg-{i}"), (i + 1) as u16);
             pub_client.send_publish(&p).await?;
         }
         // Drain PUBACKs from publisher
@@ -1059,14 +991,7 @@ async fn will_delay_interval(addr: &str, recv_timeout: Duration, pb: &ProgressBa
         let sub_params = ConnectParams::new("mqtt-test-will-delay-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                will_topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -1331,14 +1256,7 @@ async fn flow_control_receive_maximum(addr: &str, recv_timeout: Duration, pb: &P
         }
 
         let topic = "mqtt/test/flow/ctrl";
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                topic.to_string(),
-                SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
@@ -1348,14 +1266,7 @@ async fn flow_control_receive_maximum(addr: &str, recv_timeout: Duration, pb: &P
 
         let msg_count = (server_recv_max + 5) as usize;
         for i in 0..msg_count {
-            let p = PublishParams {
-                topic:      topic.to_string(),
-                payload:    format!("flow-{i}").into_bytes(),
-                qos:        QoS::AtLeastOnce,
-                retain:     false,
-                packet_id:  Some((i + 1) as u16),
-                properties: Properties::default(),
-            };
+            let p = PublishParams::qos1(topic, format!("flow-{i}"), (i + 1) as u16);
             pub_client.send_publish(&p).await?;
         }
         for _ in 0..msg_count {

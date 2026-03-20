@@ -452,6 +452,18 @@ pub struct WillParams {
     pub properties: Properties,
 }
 
+impl WillParams {
+    pub fn new(topic: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
+        Self {
+            topic:      topic.into(),
+            payload:    payload.into(),
+            qos:        QoS::AtMostOnce,
+            retain:     false,
+            properties: Properties::default(),
+        }
+    }
+}
+
 impl ConnectParams {
     pub fn new(client_id: impl Into<String>) -> Self {
         Self {
@@ -509,6 +521,39 @@ impl PublishParams {
             properties: Properties::default(),
         }
     }
+
+    pub fn qos1(topic: impl Into<String>, payload: impl Into<Vec<u8>>, packet_id: u16) -> Self {
+        Self {
+            topic:      topic.into(),
+            payload:    payload.into(),
+            qos:        QoS::AtLeastOnce,
+            retain:     false,
+            packet_id:  Some(packet_id),
+            properties: Properties::default(),
+        }
+    }
+
+    pub fn qos2(topic: impl Into<String>, payload: impl Into<Vec<u8>>, packet_id: u16) -> Self {
+        Self {
+            topic:      topic.into(),
+            payload:    payload.into(),
+            qos:        QoS::ExactlyOnce,
+            retain:     false,
+            packet_id:  Some(packet_id),
+            properties: Properties::default(),
+        }
+    }
+
+    pub fn retained(topic: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
+        Self {
+            topic:      topic.into(),
+            payload:    payload.into(),
+            qos:        QoS::AtMostOnce,
+            retain:     true,
+            packet_id:  None,
+            properties: Properties::default(),
+        }
+    }
 }
 
 /// A received acknowledgement (PUBACK / PUBREC / PUBREL / PUBCOMP).
@@ -538,6 +583,20 @@ pub struct SubscribeOptions {
 }
 
 
+impl SubscribeParams {
+    /// Convenience: single-topic subscription with default options.
+    pub fn simple(packet_id: u16, topic: impl Into<String>, qos: QoS) -> Self {
+        Self {
+            packet_id,
+            filters: vec![(
+                topic.into(),
+                SubscribeOptions { qos, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        }
+    }
+}
+
 /// A received SUBACK packet [MQTT-3.9].
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -553,6 +612,16 @@ pub struct UnsubscribeParams {
     pub packet_id:  u16,
     pub filters:    Vec<String>,
     pub properties: Properties,
+}
+
+impl UnsubscribeParams {
+    pub fn simple(packet_id: u16, filter: impl Into<String>) -> Self {
+        Self {
+            packet_id,
+            filters:    vec![filter.into()],
+            properties: Properties::default(),
+        }
+    }
 }
 
 /// A received UNSUBACK packet [MQTT-3.11].
@@ -1033,5 +1102,641 @@ mod tests {
     fn display_auth() {
         let p = Packet::Auth { reason_code: 0x18, properties: default_props() };
         assert_eq!(p.to_string(), "AUTH(reason=0x18)");
+    }
+
+    // ── VBI roundtrip tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn vbi_roundtrip_zero() {
+        let mut buf = Vec::new();
+        encode_vbi(0, &mut buf);
+        let mut pos = 0;
+        assert_eq!(decode_vbi(&buf, &mut pos).unwrap(), 0);
+        assert_eq!(pos, buf.len());
+    }
+
+    #[test]
+    fn vbi_roundtrip_one_byte_max() {
+        let mut buf = Vec::new();
+        encode_vbi(127, &mut buf);
+        assert_eq!(buf.len(), 1);
+        let mut pos = 0;
+        assert_eq!(decode_vbi(&buf, &mut pos).unwrap(), 127);
+    }
+
+    #[test]
+    fn vbi_roundtrip_two_bytes() {
+        let mut buf = Vec::new();
+        encode_vbi(128, &mut buf);
+        assert_eq!(buf.len(), 2);
+        let mut pos = 0;
+        assert_eq!(decode_vbi(&buf, &mut pos).unwrap(), 128);
+    }
+
+    #[test]
+    fn vbi_roundtrip_max() {
+        // Maximum VBI value: 268_435_455
+        let mut buf = Vec::new();
+        encode_vbi(268_435_455, &mut buf);
+        assert_eq!(buf.len(), 4);
+        let mut pos = 0;
+        assert_eq!(decode_vbi(&buf, &mut pos).unwrap(), 268_435_455);
+    }
+
+    #[test]
+    fn vbi_roundtrip_various() {
+        for val in [1, 42, 127, 128, 16383, 16384, 2_097_151, 2_097_152, 268_435_455] {
+            let mut buf = Vec::new();
+            encode_vbi(val, &mut buf);
+            let mut pos = 0;
+            assert_eq!(decode_vbi(&buf, &mut pos).unwrap(), val, "roundtrip failed for {val}");
+        }
+    }
+
+    // ── Properties roundtrip tests ───────────────────────────────────────────
+
+    #[test]
+    fn properties_roundtrip_empty() {
+        let props = Properties::default();
+        let mut buf = Vec::new();
+        props.encode(&mut buf);
+        let mut pos = 0;
+        let decoded = Properties::decode(&buf, &mut pos).unwrap();
+        assert!(decoded.payload_format_indicator.is_none());
+        assert!(decoded.user_properties.is_empty());
+        assert_eq!(pos, buf.len());
+    }
+
+    #[test]
+    fn properties_roundtrip_all_types() {
+        let props = Properties {
+            payload_format_indicator:     Some(1),
+            message_expiry_interval:      Some(3600),
+            content_type:                 Some("application/json".to_string()),
+            response_topic:               Some("reply/topic".to_string()),
+            correlation_data:             Some(b"corr-id".to_vec()),
+            subscription_identifier:      Some(42),
+            session_expiry_interval:      Some(300),
+            server_keep_alive:            Some(120),
+            receive_maximum:              Some(50),
+            topic_alias_maximum:          Some(10),
+            topic_alias:                  Some(5),
+            maximum_qos:                  Some(1),
+            retain_available:             Some(true),
+            user_properties:              vec![
+                ("key1".to_string(), "val1".to_string()),
+                ("key2".to_string(), "val2".to_string()),
+            ],
+            maximum_packet_size:          Some(1_048_576),
+            wildcard_subscription_available: Some(true),
+            subscription_ids_available:   Some(false),
+            shared_subscription_available: Some(true),
+            reason_string:                Some("test reason".to_string()),
+            request_response_information: Some(true),
+            request_problem_information:  Some(false),
+            will_delay_interval:          Some(10),
+            ..Properties::default()
+        };
+
+        let mut buf = Vec::new();
+        props.encode(&mut buf);
+
+        let mut pos = 0;
+        let decoded = Properties::decode(&buf, &mut pos).unwrap();
+        assert_eq!(pos, buf.len());
+
+        assert_eq!(decoded.payload_format_indicator, Some(1));
+        assert_eq!(decoded.message_expiry_interval, Some(3600));
+        assert_eq!(decoded.content_type.as_deref(), Some("application/json"));
+        assert_eq!(decoded.response_topic.as_deref(), Some("reply/topic"));
+        assert_eq!(decoded.correlation_data.as_deref(), Some(b"corr-id".as_slice()));
+        assert_eq!(decoded.subscription_identifier, Some(42));
+        assert_eq!(decoded.session_expiry_interval, Some(300));
+        assert_eq!(decoded.server_keep_alive, Some(120));
+        assert_eq!(decoded.receive_maximum, Some(50));
+        assert_eq!(decoded.topic_alias_maximum, Some(10));
+        assert_eq!(decoded.topic_alias, Some(5));
+        assert_eq!(decoded.maximum_qos, Some(1));
+        assert_eq!(decoded.retain_available, Some(true));
+        assert_eq!(decoded.user_properties.len(), 2);
+        assert_eq!(decoded.user_properties[0], ("key1".to_string(), "val1".to_string()));
+        assert_eq!(decoded.user_properties[1], ("key2".to_string(), "val2".to_string()));
+        assert_eq!(decoded.maximum_packet_size, Some(1_048_576));
+        assert_eq!(decoded.wildcard_subscription_available, Some(true));
+        assert_eq!(decoded.subscription_ids_available, Some(false));
+        assert_eq!(decoded.shared_subscription_available, Some(true));
+        assert_eq!(decoded.reason_string.as_deref(), Some("test reason"));
+        assert_eq!(decoded.request_response_information, Some(true));
+        assert_eq!(decoded.request_problem_information, Some(false));
+        assert_eq!(decoded.will_delay_interval, Some(10));
+    }
+
+    // ── Packet encode/decode roundtrip tests ─────────────────────────────────
+
+    /// Helper: encode a packet, then decode it via decode_packet, return the result.
+    fn roundtrip_decode(encoded: &[u8]) -> Packet {
+        let (packet, consumed) = decode_packet(encoded).unwrap().unwrap();
+        assert_eq!(consumed, encoded.len());
+        packet
+    }
+
+    #[test]
+    fn connect_encodes_valid_packet() {
+        let params = ConnectParams::new("test-client");
+        let encoded = encode_connect(&params);
+        // Verify the fixed header: type=1 (CONNECT), flags=0
+        assert_eq!(encoded[0], 0x10);
+        // Verify protocol name is present
+        assert_eq!(&encoded[2..8], b"\x00\x04MQTT");
+        // Verify protocol version
+        assert_eq!(encoded[8], 5);
+    }
+
+    #[test]
+    fn connect_with_will_encodes() {
+        let mut params = ConnectParams::new("will-client");
+        params.will = Some(WillParams {
+            topic:      "will/topic".to_string(),
+            payload:    b"will-payload".to_vec(),
+            qos:        QoS::AtLeastOnce,
+            retain:     true,
+            properties: Properties::default(),
+        });
+        let encoded = encode_connect(&params);
+        assert_eq!(encoded[0], 0x10);
+        // Will flag (0x04), Will QoS 1 (0x08), Will Retain (0x20), Clean Start (0x02)
+        let flags = encoded[9];
+        assert!(flags & 0x04 != 0, "will flag should be set");
+        assert!(flags & 0x08 != 0, "will QoS bit should be set");
+        assert!(flags & 0x20 != 0, "will retain should be set");
+    }
+
+    #[test]
+    fn publish_qos0_roundtrip() {
+        let params = PublishParams::qos0("test/topic", b"hello".to_vec());
+        let encoded = encode_publish(&params);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::Publish(p) => {
+                assert_eq!(p.topic, "test/topic");
+                assert_eq!(p.payload, b"hello");
+                assert_eq!(p.qos, QoS::AtMostOnce);
+                assert!(!p.retain);
+                assert!(p.packet_id.is_none());
+            }
+            other => panic!("expected Publish, got {other}"),
+        }
+    }
+
+    #[test]
+    fn publish_qos1_roundtrip() {
+        let mut params = PublishParams::qos1("qos1/topic", b"qos1-data".to_vec(), 42);
+        params.retain = true;
+        let encoded = encode_publish(&params);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::Publish(p) => {
+                assert_eq!(p.topic, "qos1/topic");
+                assert_eq!(p.payload, b"qos1-data");
+                assert_eq!(p.qos, QoS::AtLeastOnce);
+                assert!(p.retain);
+                assert_eq!(p.packet_id, Some(42));
+            }
+            other => panic!("expected Publish, got {other}"),
+        }
+    }
+
+    #[test]
+    fn publish_qos2_roundtrip() {
+        let mut params = PublishParams::qos2("qos2/topic", Vec::new(), 1000);
+        params.properties.content_type = Some("text/plain".to_string());
+        let encoded = encode_publish(&params);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::Publish(p) => {
+                assert_eq!(p.topic, "qos2/topic");
+                assert!(p.payload.is_empty());
+                assert_eq!(p.qos, QoS::ExactlyOnce);
+                assert_eq!(p.packet_id, Some(1000));
+                assert_eq!(p.properties.content_type.as_deref(), Some("text/plain"));
+            }
+            other => panic!("expected Publish, got {other}"),
+        }
+    }
+
+    #[test]
+    fn publish_with_properties_roundtrip() {
+        let props = Properties {
+            payload_format_indicator: Some(1),
+            message_expiry_interval:  Some(60),
+            response_topic:           Some("reply/here".to_string()),
+            correlation_data:         Some(b"abc".to_vec()),
+            user_properties:          vec![("k".to_string(), "v".to_string())],
+            ..Properties::default()
+        };
+        let mut params = PublishParams::qos0("prop/topic", b"with-props".to_vec());
+        params.properties = props;
+        let encoded = encode_publish(&params);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::Publish(p) => {
+                assert_eq!(p.properties.payload_format_indicator, Some(1));
+                assert_eq!(p.properties.message_expiry_interval, Some(60));
+                assert_eq!(p.properties.response_topic.as_deref(), Some("reply/here"));
+                assert_eq!(p.properties.correlation_data.as_deref(), Some(b"abc".as_slice()));
+                assert_eq!(p.properties.user_properties, vec![("k".to_string(), "v".to_string())]);
+            }
+            other => panic!("expected Publish, got {other}"),
+        }
+    }
+
+    #[test]
+    fn subscribe_encode_decode_structure() {
+        // We can't decode SUBSCRIBE (it's a client→server packet), but we can
+        // verify it encodes to the expected byte structure.
+        let params = SubscribeParams::simple(1, "test/topic", QoS::AtLeastOnce);
+        let encoded = encode_subscribe(&params);
+        assert_eq!(encoded[0], 0x82); // SUBSCRIBE fixed header
+        // After fixed header + remaining length: packet_id (2 bytes)
+    }
+
+    #[test]
+    fn unsubscribe_encode_structure() {
+        let params = UnsubscribeParams::simple(5, "a/b");
+        let encoded = encode_unsubscribe(&params);
+        assert_eq!(encoded[0], 0xA2); // UNSUBSCRIBE fixed header
+    }
+
+    #[test]
+    fn pingreq_encoding() {
+        let encoded = encode_pingreq();
+        assert_eq!(encoded, vec![0xC0, 0x00]);
+    }
+
+    #[test]
+    fn disconnect_normal_encoding() {
+        let encoded = encode_disconnect(0x00);
+        assert_eq!(encoded, vec![0xE0, 0x00]);
+    }
+
+    #[test]
+    fn disconnect_with_reason_encoding() {
+        let encoded = encode_disconnect(0x81);
+        assert_eq!(encoded[0], 0xE0);
+        // Should have reason code in body
+        assert!(encoded.len() > 2);
+    }
+
+    #[test]
+    fn pub_response_roundtrip_puback() {
+        let encoded = encode_pub_response(4, 100, 0x00);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::PubAck(a) => {
+                assert_eq!(a.packet_id, 100);
+                assert_eq!(a.reason_code, 0x00);
+            }
+            other => panic!("expected PubAck, got {other}"),
+        }
+    }
+
+    #[test]
+    fn pub_response_roundtrip_pubrec() {
+        let encoded = encode_pub_response(5, 200, 0x10);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::PubRec(a) => {
+                assert_eq!(a.packet_id, 200);
+                assert_eq!(a.reason_code, 0x10);
+            }
+            other => panic!("expected PubRec, got {other}"),
+        }
+    }
+
+    #[test]
+    fn pub_response_roundtrip_pubrel() {
+        let encoded = encode_pub_response(6, 300, 0x00);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::PubRel(a) => {
+                assert_eq!(a.packet_id, 300);
+                assert_eq!(a.reason_code, 0x00);
+            }
+            other => panic!("expected PubRel, got {other}"),
+        }
+    }
+
+    #[test]
+    fn pub_response_roundtrip_pubcomp() {
+        let encoded = encode_pub_response(7, 400, 0x00);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::PubComp(a) => {
+                assert_eq!(a.packet_id, 400);
+                assert_eq!(a.reason_code, 0x00);
+            }
+            other => panic!("expected PubComp, got {other}"),
+        }
+    }
+
+    #[test]
+    fn decode_packet_insufficient_data() {
+        // Empty buffer
+        assert!(decode_packet(&[]).unwrap().is_none());
+        // Just the fixed header byte, no remaining length
+        assert!(decode_packet(&[0x20]).unwrap().is_none());
+        // Fixed header + remaining length says 10, but only 2 bytes of body
+        assert!(decode_packet(&[0x20, 0x0A, 0x00, 0x00]).unwrap().is_none());
+    }
+
+    #[test]
+    fn qos_try_from() {
+        assert_eq!(QoS::try_from(0).unwrap(), QoS::AtMostOnce);
+        assert_eq!(QoS::try_from(1).unwrap(), QoS::AtLeastOnce);
+        assert_eq!(QoS::try_from(2).unwrap(), QoS::ExactlyOnce);
+        assert!(QoS::try_from(3).is_err());
+    }
+
+    #[test]
+    fn subscribe_params_simple() {
+        let params = SubscribeParams::simple(5, "a/b/c", QoS::ExactlyOnce);
+        assert_eq!(params.packet_id, 5);
+        assert_eq!(params.filters.len(), 1);
+        assert_eq!(params.filters[0].0, "a/b/c");
+        assert_eq!(params.filters[0].1.qos, QoS::ExactlyOnce);
+        assert!(!params.filters[0].1.no_local);
+        assert!(!params.filters[0].1.retain_as_published);
+        assert_eq!(params.filters[0].1.retain_handling, 0);
+    }
+
+    #[test]
+    fn unsubscribe_params_simple() {
+        let params = UnsubscribeParams::simple(3, "x/y");
+        assert_eq!(params.packet_id, 3);
+        assert_eq!(params.filters, vec!["x/y".to_string()]);
+    }
+
+    #[test]
+    fn publish_params_qos1() {
+        let params = PublishParams::qos1("t/1", b"payload".to_vec(), 7);
+        assert_eq!(params.topic, "t/1");
+        assert_eq!(params.payload, b"payload");
+        assert_eq!(params.qos, QoS::AtLeastOnce);
+        assert!(!params.retain);
+        assert_eq!(params.packet_id, Some(7));
+    }
+
+    #[test]
+    fn publish_params_qos2() {
+        let params = PublishParams::qos2("t/2", b"data".to_vec(), 99);
+        assert_eq!(params.topic, "t/2");
+        assert_eq!(params.qos, QoS::ExactlyOnce);
+        assert_eq!(params.packet_id, Some(99));
+    }
+
+    #[test]
+    fn publish_params_retained() {
+        let params = PublishParams::retained("t/r", b"kept".to_vec());
+        assert_eq!(params.qos, QoS::AtMostOnce);
+        assert!(params.retain);
+        assert!(params.packet_id.is_none());
+    }
+
+    #[test]
+    fn will_params_new() {
+        let params = WillParams::new("will/t", b"bye".to_vec());
+        assert_eq!(params.topic, "will/t");
+        assert_eq!(params.payload, b"bye");
+        assert_eq!(params.qos, QoS::AtMostOnce);
+        assert!(!params.retain);
+    }
+
+    // ── Disconnect roundtrip tests ──────────────────────────────────────────
+
+    #[test]
+    fn disconnect_normal_roundtrip() {
+        // Normal disconnect (0x00) uses short form: [0xE0, 0x00]
+        // decode_disconnect with empty body returns reason_code=0x00
+        let encoded = encode_disconnect(0x00);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::Disconnect(d) => {
+                assert_eq!(d.reason_code, 0x00);
+            }
+            other => panic!("expected Disconnect, got {other}"),
+        }
+    }
+
+    #[test]
+    fn disconnect_with_reason_roundtrip() {
+        let encoded = encode_disconnect(0x81);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::Disconnect(d) => {
+                assert_eq!(d.reason_code, 0x81);
+            }
+            other => panic!("expected Disconnect, got {other}"),
+        }
+    }
+
+    #[test]
+    fn disconnect_with_properties_roundtrip() {
+        let props = Properties {
+            reason_string: Some("shutting down".to_string()),
+            session_expiry_interval: Some(0),
+            ..Properties::default()
+        };
+        let encoded = encode_disconnect_with_properties(0x04, &props);
+        let packet = roundtrip_decode(&encoded);
+        match packet {
+            Packet::Disconnect(d) => {
+                assert_eq!(d.reason_code, 0x04);
+                assert_eq!(d.properties.reason_string.as_deref(), Some("shutting down"));
+                assert_eq!(d.properties.session_expiry_interval, Some(0));
+            }
+            other => panic!("expected Disconnect, got {other}"),
+        }
+    }
+
+    // ── CONNACK decode tests ────────────────────────────────────────────────
+
+    #[test]
+    fn connack_decode_minimal() {
+        // CONNACK: type=2, flags=0 → 0x20, remaining=2, session_present=0, reason=0x00
+        let buf = [0x20, 0x02, 0x00, 0x00];
+        let packet = roundtrip_decode(&buf);
+        match packet {
+            Packet::ConnAck(c) => {
+                assert!(!c.session_present);
+                assert_eq!(c.reason_code, 0x00);
+            }
+            other => panic!("expected ConnAck, got {other}"),
+        }
+    }
+
+    #[test]
+    fn connack_decode_session_present() {
+        // session_present=1, reason=0x00, no properties
+        let buf = [0x20, 0x02, 0x01, 0x00];
+        let packet = roundtrip_decode(&buf);
+        match packet {
+            Packet::ConnAck(c) => {
+                assert!(c.session_present);
+                assert_eq!(c.reason_code, 0x00);
+            }
+            other => panic!("expected ConnAck, got {other}"),
+        }
+    }
+
+    #[test]
+    fn connack_decode_failure_reason() {
+        // session_present=0, reason=0x85 (Client Identifier not valid)
+        let buf = [0x20, 0x02, 0x00, 0x85];
+        let packet = roundtrip_decode(&buf);
+        match packet {
+            Packet::ConnAck(c) => {
+                assert!(!c.session_present);
+                assert_eq!(c.reason_code, 0x85);
+            }
+            other => panic!("expected ConnAck, got {other}"),
+        }
+    }
+
+    // ── SUBACK / UNSUBACK decode tests ──────────────────────────────────────
+
+    #[test]
+    fn suback_decode() {
+        // SUBACK: type=9 → 0x90, packet_id=1, empty properties (VBI=0), reason_codes=[0x00, 0x01]
+        let buf = [0x90, 0x05, 0x00, 0x01, 0x00, 0x00, 0x01];
+        let packet = roundtrip_decode(&buf);
+        match packet {
+            Packet::SubAck(s) => {
+                assert_eq!(s.packet_id, 1);
+                assert_eq!(s.reason_codes, vec![0x00, 0x01]);
+            }
+            other => panic!("expected SubAck, got {other}"),
+        }
+    }
+
+    #[test]
+    fn unsuback_decode() {
+        // UNSUBACK: type=11 → 0xB0, packet_id=5, empty properties (VBI=0), reason_code=[0x00]
+        let buf = [0xB0, 0x04, 0x00, 0x05, 0x00, 0x00];
+        let packet = roundtrip_decode(&buf);
+        match packet {
+            Packet::UnsubAck(u) => {
+                assert_eq!(u.packet_id, 5);
+                assert_eq!(u.reason_codes, vec![0x00]);
+            }
+            other => panic!("expected UnsubAck, got {other}"),
+        }
+    }
+
+    // ── AUTH decode tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn auth_decode_empty_body() {
+        // AUTH with empty body: reason_code defaults to 0x00
+        let buf = [0xF0, 0x00];
+        let packet = roundtrip_decode(&buf);
+        match packet {
+            Packet::Auth { reason_code, .. } => {
+                assert_eq!(reason_code, 0x00);
+            }
+            other => panic!("expected Auth, got {other}"),
+        }
+    }
+
+    #[test]
+    fn auth_decode_with_reason() {
+        // AUTH with reason_code=0x18 (Continue Authentication), no properties
+        let buf = [0xF0, 0x01, 0x18];
+        let packet = roundtrip_decode(&buf);
+        match packet {
+            Packet::Auth { reason_code, .. } => {
+                assert_eq!(reason_code, 0x18);
+            }
+            other => panic!("expected Auth, got {other}"),
+        }
+    }
+
+    // ── Subscribe encoding structure tests ──────────────────────────────────
+
+    #[test]
+    fn subscribe_encode_with_options() {
+        let params = SubscribeParams {
+            packet_id: 1,
+            filters: vec![(
+                "test/topic".to_string(),
+                SubscribeOptions {
+                    qos:                 QoS::ExactlyOnce,
+                    no_local:            true,
+                    retain_as_published: true,
+                    retain_handling:     2,
+                },
+            )],
+            properties: Properties::default(),
+        };
+        let encoded = encode_subscribe(&params);
+        assert_eq!(encoded[0], 0x82);
+        // Find the options byte (last byte in the encoded packet)
+        let opt_byte = *encoded.last().unwrap();
+        // QoS2=0x02, no_local=0x04, retain_as_published=0x08, retain_handling=2<<4=0x20
+        assert_eq!(opt_byte, 0x02 | 0x04 | 0x08 | 0x20);
+    }
+
+    #[test]
+    fn subscribe_encode_multiple_filters() {
+        let params = SubscribeParams {
+            packet_id: 10,
+            filters: vec![
+                ("a/b".to_string(), SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() }),
+                ("c/d".to_string(), SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() }),
+            ],
+            properties: Properties::default(),
+        };
+        let encoded = encode_subscribe(&params);
+        assert_eq!(encoded[0], 0x82);
+        // Both topic strings should appear in the encoded bytes
+        let as_str = String::from_utf8_lossy(&encoded);
+        assert!(as_str.contains("a/b"));
+        assert!(as_str.contains("c/d"));
+    }
+
+    #[test]
+    fn unsubscribe_encode_multiple_filters() {
+        let params = UnsubscribeParams {
+            packet_id: 5,
+            filters: vec!["a/b".to_string(), "c/d".to_string()],
+            properties: Properties::default(),
+        };
+        let encoded = encode_unsubscribe(&params);
+        assert_eq!(encoded[0], 0xA2);
+        let as_str = String::from_utf8_lossy(&encoded);
+        assert!(as_str.contains("a/b"));
+        assert!(as_str.contains("c/d"));
+    }
+
+    // ── Decode error tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn decode_unknown_packet_type() {
+        // Packet type 0 is reserved
+        let buf = [0x00, 0x00];
+        assert!(decode_packet(&buf).is_err());
+    }
+
+    #[test]
+    fn decode_connack_too_short() {
+        // CONNACK body needs at least 2 bytes
+        let buf = [0x20, 0x01, 0x00];
+        assert!(decode_packet(&buf).is_err());
+    }
+
+    #[test]
+    fn decode_puback_too_short() {
+        // PUBACK body needs at least 2 bytes (packet_id)
+        let buf = [0x40, 0x01, 0x00];
+        assert!(decode_packet(&buf).is_err());
     }
 }

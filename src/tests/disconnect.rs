@@ -5,7 +5,7 @@ use std::time::Duration;
 use indicatif::ProgressBar;
 
 use crate::client;
-use crate::codec::{ConnectParams, Packet, Properties, QoS, SubscribeOptions, SubscribeParams, WillParams};
+use crate::codec::{ConnectParams, Packet, Properties, QoS, SubscribeParams, WillParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
@@ -69,26 +69,13 @@ async fn disconnect_with_will(addr: &str, recv_timeout: Duration, pb: &ProgressB
         let sub_params = ConnectParams::new("mqtt-test-dc-will-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                will_topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
         // Connect with a will message
         let mut will_params = ConnectParams::new("mqtt-test-dc-will-pub");
-        will_params.will = Some(WillParams {
-            topic:      will_topic.to_string(),
-            payload:    b"will-on-0x04".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     false,
-            properties: Properties::default(),
-        });
+        will_params.will = Some(WillParams::new(will_topic, b"will-on-0x04"));
         let (mut will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
 
         // Disconnect with reason 0x04 — will message should still be published
@@ -132,26 +119,13 @@ async fn normal_disconnect_discards_will(addr: &str, recv_timeout: Duration, pb:
         let sub_params = ConnectParams::new("mqtt-test-dc-discard-sub");
         let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                will_topic.to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, will_topic, QoS::AtMostOnce);
         sub_client.send_subscribe(&sub).await?;
         sub_client.recv(recv_timeout).await?; // SUBACK
 
         // Connect with a will message
         let mut will_params = ConnectParams::new("mqtt-test-dc-discard-pub");
-        will_params.will = Some(WillParams {
-            topic:      will_topic.to_string(),
-            payload:    b"should-not-appear".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     false,
-            properties: Properties::default(),
-        });
+        will_params.will = Some(WillParams::new(will_topic, b"should-not-appear"));
         let (mut will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
 
         // Disconnect normally — will MUST be discarded

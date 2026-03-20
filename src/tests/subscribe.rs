@@ -50,14 +50,7 @@ async fn basic_subscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -
         let params = ConnectParams::new("mqtt-test-subscribe");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "mqtt/test/sub/basic".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "mqtt/test/sub/basic", QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
 
         match client.recv(recv_timeout).await? {
@@ -94,14 +87,7 @@ async fn wildcard_plus(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         let params = ConnectParams::new("mqtt-test-wildcard-plus");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "mqtt/test/sub/wc_plus/+".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "mqtt/test/sub/wc_plus/+", QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
         match client.recv(recv_timeout).await? {
             Packet::SubAck(_) => {}
@@ -142,14 +128,7 @@ async fn wildcard_hash(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
         let params = ConnectParams::new("mqtt-test-wildcard-hash");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "mqtt/test/sub/wc_hash/#".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "mqtt/test/sub/wc_hash/#", QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
         match client.recv(recv_timeout).await? {
             Packet::SubAck(_) => {}
@@ -193,22 +172,11 @@ async fn unsubscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Te
         let params = ConnectParams::new("mqtt-test-unsubscribe");
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "mqtt/test/sub/unsub".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "mqtt/test/sub/unsub", QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
         client.recv(recv_timeout).await?; // SUBACK
 
-        let unsub = UnsubscribeParams {
-            packet_id:  2,
-            filters:    vec!["mqtt/test/sub/unsub".to_string()],
-            properties: Properties::default(),
-        };
+        let unsub = UnsubscribeParams::simple(2, "mqtt/test/sub/unsub");
         client.send_unsubscribe(&unsub).await?;
 
         match client.recv(recv_timeout).await? {
@@ -239,14 +207,7 @@ async fn dollar_topic_no_wildcard_match(addr: &str, recv_timeout: Duration, pb: 
         let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
 
         // Subscribe to "#" which should match everything EXCEPT $-prefixed topics
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "#".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "#", QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
         match client.recv(recv_timeout).await? {
             Packet::SubAck(_) => {}
@@ -460,14 +421,7 @@ async fn shared_subscription(addr: &str, recv_timeout: Duration, pb: &ProgressBa
             ));
         }
 
-        let sub = SubscribeParams {
-            packet_id:  1,
-            filters:    vec![(
-                "$share/testgroup/mqtt/test/sub/shared".to_string(),
-                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
-            )],
-            properties: Properties::default(),
-        };
+        let sub = SubscribeParams::simple(1, "$share/testgroup/mqtt/test/sub/shared", QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
 
         match client.recv(recv_timeout).await? {
@@ -630,15 +584,9 @@ async fn retain_as_published(addr: &str, recv_timeout: Duration, pb: &ProgressBa
         }
 
         // Publish retained message
-        let pub_params = PublishParams {
-            topic:      "mqtt/test/sub/rap".to_string(),
-            payload:    b"rap-test".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     true,
-            packet_id:  None,
-            properties: Properties::default(),
-        };
-        pub_client.send_publish(&pub_params).await?;
+        pub_client
+            .send_publish(&PublishParams::retained("mqtt/test/sub/rap", b"rap-test".to_vec()))
+            .await?;
         let _ = pub_client.send_disconnect(0x00).await;
 
         // New client subscribes with retain_as_published
@@ -711,15 +659,9 @@ async fn retain_handling_1(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
             ));
         }
 
-        let pub_params = PublishParams {
-            topic:      "mqtt/test/sub/rh1".to_string(),
-            payload:    b"rh1-test".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     true,
-            packet_id:  None,
-            properties: Properties::default(),
-        };
-        pub_client.send_publish(&pub_params).await?;
+        pub_client
+            .send_publish(&PublishParams::retained("mqtt/test/sub/rh1", b"rh1-test".to_vec()))
+            .await?;
         let _ = pub_client.send_disconnect(0x00).await;
 
         // Subscribe with retain_handling=1
@@ -811,15 +753,9 @@ async fn retain_handling_2(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
             ));
         }
 
-        let pub_params = PublishParams {
-            topic:      "mqtt/test/sub/rh2".to_string(),
-            payload:    b"rh2-test".to_vec(),
-            qos:        QoS::AtMostOnce,
-            retain:     true,
-            packet_id:  None,
-            properties: Properties::default(),
-        };
-        pub_client.send_publish(&pub_params).await?;
+        pub_client
+            .send_publish(&PublishParams::retained("mqtt/test/sub/rh2", b"rh2-test".to_vec()))
+            .await?;
         let _ = pub_client.send_disconnect(0x00).await;
 
         // Subscribe with retain_handling=2

@@ -192,3 +192,111 @@ where
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_requirement_key_standard() {
+        assert_eq!(parse_requirement_key("MQTT-3.1.2-4"), vec![3, 1, 2, 4]);
+    }
+
+    #[test]
+    fn parse_requirement_key_with_suffix() {
+        // "5a" should parse the numeric prefix as 5
+        assert_eq!(parse_requirement_key("MQTT-3.8.3-5a"), vec![3, 8, 3, 5]);
+        assert_eq!(parse_requirement_key("MQTT-3.8.3-5b"), vec![3, 8, 3, 5]);
+    }
+
+    #[test]
+    fn parse_requirement_key_no_prefix() {
+        assert_eq!(parse_requirement_key("3.1.2-4"), vec![3, 1, 2, 4]);
+    }
+
+    #[test]
+    fn parse_requirement_key_ordering() {
+        let a = parse_requirement_key("MQTT-3.1.2-4");
+        let b = parse_requirement_key("MQTT-3.2.0-1");
+        let c = parse_requirement_key("MQTT-4.3.1-1");
+        assert!(a < b);
+        assert!(b < c);
+    }
+
+    #[test]
+    fn requirement_section_standard() {
+        assert_eq!(requirement_section("MQTT-3.1.2-4"), "3.1.2");
+    }
+
+    #[test]
+    fn requirement_section_deep() {
+        assert_eq!(requirement_section("MQTT-4.7.1-2"), "4.7.1");
+    }
+
+    #[test]
+    fn requirement_section_no_prefix() {
+        assert_eq!(requirement_section("3.1.2-4"), "3.1.2");
+    }
+
+    #[test]
+    fn requirement_section_no_dash() {
+        assert_eq!(requirement_section("MQTT-3.1.2"), "3.1.2");
+    }
+
+    #[test]
+    fn format_result_must_pass() {
+        let ctx = TestContext { id: "MQTT-3.1.2-4", description: "Test desc", compliance: Compliance::Must };
+        let r = TestResult::pass(&ctx);
+        let s = format_result(&r, false);
+        assert!(s.contains("PASS"));
+        assert!(s.contains("MUST"));
+        assert!(s.contains("MQTT-3.1.2-4"));
+        assert!(s.contains("Test desc"));
+    }
+
+    #[test]
+    fn format_result_must_fail() {
+        let ctx = TestContext { id: "MQTT-3.1.2-4", description: "Test desc", compliance: Compliance::Must };
+        let r = TestResult::fail(&ctx, "bad thing");
+        let s = format_result(&r, false);
+        assert!(s.contains("FAIL"));
+        assert!(s.contains("bad thing"));
+    }
+
+    #[test]
+    fn format_result_may_pass_shows_yes() {
+        let ctx = TestContext { id: "MQTT-3.1.3-8", description: "Optional feature", compliance: Compliance::May };
+        let r = TestResult::pass(&ctx);
+        let s = format_result(&r, false);
+        assert!(s.contains("YES"));
+        assert!(s.contains("MAY"));
+    }
+
+    #[test]
+    fn format_result_may_fail_shows_no() {
+        let ctx = TestContext { id: "MQTT-3.1.3-8", description: "Optional feature", compliance: Compliance::May };
+        let r = TestResult::fail(&ctx, "not supported");
+        let s = format_result(&r, false);
+        assert!(s.contains("NO"));
+    }
+
+    #[test]
+    fn format_result_skip() {
+        let ctx = TestContext { id: "MQTT-3.1.3-8", description: "Test", compliance: Compliance::Must };
+        let r = TestResult::skip(&ctx, "prereq not met");
+        let s = format_result(&r, false);
+        assert!(s.contains("SKIP"));
+        assert!(s.contains("prereq not met"));
+    }
+
+    #[test]
+    fn format_result_verbose_uses_verbose_detail() {
+        let ctx = TestContext { id: "MQTT-3.1.2-4", description: "Test", compliance: Compliance::Must };
+        let r = TestResult::fail_verbose(&ctx, "short", "long detailed message");
+        let short = format_result(&r, false);
+        let long = format_result(&r, true);
+        assert!(short.contains("short"));
+        assert!(!short.contains("long detailed"));
+        assert!(long.contains("long detailed message"));
+    }
+}

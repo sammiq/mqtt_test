@@ -506,6 +506,7 @@ pub struct PublishParams {
     pub payload:    Vec<u8>,
     pub qos:        QoS,
     pub retain:     bool,
+    pub dup:        bool,
     pub packet_id:  Option<u16>,
     pub properties: Properties,
 }
@@ -517,6 +518,7 @@ impl PublishParams {
             payload:    payload.into(),
             qos:        QoS::AtMostOnce,
             retain:     false,
+            dup:        false,
             packet_id:  None,
             properties: Properties::default(),
         }
@@ -528,6 +530,7 @@ impl PublishParams {
             payload:    payload.into(),
             qos:        QoS::AtLeastOnce,
             retain:     false,
+            dup:        false,
             packet_id:  Some(packet_id),
             properties: Properties::default(),
         }
@@ -539,6 +542,7 @@ impl PublishParams {
             payload:    payload.into(),
             qos:        QoS::ExactlyOnce,
             retain:     false,
+            dup:        false,
             packet_id:  Some(packet_id),
             properties: Properties::default(),
         }
@@ -550,6 +554,7 @@ impl PublishParams {
             payload:    payload.into(),
             qos:        QoS::AtMostOnce,
             retain:     true,
+            dup:        false,
             packet_id:  None,
             properties: Properties::default(),
         }
@@ -779,7 +784,7 @@ pub fn encode_publish(p: &PublishParams) -> Vec<u8> {
     p.properties.encode(&mut body);
     body.extend_from_slice(&p.payload);
 
-    let flags: u8 = (p.retain as u8) | ((p.qos as u8) << 1);
+    let flags: u8 = (p.retain as u8) | ((p.qos as u8) << 1) | ((p.dup as u8) << 3);
     prepend_fixed_header(0x30 | flags, body)
 }
 

@@ -14,7 +14,7 @@ use crate::codec::{ConnectParams, Packet};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 11;
+pub const TEST_COUNT: usize = 13;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -31,6 +31,8 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             unsubscribe_reserved_bits(addr, recv_timeout, pb).await,
             topic_alias_exceeds_maximum(addr, recv_timeout, pb).await,
             subscribe_invalid_plus_wildcard(addr, recv_timeout, pb).await,
+            publish_topic_with_null_char(addr, recv_timeout, pb).await,
+            subscribe_wrong_fixed_header_bits(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -414,6 +416,69 @@ async fn subscribe_invalid_plus_wildcard(addr: &str, recv_timeout: Duration, pb:
             }
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect or error SUBACK", &other)),
         }
+    })
+    .await
+}
+
+const NULL_IN_TOPIC: TestContext = TestContext {
+    id: "MQTT-1.5.4-2",
+    description: "PUBLISH with null character in topic name MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// A UTF-8 Encoded String MUST NOT include an encoding of the null character
+/// U+0000 [MQTT-1.5.4-2]. A topic containing \0 is malformed.
+async fn publish_topic_with_null_char(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = NULL_IN_TOPIC;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-null-topic");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // PUBLISH with topic "mqtt/\0test" — contains null character.
+        #[rustfmt::skip]
+        let bad_publish: &[u8] = &[
+            0x30,                                               // PUBLISH | QoS=0
+            0x0F,                                               // remaining length = 15
+            0x00, 0x0A,                                         // topic length = 10
+            b'm', b'q', b't', b't', b'/', 0x00, b't', b'e',   // "mqtt/\0te"
+            b's', b't',                                         // "st"
+            0x00,                                               // properties length = 0
+            0x48, 0x49,                                         // payload "HI"
+        ];
+        client.send_raw(bad_publish).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const SUB_WRONG_FIXED: TestContext = TestContext {
+    id: "MQTT-3.8.1-1",
+    description: "SUBSCRIBE fixed header reserved bits MUST be 0010",
+    compliance: Compliance::Must,
+};
+
+/// The SUBSCRIBE fixed header byte MUST have bits 3-0 set to 0010.
+/// Sending 0x80 (bits = 0000) instead of 0x82 is malformed [MQTT-3.8.1-1].
+async fn subscribe_wrong_fixed_header_bits(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SUB_WRONG_FIXED;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-sub-fixed-bits");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // SUBSCRIBE with first byte 0x80 (reserved bits = 0000) instead of 0x82 (0010).
+        #[rustfmt::skip]
+        let bad_subscribe: &[u8] = &[
+            0x80,                                               // SUBSCRIBE with wrong reserved bits
+            0x0C,                                               // remaining length = 12
+            0x00, 0x01,                                         // packet ID = 1
+            0x00,                                               // properties length = 0
+            0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/"
+            0x00,                                               // subscription options: QoS 0
+        ];
+        client.send_raw(bad_subscribe).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
     })
     .await
 }

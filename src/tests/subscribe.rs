@@ -12,7 +12,7 @@ use crate::codec::{
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 13;
+pub const TEST_COUNT: usize = 16;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -31,6 +31,9 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             retain_as_published(addr, recv_timeout, pb).await,
             retain_handling_1(addr, recv_timeout, pb).await,
             retain_handling_2(addr, recv_timeout, pb).await,
+            unsubscribe_stops_delivery(addr, recv_timeout, pb).await,
+            overlapping_subscriptions_max_qos(addr, recv_timeout, pb).await,
+            subscription_id_overlapping(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -747,6 +750,173 @@ async fn retain_handling_2(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
             Ok(other) => {
                 Ok(TestResult::fail_packet(&ctx, "no packet (retain_handling=2)", &other))
             }
+        }
+    })
+    .await
+}
+
+// ── Unsubscribe behaviour ──────────────────────────────────────────────────
+
+const UNSUB_STOPS: TestContext = TestContext {
+    id: "MQTT-3.10.4-6",
+    description: "After UNSUBSCRIBE, server MUST stop delivering messages on that topic",
+    compliance: Compliance::Must,
+};
+
+/// After receiving a valid UNSUBSCRIBE, the server MUST stop adding new
+/// messages matching the removed filter [MQTT-3.10.4-6].
+async fn unsubscribe_stops_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UNSUB_STOPS;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/sub/unsub_stops";
+        let mut client = client::connect_and_subscribe(addr, "mqtt-test-unsub-stops", topic, QoS::AtMostOnce, recv_timeout).await?;
+
+        // Verify subscription works
+        client.send_publish(&PublishParams::qos0(topic, b"before".to_vec())).await?;
+        match client.recv(recv_timeout).await? {
+            Packet::Publish(p) if p.topic == topic => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "PUBLISH before unsubscribe", &other)),
+        }
+
+        // Unsubscribe
+        let unsub = UnsubscribeParams::simple(2, topic);
+        client.send_unsubscribe(&unsub).await?;
+        match client.recv(recv_timeout).await? {
+            Packet::UnsubAck(_) => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "UNSUBACK", &other)),
+        }
+
+        // Publish again — should NOT be delivered
+        client.send_publish(&PublishParams::qos0(topic, b"after".to_vec())).await?;
+
+        match client.recv(Duration::from_secs(1)).await {
+            Err(_) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                Ok(TestResult::fail(&ctx, "Message delivered after UNSUBSCRIBE"))
+            }
+            Ok(_) => Ok(TestResult::pass(&ctx)),
+        }
+    })
+    .await
+}
+
+// ── Overlapping subscriptions ──────────────────────────────────────────────
+
+const OVERLAP_QOS: TestContext = TestContext {
+    id: "MQTT-3.3.4-2",
+    description: "Overlapping subscriptions MUST deliver at maximum granted QoS",
+    compliance: Compliance::Must,
+};
+
+/// When a client has overlapping subscriptions, the server MUST deliver
+/// the message at the maximum QoS of all matching subscriptions [MQTT-3.3.4-2].
+async fn overlapping_subscriptions_max_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = OVERLAP_QOS;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-overlap-qos");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Subscribe to wildcard at QoS 0
+        let sub1 = SubscribeParams::simple(1, "mqtt/test/sub/overlap/#", QoS::AtMostOnce);
+        client.send_subscribe(&sub1).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        // Subscribe to exact topic at QoS 1
+        let sub2 = SubscribeParams::simple(2, "mqtt/test/sub/overlap/exact", QoS::AtLeastOnce);
+        client.send_subscribe(&sub2).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        // Publish QoS 1 from another client
+        let pub_conn = ConnectParams::new("mqtt-test-overlap-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        pub_client.send_publish(&PublishParams::qos1("mqtt/test/sub/overlap/exact", b"overlap".to_vec(), 1)).await?;
+
+        // Drain publisher PUBACK
+        for _ in 0..5 {
+            if let Ok(Packet::PubAck(_)) = pub_client.recv(recv_timeout).await { break; }
+        }
+
+        // Subscriber should receive at QoS 1 (the higher of the two)
+        match client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/overlap/exact" => {
+                if let Some(pid) = p.packet_id {
+                    client.send_puback(pid, 0x00).await?;
+                }
+                if p.qos == QoS::AtLeastOnce {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(&ctx, format!("Delivered at {:?}, expected AtLeastOnce", p.qos)))
+                }
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH on overlap/exact", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message delivered")),
+        }
+    })
+    .await
+}
+
+// ── Subscription Identifier with overlapping subscriptions ─────────────────
+
+const SUB_ID_OVERLAP: TestContext = TestContext {
+    id: "MQTT-3.3.4-3",
+    description: "Overlapping subscriptions with Subscription IDs MUST include all IDs",
+    compliance: Compliance::Must,
+};
+
+/// When multiple subscriptions match a publish and each has a Subscription
+/// Identifier, the delivered PUBLISH MUST include all matching IDs [MQTT-3.3.4-3].
+async fn subscription_id_overlapping(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SUB_ID_OVERLAP;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-subid-overlap");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.properties.subscription_ids_available == Some(false) {
+            return Ok(TestResult::skip(&ctx, "Broker reported Subscription Identifiers Available = false"));
+        }
+
+        // Subscribe with sub-id 10 on wildcard
+        let sub1 = SubscribeParams {
+            packet_id: 1,
+            filters: vec![("mqtt/test/sub/sid_overlap/#".to_string(), SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() })],
+            properties: Properties { subscription_identifier: Some(10), ..Properties::default() },
+        };
+        client.send_subscribe(&sub1).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        // Subscribe with sub-id 20 on exact
+        let sub2 = SubscribeParams {
+            packet_id: 2,
+            filters: vec![("mqtt/test/sub/sid_overlap/exact".to_string(), SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() })],
+            properties: Properties { subscription_identifier: Some(20), ..Properties::default() },
+        };
+        client.send_subscribe(&sub2).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        // Publish to the overlapping topic
+        client.send_publish(&PublishParams::qos0("mqtt/test/sub/sid_overlap/exact", b"sid-test".to_vec())).await?;
+
+        // The broker may deliver one message with both IDs, or two messages with one ID each.
+        // Both approaches are valid per the spec.
+        let mut ids_seen: Vec<u32> = Vec::new();
+        for _ in 0..3 {
+            match client.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/sid_overlap/exact" => {
+                    if let Some(id) = p.properties.subscription_identifier {
+                        ids_seen.push(id);
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        ids_seen.sort();
+        if ids_seen.contains(&10) && ids_seen.contains(&20) {
+            Ok(TestResult::pass(&ctx))
+        } else if ids_seen.is_empty() {
+            Ok(TestResult::fail(&ctx, "No subscription identifiers in delivered PUBLISH"))
+        } else {
+            Ok(TestResult::fail(&ctx, format!("Expected subscription IDs [10, 20], got {ids_seen:?}")))
         }
     })
     .await

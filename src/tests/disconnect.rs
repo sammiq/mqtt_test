@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, Properties, QoS, WillParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 4;
+pub const TEST_COUNT: usize = 5;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -19,6 +19,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             disconnect_with_will(addr, recv_timeout, pb).await,
             normal_disconnect_discards_will(addr, recv_timeout, pb).await,
             session_expiry_increase_rejected(addr, recv_timeout, pb).await,
+            will_delay_interval(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -183,6 +184,60 @@ async fn session_expiry_increase_rejected(addr: &str, recv_timeout: Duration, pb
                 &ctx,
                 "disconnect with protocol error or connection close",
                 &other,
+            )),
+        }
+    })
+    .await
+}
+
+const WILL_DELAY: TestContext = TestContext {
+    id: "MQTT-3.1.3.2-2",
+    description: "Will Delay Interval MUST delay will message publication after disconnect",
+    compliance: Compliance::Must,
+};
+
+/// The server MUST delay publishing the will message by the Will Delay
+/// Interval after the network connection is closed [MQTT-3.1.3.2-2].
+async fn will_delay_interval(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = WILL_DELAY;
+    run_test(ctx, pb, async {
+        let will_topic = "mqtt/test/disconnect/will_delay";
+
+        // Set up a subscriber for the will topic
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-willdelay-sub", will_topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        // Connect with a will message + will_delay_interval = 3 seconds
+        let mut will_params = ConnectParams::new("mqtt-test-willdelay-pub");
+        let mut will = WillParams::new(will_topic, b"delayed-will");
+        will.properties.will_delay_interval = Some(3);
+        will_params.will = Some(will);
+        let (will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
+
+        // Abruptly disconnect (skip DISCONNECT so will is triggered)
+        drop(will_client.into_raw());
+
+        // Will should NOT arrive within 1 second
+        match sub_client.recv(Duration::from_secs(1)).await {
+            Ok(Packet::Publish(p)) if p.topic == will_topic => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "Will message arrived immediately despite Will Delay Interval of 3s",
+                ));
+            }
+            _ => {} // expected — no message yet
+        }
+
+        // Will SHOULD arrive within 5 seconds total
+        match sub_client.recv(Duration::from_secs(5)).await {
+            Ok(Packet::Publish(p)) if p.topic == will_topic => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "delayed will PUBLISH", &other)),
+            Err(_) => Ok(TestResult::fail(
+                &ctx,
+                "Will message not received within 5 seconds (delay was 3s)",
             )),
         }
     })

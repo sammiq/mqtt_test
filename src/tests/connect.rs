@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 27;
+pub const TEST_COUNT: usize = 35;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -43,6 +43,14 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             enhanced_auth_method(addr, recv_timeout, pb).await,
             reason_string_in_connack(addr, recv_timeout, pb).await,
             session_present_zero_on_reject(addr, recv_timeout, pb).await,
+            acceptable_client_id_chars(addr, recv_timeout, pb).await,
+            flow_control_receive_maximum(addr, recv_timeout, pb).await,
+            connack_maximum_qos(addr, recv_timeout, pb).await,
+            connack_retain_available(addr, recv_timeout, pb).await,
+            connack_subscription_ids_available(addr, recv_timeout, pb).await,
+            connack_shared_subscription_available(addr, recv_timeout, pb).await,
+            connack_server_reference(addr, recv_timeout, pb).await,
+            server_redirection(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1257,6 +1265,328 @@ async fn reason_string_in_connack(addr: &str, recv_timeout: Duration, pb: &Progr
                 ))
             }
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
+        }
+    })
+    .await
+}
+
+// ── SHOULD ──────────────────────────────────────────────────────────────────
+
+const ACCEPTABLE_CLIENT_ID: TestContext = TestContext {
+    id: "MQTT-3.1.3-5",
+    description: "Server SHOULD accept client IDs of [0-9a-zA-Z] with 1-23 bytes",
+    compliance: Compliance::Should,
+};
+
+/// Server SHOULD allow Client Identifiers which contain only characters
+/// [0-9a-zA-Z] and are between 1 and 23 bytes long [MQTT-3.1.3-5].
+async fn acceptable_client_id_chars(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = ACCEPTABLE_CLIENT_ID;
+    run_test(ctx, pb, || async move {
+        // A 23-char ID using the recommended character set.
+        let client_id = "abcABC0123456789xyzXYZw";
+        let params = ConnectParams::new(client_id);
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        if connack.reason_code == 0x00 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!(
+                    "Broker rejected 23-char alphanumeric client ID (reason {:#04x})",
+                    connack.reason_code
+                ),
+            ))
+        }
+    })
+    .await
+}
+
+const FLOW_CONTROL: TestContext = TestContext {
+    id: "MQTT-4.9.0-1",
+    description: "Server SHOULD use Receive Maximum to limit concurrent inflight messages",
+    compliance: Compliance::Should,
+};
+
+/// The server SHOULD use its Receive Maximum (from CONNACK) to limit the
+/// number of concurrent QoS>0 messages it sends before receiving acknowledgements
+/// [MQTT-4.9.0-1]. We read the server's Receive Maximum and verify the server
+/// does not exceed it when delivering QoS 1 messages without client PUBACK.
+async fn flow_control_receive_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = FLOW_CONTROL;
+    run_test(ctx, pb, || async move {
+        // Connect subscriber — inspect server's Receive Maximum from CONNACK.
+        let sub_params = ConnectParams::new("mqtt-test-flow-ctrl-sub");
+        let (mut sub_client, connack) = client::connect(addr, &sub_params, recv_timeout).await?;
+
+        let server_recv_max = connack.properties.receive_maximum.unwrap_or(65535);
+        if server_recv_max > 20 {
+            let _ = sub_client.send_disconnect(0x00).await;
+            return Ok(TestResult::skip(
+                &ctx,
+                format!("Server Receive Maximum is {server_recv_max} — too high to practically test flow control"),
+            ));
+        }
+
+        let topic = "mqtt/test/flow/ctrl";
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                topic.to_string(),
+                SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Publish more messages than Receive Maximum.
+        let pub_params = ConnectParams::new("mqtt-test-flow-ctrl-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_params, recv_timeout).await?;
+
+        let msg_count = (server_recv_max + 5) as usize;
+        for i in 0..msg_count {
+            let p = PublishParams {
+                topic:      topic.to_string(),
+                payload:    format!("flow-{i}").into_bytes(),
+                qos:        QoS::AtLeastOnce,
+                retain:     false,
+                packet_id:  Some((i + 1) as u16),
+                properties: Properties::default(),
+            };
+            pub_client.send_publish(&p).await?;
+        }
+        for _ in 0..msg_count {
+            let _ = pub_client.recv(recv_timeout).await;
+        }
+        let _ = pub_client.send_disconnect(0x00).await;
+
+        // Receive without sending PUBACK — server should pause at Receive Maximum.
+        let mut received = 0u16;
+        for _ in 0..msg_count {
+            match sub_client.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Publish(_)) => received += 1,
+                Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+        let _ = sub_client.send_disconnect(0x00).await;
+
+        if received <= server_recv_max {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!(
+                    "Server sent {received} QoS 1 messages without PUBACK (Receive Maximum = {server_recv_max})",
+                ),
+            ))
+        }
+    })
+    .await
+}
+
+// ── MAY (CONNACK properties) ────────────────────────────────────────────────
+
+const CONNACK_MAX_QOS: TestContext = TestContext {
+    id: "MQTT-3.2.2-7",
+    description: "Maximum QoS property in CONNACK reports server's QoS capability",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include Maximum QoS in CONNACK to advertise its highest
+/// supported QoS level [MQTT-3.2.2-7].
+async fn connack_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CONNACK_MAX_QOS;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-max-qos-prop");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        match connack.properties.maximum_qos {
+            Some(qos) if qos <= 2 => Ok(TestResult::pass(&ctx)),
+            Some(qos) => Ok(TestResult::fail(
+                &ctx,
+                format!("Maximum QoS property has invalid value {qos} (expected 0, 1, or 2)"),
+            )),
+            None => Ok(TestResult::fail(
+                &ctx,
+                "CONNACK does not include Maximum QoS property (defaults to 2)",
+            )),
+        }
+    })
+    .await
+}
+
+const CONNACK_RETAIN_AVAIL: TestContext = TestContext {
+    id: "MQTT-3.2.2-10",
+    description: "Retain Available property in CONNACK reports retain support",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include Retain Available in CONNACK [MQTT-3.2.2-10].
+async fn connack_retain_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CONNACK_RETAIN_AVAIL;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-retain-avail");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        match connack.properties.retain_available {
+            Some(_) => Ok(TestResult::pass(&ctx)),
+            None => Ok(TestResult::fail(
+                &ctx,
+                "CONNACK does not include Retain Available property (defaults to true)",
+            )),
+        }
+    })
+    .await
+}
+
+const CONNACK_SUB_IDS: TestContext = TestContext {
+    id: "MQTT-3.2.2-13",
+    description: "Subscription Identifiers Available property in CONNACK",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include Subscription Identifiers Available in CONNACK [MQTT-3.2.2-13].
+async fn connack_subscription_ids_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CONNACK_SUB_IDS;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-subid-avail");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        match connack.properties.subscription_ids_available {
+            Some(_) => Ok(TestResult::pass(&ctx)),
+            None => Ok(TestResult::fail(
+                &ctx,
+                "CONNACK does not include Subscription Identifiers Available property (defaults to true)",
+            )),
+        }
+    })
+    .await
+}
+
+const CONNACK_SHARED_SUB: TestContext = TestContext {
+    id: "MQTT-3.2.2-15",
+    description: "Shared Subscription Available property in CONNACK",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include Shared Subscription Available in CONNACK [MQTT-3.2.2-15].
+async fn connack_shared_subscription_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CONNACK_SHARED_SUB;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-shared-sub-avail");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        match connack.properties.shared_subscription_available {
+            Some(_) => Ok(TestResult::pass(&ctx)),
+            None => Ok(TestResult::fail(
+                &ctx,
+                "CONNACK does not include Shared Subscription Available property (defaults to true)",
+            )),
+        }
+    })
+    .await
+}
+
+const CONNACK_SERVER_REF: TestContext = TestContext {
+    id: "MQTT-3.2.2-18",
+    description: "Server Reference in rejected CONNACK for server redirection",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include a Server Reference property in a rejected CONNACK
+/// to redirect the client [MQTT-3.2.2-18].
+async fn connack_server_reference(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CONNACK_SERVER_REF;
+    run_test(ctx, pb, || async move {
+        let mut client = RawClient::connect_tcp(addr).await?;
+
+        // Send MQTT v4 CONNECT to trigger a rejection
+        #[rustfmt::skip]
+        let bad_connect: &[u8] = &[
+            0x10,                               // CONNECT fixed header
+            0x0C,                               // remaining length = 12
+            0x00, 0x04, b'M', b'Q', b'T', b'T', // protocol name "MQTT"
+            0x04,                               // protocol version 4 (3.1.1)
+            0x02,                               // connect flags: clean start
+            0x00, 0x3C,                         // keep alive = 60
+            0x00, 0x00,                         // client ID length = 0
+        ];
+        client.send_raw(bad_connect).await?;
+
+        match client.recv(recv_timeout).await {
+            Ok(Packet::ConnAck(connack)) if connack.reason_code >= 0x80 => {
+                if connack.properties.server_reference.is_some() {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        "Rejected CONNACK does not include Server Reference property",
+                    ))
+                }
+            }
+            Ok(Packet::ConnAck(_)) => {
+                Ok(TestResult::skip(
+                    &ctx,
+                    "Broker accepted MQTT v4 CONNECT — cannot test rejected CONNACK properties",
+                ))
+            }
+            Err(_) | Ok(Packet::Disconnect(_)) => {
+                Ok(TestResult::skip(
+                    &ctx,
+                    "Broker closed connection without CONNACK — cannot inspect Server Reference",
+                ))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
+        }
+    })
+    .await
+}
+
+const SERVER_REDIRECT: TestContext = TestContext {
+    id: "MQTT-4.11.0-1",
+    description: "Server redirection: CONNACK with reason 0x9C or 0x9D indicates redirect",
+    compliance: Compliance::May,
+};
+
+/// Server MAY use reason codes 0x9C (Use Another Server) or 0x9D
+/// (Server Moved) to redirect clients [MQTT-4.11]. We check if a normal
+/// CONNACK includes a Server Reference, indicating redirection support.
+async fn server_redirection(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SERVER_REDIRECT;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-redirect");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        // A successful CONNACK won't have redirection reason codes, but the
+        // server may still advertise a Server Reference for informational purposes.
+        if connack.reason_code == 0x9C || connack.reason_code == 0x9D {
+            // Actively redirecting — check for Server Reference.
+            if connack.properties.server_reference.is_some() {
+                Ok(TestResult::pass(&ctx))
+            } else {
+                Ok(TestResult::fail(
+                    &ctx,
+                    format!(
+                        "Redirect reason {:#04x} without Server Reference property",
+                        connack.reason_code
+                    ),
+                ))
+            }
+        } else {
+            // Normal connection — server is not redirecting. Not a failure for MAY.
+            Ok(TestResult::fail(
+                &ctx,
+                "Server did not redirect (no 0x9C/0x9D reason code in CONNACK)",
+            ))
         }
     })
     .await

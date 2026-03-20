@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 16;
+pub const TEST_COUNT: usize = 17;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -32,6 +32,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             correlation_data_preserved(addr, recv_timeout, pb).await,
             user_properties_preserved(addr, recv_timeout, pb).await,
             message_ordering(addr, recv_timeout, pb).await,
+            retained_delivered_with_retain_flag(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -755,6 +756,93 @@ async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
                 format!("Messages out of order: expected {expected:?}, got {received:?}"),
             ))
         }
+    })
+    .await
+}
+
+// ── SHOULD ──────────────────────────────────────────────────────────────────
+
+const RETAIN_DELIVERY_FLAG: TestContext = TestContext {
+    id: "MQTT-3.3.1-6",
+    description: "Server SHOULD deliver retained messages with Retain=1 to new subscribers",
+    compliance: Compliance::Should,
+};
+
+/// When delivering a retained message to a new subscription, the server
+/// SHOULD set the RETAIN flag to 1 [MQTT-3.3.1-6].
+async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = RETAIN_DELIVERY_FLAG;
+    run_test(ctx, pb, || async move {
+        let topic = "mqtt/test/pub/retain_flag";
+
+        // Publish a retained message.
+        let pub_conn = ConnectParams::new("mqtt-test-retflag-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        let pub_params = PublishParams {
+            topic:      topic.to_string(),
+            payload:    b"retain-flag-test".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     true,
+            packet_id:  None,
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&pub_params).await?;
+        let _ = pub_client.send_disconnect(0x00).await;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Subscribe from a new client — should get the retained message with Retain=1.
+        let sub_conn = ConnectParams::new("mqtt-test-retflag-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                topic.to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        let result = match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic && p.retain => {
+                TestResult::pass(&ctx)
+            }
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                TestResult::fail(
+                    &ctx,
+                    "Retained message delivered but Retain flag is 0 (SHOULD be 1)",
+                )
+            }
+            Ok(other) => {
+                TestResult::fail_packet(&ctx, "retained PUBLISH with Retain=1", &other)
+            }
+            Err(_) => {
+                TestResult::fail(
+                    &ctx,
+                    "No retained message delivered to new subscriber",
+                )
+            }
+        };
+        let _ = sub_client.send_disconnect(0x00).await;
+
+        // Clean up: remove retained message by publishing empty payload with retain.
+        let cleanup_conn = ConnectParams::new("mqtt-test-retflag-cleanup");
+        if let Ok((mut c, _)) = client::connect(addr, &cleanup_conn, recv_timeout).await {
+            let clear = PublishParams {
+                topic:      topic.to_string(),
+                payload:    Vec::new(),
+                qos:        QoS::AtMostOnce,
+                retain:     true,
+                packet_id:  None,
+                properties: Properties::default(),
+            };
+            let _ = c.send_publish(&clear).await;
+            let _ = c.send_disconnect(0x00).await;
+        }
+
+        Ok(result)
     })
     .await
 }

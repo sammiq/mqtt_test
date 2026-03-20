@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 19;
+pub const TEST_COUNT: usize = 26;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -21,10 +21,14 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             clean_start_false_no_session(addr, recv_timeout, pb).await,
             zero_length_client_id(addr, recv_timeout, pb).await,
             zero_length_client_id_no_clean_start(addr, recv_timeout, pb).await,
+            assigned_client_id(addr, recv_timeout, pb).await,
             first_packet_must_be_connect(addr, recv_timeout, pb).await,
             session_expiry_interval_accepted(addr, recv_timeout, pb).await,
             receive_maximum_accepted(addr, recv_timeout, pb).await,
             maximum_packet_size_accepted(addr, recv_timeout, pb).await,
+            server_keep_alive(addr, recv_timeout, pb).await,
+            topic_alias_maximum(addr, recv_timeout, pb).await,
+            wildcard_subscription_available(addr, recv_timeout, pb).await,
             duplicate_connect(addr, recv_timeout, pb).await,
             invalid_protocol_name(addr, recv_timeout, pb).await,
             invalid_protocol_version(addr, recv_timeout, pb).await,
@@ -32,9 +36,12 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             will_message_on_unexpected_close(addr, recv_timeout, pb).await,
             will_message_removed_on_disconnect(addr, recv_timeout, pb).await,
             will_retain_flag(addr, recv_timeout, pb).await,
+            will_delay_interval(addr, recv_timeout, pb).await,
+            request_response_information(addr, recv_timeout, pb).await,
             server_maximum_qos(addr, recv_timeout, pb).await,
             server_receive_maximum(addr, recv_timeout, pb).await,
             enhanced_auth_method(addr, recv_timeout, pb).await,
+            reason_string_in_connack(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -188,6 +195,40 @@ async fn zero_length_client_id_no_clean_start(addr: &str, recv_timeout: Duration
     .await
 }
 
+const ASSIGNED_CLIENT_ID: TestContext = TestContext {
+    id: "MQTT-3.2.2-16",
+    description: "Server SHOULD return Assigned Client Identifier when accepting empty client ID",
+    compliance: Compliance::Should,
+};
+
+/// When the server accepts a zero-length Client ID, it SHOULD return an
+/// Assigned Client Identifier property in CONNACK [MQTT-3.2.2-16].
+async fn assigned_client_id(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = ASSIGNED_CLIENT_ID;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        if connack.reason_code != 0x00 {
+            return Ok(TestResult::skip(
+                &ctx,
+                format!("Broker rejected empty client ID (reason {:#04x})", connack.reason_code),
+            ));
+        }
+
+        if connack.properties.assigned_client_id.is_some() {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "Broker accepted empty client ID but did not return Assigned Client Identifier",
+            ))
+        }
+    })
+    .await
+}
+
 const FIRST_CONNECT: TestContext = TestContext {
     id: "MQTT-3.1.0-1",
     description: "Server MUST close connection if first packet is not CONNECT",
@@ -287,6 +328,97 @@ async fn maximum_packet_size_accepted(addr: &str, recv_timeout: Duration, pb: &P
             Ok(TestResult::pass(&ctx))
         } else {
             Ok(TestResult::fail(&ctx, format!("CONNACK reason code {:#04x}", connack.reason_code)))
+        }
+    })
+    .await
+}
+
+const SERVER_KEEP_ALIVE: TestContext = TestContext {
+    id: "MQTT-3.2.2-21",
+    description: "Server Keep Alive: server MAY override client's keep-alive value",
+    compliance: Compliance::May,
+};
+
+/// Server MAY send Server Keep Alive in CONNACK to override the client's
+/// requested keep-alive interval [MQTT-3.2.2-21].
+async fn server_keep_alive(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SERVER_KEEP_ALIVE;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-server-ka");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        if connack.properties.server_keep_alive.is_some() {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "Server did not include Server Keep Alive property in CONNACK",
+            ))
+        }
+    })
+    .await
+}
+
+const TOPIC_ALIAS_MAX: TestContext = TestContext {
+    id: "MQTT-3.2.2-9",
+    description: "Topic Alias Maximum: server reports maximum supported topic aliases",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include Topic Alias Maximum in CONNACK [MQTT-3.2.2-9].
+async fn topic_alias_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = TOPIC_ALIAS_MAX;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-ta-max");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        if let Some(max) = connack.properties.topic_alias_maximum {
+            if max > 0 {
+                Ok(TestResult::pass(&ctx))
+            } else {
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Topic Alias Maximum is 0 (topic aliases not supported)",
+                ))
+            }
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "Server did not include Topic Alias Maximum in CONNACK",
+            ))
+        }
+    })
+    .await
+}
+
+const WILDCARD_SUB_AVAIL: TestContext = TestContext {
+    id: "MQTT-3.2.2-12",
+    description: "Wildcard Subscription Available: server reports wildcard subscription support",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include Wildcard Subscription Available in CONNACK [MQTT-3.2.2-12].
+/// Most brokers support wildcards so this checks if the property is present and true.
+async fn wildcard_subscription_available(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = WILDCARD_SUB_AVAIL;
+    run_test(ctx, pb, || async move {
+        let params = ConnectParams::new("mqtt-test-wildcard-avail");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        match connack.properties.wildcard_subscription_available {
+            Some(true) | None => {
+                // None means default (true per spec)
+                Ok(TestResult::pass(&ctx))
+            }
+            Some(false) => {
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Server reported Wildcard Subscription Available = false",
+                ))
+            }
         }
     })
     .await
@@ -837,6 +969,121 @@ async fn server_receive_maximum(addr: &str, recv_timeout: Duration, pb: &Progres
     .await
 }
 
+// ── Will Delay Interval ─────────────────────────────────────────────────────
+
+const WILL_DELAY: TestContext = TestContext {
+    id: "MQTT-3.1.3-9",
+    description: "Will Delay Interval: will message publication MAY be delayed",
+    compliance: Compliance::May,
+};
+
+/// Will Delay Interval: if set, the server MAY delay publishing the will
+/// message for up to the specified number of seconds [MQTT-3.1.3-9].
+/// We test with a short delay and verify the message is NOT published
+/// immediately but IS published after the delay expires.
+async fn will_delay_interval(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = WILL_DELAY;
+    run_test(ctx, pb, || async move {
+        let will_topic = "mqtt/test/will/delay";
+
+        // Subscriber
+        let sub_params = ConnectParams::new("mqtt-test-will-delay-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                will_topic.to_string(),
+                SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Connect with will delay = 2 seconds
+        let mut will_params = ConnectParams::new("mqtt-test-will-delay-pub");
+        will_params.will = Some(WillParams {
+            topic:      will_topic.to_string(),
+            payload:    b"delayed-will".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     false,
+            properties: Properties {
+                will_delay_interval: Some(2),
+                ..Properties::default()
+            },
+        });
+        will_params.properties.session_expiry_interval = Some(60);
+        let (will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
+
+        // Abrupt disconnect
+        drop(will_client);
+
+        // Should NOT arrive immediately (within 1 second)
+        match sub_client.recv(Duration::from_secs(1)).await {
+            Ok(Packet::Publish(p)) if p.topic == will_topic => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "Will message arrived immediately despite Will Delay Interval = 2s",
+                ));
+            }
+            _ => {} // expected — no message yet
+        }
+
+        // Should arrive after the delay (wait up to 4 more seconds)
+        match sub_client.recv(Duration::from_secs(4)).await {
+            Ok(Packet::Publish(p)) if p.topic == will_topic => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail_packet(&ctx, "PUBLISH (delayed will)", &other))
+            }
+            Err(_) => {
+                let _ = sub_client.send_disconnect(0x00).await;
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Will message not received after delay interval expired",
+                ))
+            }
+        }
+    })
+    .await
+}
+
+// ── Request/Response Information ────────────────────────────────────────────
+
+const REQ_RESP_INFO: TestContext = TestContext {
+    id: "MQTT-3.1.2-28",
+    description: "Request Response Information: server MAY return Response Information",
+    compliance: Compliance::May,
+};
+
+/// When the client sets Request Response Information = 1, the server MAY
+/// include Response Information in the CONNACK [MQTT-3.1.2-28].
+async fn request_response_information(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = REQ_RESP_INFO;
+    run_test(ctx, pb, || async move {
+        let mut params = ConnectParams::new("mqtt-test-resp-info");
+        params.properties.request_response_information = Some(true);
+
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+        let _ = client.send_disconnect(0x00).await;
+
+        if connack.properties.response_information.is_some() {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "Server did not include Response Information despite request",
+            ))
+        }
+    })
+    .await
+}
+
 // ── Enhanced authentication ─────────────────────────────────────────────────
 
 const ENHANCED_AUTH: TestContext = TestContext {
@@ -892,6 +1139,63 @@ async fn enhanced_auth_method(addr: &str, recv_timeout: Duration, pb: &ProgressB
                 ))
             }
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK or AUTH", &other)),
+        }
+    })
+    .await
+}
+
+// ── Reason String ───────────────────────────────────────────────────────────
+
+const REASON_STRING: TestContext = TestContext {
+    id: "MQTT-3.2.2-20",
+    description: "Reason String: server MAY include a human-readable diagnostic in CONNACK",
+    compliance: Compliance::May,
+};
+
+/// Server MAY include a Reason String in CONNACK when rejecting a connection [MQTT-3.2.2-20].
+/// We trigger a rejection with an invalid protocol name and check for a Reason String.
+async fn reason_string_in_connack(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = REASON_STRING;
+    run_test(ctx, pb, || async move {
+        let mut client = RawClient::connect_tcp(addr).await?;
+
+        // CONNECT with protocol version 4 to trigger a CONNACK rejection
+        #[rustfmt::skip]
+        let bad_connect: &[u8] = &[
+            0x10,                               // CONNECT fixed header
+            0x0C,                               // remaining length = 12
+            0x00, 0x04, b'M', b'Q', b'T', b'T', // protocol name "MQTT"
+            0x04,                               // protocol version 4 (3.1.1)
+            0x02,                               // connect flags: clean start
+            0x00, 0x3C,                         // keep alive = 60
+            0x00, 0x00,                         // client ID length = 0
+        ];
+        client.send_raw(bad_connect).await?;
+
+        match client.recv(recv_timeout).await {
+            Ok(Packet::ConnAck(connack)) if connack.reason_code >= 0x80 => {
+                if connack.properties.reason_string.is_some() {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        "CONNACK rejection did not include Reason String",
+                    ))
+                }
+            }
+            Ok(Packet::ConnAck(_)) => {
+                Ok(TestResult::skip(
+                    &ctx,
+                    "Broker accepted MQTT v4 CONNECT — cannot test error Reason String",
+                ))
+            }
+            Err(_) | Ok(Packet::Disconnect(_)) => {
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Broker closed connection instead of sending CONNACK with Reason String",
+                ))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
         }
     })
     .await

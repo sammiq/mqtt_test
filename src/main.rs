@@ -195,8 +195,10 @@ async fn main() {
     }
 
     let tls_info = tls_addr.as_deref().zip(tls_config.as_ref());
+    let start = std::time::Instant::now();
     let report = tests::run_selected(&tcp_addr, tls_info, recv_timeout, suites_to_run, &mp).await;
+    let elapsed = start.elapsed();
 
     println!();
-    report.print(args.verbose, args.order);
+    report.print(args.verbose, args.order, elapsed);
 }

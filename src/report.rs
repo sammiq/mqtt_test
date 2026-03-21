@@ -1,5 +1,7 @@
+use std::time::Duration;
+
 use clap::ValueEnum;
-use indicatif::ProgressBar;
+use indicatif::{HumanDuration, ProgressBar};
 
 use crate::types::{Compliance, Outcome, Suite, TestContext, TestResult};
 
@@ -25,7 +27,7 @@ impl Report {
         self.suites.push(suite);
     }
 
-    pub fn print(&self, verbose: bool, order: ReportOrder) {
+    pub fn print(&self, verbose: bool, order: ReportOrder, elapsed: Duration) {
         println!("MQTT v5 Compliance Report");
         println!("{}", "=".repeat(60));
 
@@ -34,7 +36,7 @@ impl Report {
             ReportOrder::Requirement => self.print_by_requirement(verbose),
         }
 
-        self.print_summary();
+        self.print_summary(elapsed);
     }
 
     fn print_by_suite(&self, verbose: bool) {
@@ -66,7 +68,7 @@ impl Report {
         }
     }
 
-    fn print_summary(&self) {
+    fn print_summary(&self, elapsed: Duration) {
         let mut must_pass = 0usize;
         let mut must_total = 0usize;
         let mut should_pass = 0usize;
@@ -98,7 +100,7 @@ impl Report {
         }
 
         println!("\n{}", "=".repeat(60));
-        println!("Summary");
+        println!("Summary  ({})", HumanDuration(elapsed));
         println!("  Required (MUST):       {must_pass}/{must_total}");
         println!("  Recommended (SHOULD):  {should_pass}/{should_total}");
         println!("  Optional (MAY):        {may_pass}/{may_total}");

@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 35;
+pub const TEST_COUNT: usize = 39;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -51,6 +51,10 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             connack_shared_subscription_available(addr, recv_timeout, pb).await,
             connack_server_reference(addr, recv_timeout, pb).await,
             server_redirection(addr, recv_timeout, pb).await,
+            username_password_accepted(addr, recv_timeout, pb).await,
+            password_without_username(addr, recv_timeout, pb).await,
+            empty_username(addr, recv_timeout, pb).await,
+            username_only(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1427,6 +1431,116 @@ async fn server_redirection(addr: &str, recv_timeout: Duration, pb: &ProgressBar
             Ok(TestResult::fail(
                 &ctx,
                 "Server did not redirect (no 0x9C/0x9D reason code in CONNACK)",
+            ))
+        }
+    })
+    .await
+}
+
+// ── Username / Password ─────────────────────────────────────────────────────
+
+const USERNAME_PASSWORD: TestContext = TestContext {
+    id: "MQTT-3.1.3-4",
+    description: "Server MUST accept CONNECT with Username and Password flags set",
+    compliance: Compliance::Must,
+};
+
+/// A CONNECT carrying both username and password MUST be accepted (assuming the
+/// broker allows anonymous or the credentials are valid) [MQTT-3.1.3-4/5].
+async fn username_password_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = USERNAME_PASSWORD;
+    run_test(ctx, pb, async {
+        let mut params = ConnectParams::new("mqtt-test-user-pass");
+        params.username = Some("testuser".into());
+        params.password = Some(b"testpass".to_vec());
+        let (_client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.reason_code == 0x00 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
+            ))
+        }
+    })
+    .await
+}
+
+const PASSWORD_NO_USERNAME: TestContext = TestContext {
+    id: "MQTT-3.1.2-19",
+    description: "MQTT v5 allows Password without Username (v5 change from v3.1.1)",
+    compliance: Compliance::May,
+};
+
+/// In MQTT v5, a CONNECT MAY include a password without a username — the
+/// username-flag=0, password-flag=1 combination is valid [MQTT-3.1.2-19].
+async fn password_without_username(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = PASSWORD_NO_USERNAME;
+    run_test(ctx, pb, async {
+        let mut params = ConnectParams::new("mqtt-test-pass-no-user");
+        params.password = Some(b"testpass".to_vec());
+        let (_client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.reason_code == 0x00 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("CONNACK reason code {:#04x} — broker rejected password without username", connack.reason_code),
+            ))
+        }
+    })
+    .await
+}
+
+const EMPTY_USERNAME: TestContext = TestContext {
+    id: "MQTT-3.1.3-10",
+    description: "Server MUST accept zero-length username when Username flag is set",
+    compliance: Compliance::Must,
+};
+
+/// A CONNECT with the Username flag set and a zero-length UTF-8 string is valid
+/// per the spec — the username is simply empty [MQTT-3.1.3-4].
+async fn empty_username(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = EMPTY_USERNAME;
+    run_test(ctx, pb, async {
+        let mut params = ConnectParams::new("mqtt-test-empty-user");
+        params.username = Some(String::new());
+        let (_client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.reason_code == 0x00 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
+            ))
+        }
+    })
+    .await
+}
+
+const USERNAME_ONLY: TestContext = TestContext {
+    id: "MQTT-3.1.2-15",
+    description: "Server MUST accept CONNECT with Username flag set and no Password",
+    compliance: Compliance::Must,
+};
+
+/// A CONNECT with only the Username flag set (no Password flag) is valid.
+async fn username_only(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = USERNAME_ONLY;
+    run_test(ctx, pb, async {
+        let mut params = ConnectParams::new("mqtt-test-user-only");
+        params.username = Some("testuser".into());
+        let (_client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.reason_code == 0x00 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
             ))
         }
     })

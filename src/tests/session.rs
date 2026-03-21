@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 4;
+pub const TEST_COUNT: usize = 7;
 
 /// Clean up a persistent session by reconnecting with clean_start=true.
 async fn cleanup_session(addr: &str, client_id: &str, recv_timeout: Duration) {
@@ -27,6 +27,9 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             qos1_redelivery_on_resume(addr, recv_timeout, pb).await,
             qos2_redelivery_on_resume(addr, recv_timeout, pb).await,
             subscription_persists_across_sessions(addr, recv_timeout, pb).await,
+            session_expiry_zero(addr, recv_timeout, pb).await,
+            session_expiry_max(addr, recv_timeout, pb).await,
+            session_takeover(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -312,6 +315,123 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
         // AutoDisconnect on c2 sends DISCONNECT on drop.
 
         cleanup_session(addr, sub_id, recv_timeout).await;
+
+        Ok(result)
+    })
+    .await
+}
+
+const SESSION_EXPIRY_ZERO: TestContext = TestContext {
+    id: "MQTT-3.1.2-10",
+    description: "Session Expiry Interval of 0 means session ends on disconnect",
+    compliance: Compliance::Must,
+};
+
+/// A Session Expiry Interval of 0 means the session state MUST be discarded
+/// when the connection closes [MQTT-3.1.2-10].
+async fn session_expiry_zero(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SESSION_EXPIRY_ZERO;
+    run_test(ctx, pb, async {
+        let client_id = "mqtt-test-session-exp-zero";
+
+        // First connection: Session Expiry Interval = 0 (explicit).
+        let mut params = ConnectParams::new(client_id);
+        params.properties.session_expiry_interval = Some(0);
+        let (c1, _) = client::connect(addr, &params, recv_timeout).await?;
+        drop(c1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Reconnect with Clean Start=0 — session should NOT exist.
+        let mut params2 = ConnectParams::new(client_id);
+        params2.clean_start = false;
+        let (_c2, connack) = client::connect(addr, &params2, recv_timeout).await?;
+
+        cleanup_session(addr, client_id, recv_timeout).await;
+
+        if !connack.session_present {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "session_present=1 despite Session Expiry Interval=0",
+            ))
+        }
+    })
+    .await
+}
+
+const SESSION_EXPIRY_MAX: TestContext = TestContext {
+    id: "MQTT-3.1.2-11a",
+    description: "Session Expiry Interval of 0xFFFFFFFF means session never expires",
+    compliance: Compliance::Must,
+};
+
+/// Session Expiry Interval of 0xFFFFFFFF means the session does not expire.
+/// Reconnecting with Clean Start=0 should find the session [MQTT-3.1.2-11].
+async fn session_expiry_max(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SESSION_EXPIRY_MAX;
+    run_test(ctx, pb, async {
+        let client_id = "mqtt-test-session-exp-max";
+
+        // First connection with max session expiry.
+        let mut params = ConnectParams::new(client_id);
+        params.properties.session_expiry_interval = Some(0xFFFF_FFFF);
+        let (c1, _) = client::connect(addr, &params, recv_timeout).await?;
+        drop(c1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Reconnect with Clean Start=0 — session MUST still exist.
+        let mut params2 = ConnectParams::new(client_id);
+        params2.clean_start = false;
+        params2.properties.session_expiry_interval = Some(0xFFFF_FFFF);
+        let (_c2, connack) = client::connect(addr, &params2, recv_timeout).await?;
+
+        cleanup_session(addr, client_id, recv_timeout).await;
+
+        if connack.session_present {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "session_present=0 despite Session Expiry Interval=0xFFFFFFFF",
+            ))
+        }
+    })
+    .await
+}
+
+const SESSION_TAKEOVER: TestContext = TestContext {
+    id: "MQTT-3.1.4-3",
+    description: "Server MUST disconnect existing client when new client uses same Client ID",
+    compliance: Compliance::Must,
+};
+
+/// If a client connects with a Client Identifier already in use, the server
+/// MUST disconnect the existing client [MQTT-3.1.4-3].
+async fn session_takeover(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SESSION_TAKEOVER;
+    run_test(ctx, pb, async {
+        let client_id = "mqtt-test-session-takeover";
+
+        // First connection.
+        let mut params = ConnectParams::new(client_id);
+        params.properties.session_expiry_interval = Some(60);
+        let (mut c1, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Second connection with the same Client ID — should disconnect c1.
+        let mut params2 = ConnectParams::new(client_id);
+        params2.clean_start = false;
+        params2.properties.session_expiry_interval = Some(60);
+        let (_c2, _) = client::connect(addr, &params2, recv_timeout).await?;
+
+        // c1 should have been disconnected by the server.
+        let result = match c1.recv(recv_timeout).await {
+            Err(_) => TestResult::pass(&ctx), // Connection closed
+            Ok(Packet::Disconnect(_)) => TestResult::pass(&ctx),
+            Ok(other) => TestResult::fail_packet(&ctx, "DISCONNECT or connection close", &other),
+        };
+
+        cleanup_session(addr, client_id, recv_timeout).await;
 
         Ok(result)
     })

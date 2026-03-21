@@ -14,7 +14,7 @@ use crate::codec::{ConnectParams, Packet};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 13;
+pub const TEST_COUNT: usize = 15;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -33,6 +33,8 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             subscribe_invalid_plus_wildcard(addr, recv_timeout, pb).await,
             publish_topic_with_null_char(addr, recv_timeout, pb).await,
             subscribe_wrong_fixed_header_bits(addr, recv_timeout, pb).await,
+            username_flag_truncated_payload(addr, recv_timeout, pb).await,
+            password_flag_truncated_payload(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -477,6 +479,76 @@ async fn subscribe_wrong_fixed_header_bits(addr: &str, recv_timeout: Duration, p
             0x00,                                               // subscription options: QoS 0
         ];
         client.send_raw(bad_subscribe).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+// ── Username / Password ─────────────────────────────────────────────────────
+
+const USERNAME_TRUNCATED: TestContext = TestContext {
+    id: "MQTT-3.1.3-3",
+    description: "CONNECT with Username flag set but truncated payload MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// Username flag is set but the payload ends before the username field.
+/// The broker MUST treat this as a malformed packet [MQTT-3.1.2-15].
+async fn username_flag_truncated_payload(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = USERNAME_TRUNCATED;
+    run_test(ctx, pb, async {
+        let mut client = RawClient::connect_tcp(addr).await?;
+
+        // CONNECT with Username flag (0x82 = clean_start + username) but payload
+        // contains only a client ID — no username bytes.
+        #[rustfmt::skip]
+        let bad_connect: &[u8] = &[
+            0x10,                                           // CONNECT
+            0x11,                                           // remaining length = 17
+            0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+            0x05,                                           // protocol version 5
+            0x82,                                           // flags: clean_start=1, username=1
+            0x00, 0x3C,                                     // keep alive = 60
+            0x00,                                           // properties length = 0
+            0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+        ];
+        client.send_raw(bad_connect).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const PASSWORD_TRUNCATED: TestContext = TestContext {
+    id: "MQTT-3.1.3-5a",
+    description: "CONNECT with Password flag set but truncated payload MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// Password flag is set (along with username flag) but the payload ends
+/// after the username — no password bytes present.
+async fn password_flag_truncated_payload(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = PASSWORD_TRUNCATED;
+    run_test(ctx, pb, async {
+        let mut client = RawClient::connect_tcp(addr).await?;
+
+        // CONNECT with Username + Password flags but only client ID + username in payload.
+        // Remaining length claims 27 bytes but we only provide enough for client ID + username.
+        #[rustfmt::skip]
+        let bad_connect: &[u8] = &[
+            0x10,                                           // CONNECT
+            0x1B,                                           // remaining length = 27
+            0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+            0x05,                                           // protocol version 5
+            0xC2,                                           // flags: clean_start=1, username=1, password=1
+            0x00, 0x3C,                                     // keep alive = 60
+            0x00,                                           // properties length = 0
+            0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+            0x00, 0x08, b't', b'e', b's', b't',            // username "test" (but length says 8 — overshoots)
+            b'u', b's', b'e', b'r',
+        ];
+        client.send_raw(bad_connect).await?;
 
         Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
     })

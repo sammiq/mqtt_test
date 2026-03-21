@@ -5,11 +5,11 @@ use std::time::Duration;
 use indicatif::ProgressBar;
 
 use crate::client;
-use crate::codec::{ConnectParams, Packet, Properties, QoS, WillParams};
+use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 5;
+pub const TEST_COUNT: usize = 8;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -20,6 +20,9 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             normal_disconnect_discards_will(addr, recv_timeout, pb).await,
             session_expiry_increase_rejected(addr, recv_timeout, pb).await,
             will_delay_interval(addr, recv_timeout, pb).await,
+            disconnect_reason_session_takeover(addr, recv_timeout, pb).await,
+            disconnect_on_packet_too_large(addr, recv_timeout, pb).await,
+            disconnect_reason_string(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -239,6 +242,160 @@ async fn will_delay_interval(addr: &str, recv_timeout: Duration, pb: &ProgressBa
                 &ctx,
                 "Will message not received within 5 seconds (delay was 3s)",
             )),
+        }
+    })
+    .await
+}
+
+// ── Server-initiated DISCONNECT ─────────────────────────────────────────────
+
+const DISCONNECT_SESSION_TAKEOVER: TestContext = TestContext {
+    id: "MQTT-3.14.2-1",
+    description: "Server SHOULD send DISCONNECT with reason 0x8E on session takeover",
+    compliance: Compliance::Should,
+};
+
+/// When another client connects with the same Client ID, the server SHOULD
+/// send a DISCONNECT with reason code 0x8E (Session taken over) to the
+/// existing client [MQTT-3.14.2-1].
+async fn disconnect_reason_session_takeover(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = DISCONNECT_SESSION_TAKEOVER;
+    run_test(ctx, pb, async {
+        let client_id = "mqtt-test-disc-takeover";
+
+        let mut params = ConnectParams::new(client_id);
+        params.properties.session_expiry_interval = Some(60);
+        let (mut c1, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Second connection with same Client ID
+        let mut params2 = ConnectParams::new(client_id);
+        params2.clean_start = false;
+        params2.properties.session_expiry_interval = Some(60);
+        let (_c2, _) = client::connect(addr, &params2, recv_timeout).await?;
+
+        // c1 should receive DISCONNECT with reason 0x8E
+        match c1.recv(recv_timeout).await {
+            Ok(Packet::Disconnect(d)) if d.reason_code == 0x8E => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(Packet::Disconnect(d)) => {
+                Ok(TestResult::fail(
+                    &ctx,
+                    format!("DISCONNECT received but reason was {:#04x} (expected 0x8E)", d.reason_code),
+                ))
+            }
+            Err(_) => {
+                // Connection closed without DISCONNECT — still acceptable
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Connection closed without sending DISCONNECT (expected 0x8E reason code)",
+                ))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
+        }
+    })
+    .await
+}
+
+const DISCONNECT_PACKET_TOO_LARGE: TestContext = TestContext {
+    id: "MQTT-3.2.2-17a",
+    description: "Server MUST disconnect if client sends packet exceeding Maximum Packet Size",
+    compliance: Compliance::Must,
+};
+
+/// If the client advertises a Maximum Packet Size in CONNECT and then sends
+/// a packet exceeding that size, the server MUST disconnect [MQTT-3.1.2-24].
+/// Here we test the reverse: we tell the broker our max is small, then the
+/// broker should not send us oversized packets. To test server-side enforcement,
+/// we send a PUBLISH exceeding the broker's maximum (if advertised).
+async fn disconnect_on_packet_too_large(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = DISCONNECT_PACKET_TOO_LARGE;
+    run_test(ctx, pb, async {
+        // Connect and check if broker advertises a Maximum Packet Size.
+        let params = ConnectParams::new("mqtt-test-disc-pkt-size");
+        let (mut c, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        let max_size = connack.properties.maximum_packet_size.unwrap_or(0);
+        if max_size == 0 || max_size > 1_000_000 {
+            // Broker doesn't advertise a practical limit — send a very large PUBLISH.
+            // Use a 1MB payload which should exceed most reasonable limits.
+            let large_payload = vec![0x41u8; 1_048_576]; // 1MB of 'A'
+            let publish = PublishParams::qos0("test/large/packet", large_payload);
+            c.send_publish(&publish).await?;
+
+            // Check if broker disconnects us
+            match c.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+                Err(_) => {
+                    // Connection closed — also acceptable
+                    Ok(TestResult::pass(&ctx))
+                }
+                Ok(_) => {
+                    // Broker accepted it — it has no practical limit
+                    Ok(TestResult::skip(&ctx, "Broker accepted 1MB payload — no Maximum Packet Size enforced"))
+                }
+            }
+        } else {
+            // Broker advertises a limit — send a packet exceeding it.
+            let large_payload = vec![0x41u8; max_size as usize + 1];
+            let publish = PublishParams::qos0("test/large/packet", large_payload);
+            c.send_publish(&publish).await?;
+
+            match c.recv(recv_timeout).await {
+                Ok(Packet::Disconnect(d)) if d.reason_code == 0x95 => {
+                    Ok(TestResult::pass(&ctx))
+                }
+                Ok(Packet::Disconnect(_)) | Err(_) => {
+                    Ok(TestResult::pass(&ctx))
+                }
+                Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
+            }
+        }
+    })
+    .await
+}
+
+const DISCONNECT_REASON_STRING: TestContext = TestContext {
+    id: "MQTT-3.14.2-3",
+    description: "Server-sent DISCONNECT MAY include a Reason String property",
+    compliance: Compliance::May,
+};
+
+/// When the server sends a DISCONNECT, it MAY include a Reason String
+/// property [MQTT-3.14.2-3]. We provoke a server DISCONNECT (via session
+/// takeover) and check for the property.
+async fn disconnect_reason_string(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = DISCONNECT_REASON_STRING;
+    run_test(ctx, pb, async {
+        let client_id = "mqtt-test-disc-reason-str";
+
+        let mut params = ConnectParams::new(client_id);
+        params.properties.session_expiry_interval = Some(60);
+        let (mut c1, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Provoke session takeover
+        let mut params2 = ConnectParams::new(client_id);
+        params2.clean_start = false;
+        params2.properties.session_expiry_interval = Some(60);
+        let (_c2, _) = client::connect(addr, &params2, recv_timeout).await?;
+
+        match c1.recv(recv_timeout).await {
+            Ok(Packet::Disconnect(d)) => {
+                if d.properties.reason_string.is_some() {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        "DISCONNECT received but without Reason String property",
+                    ))
+                }
+            }
+            _ => {
+                Ok(TestResult::fail(
+                    &ctx,
+                    "No DISCONNECT received (connection closed without reason)",
+                ))
+            }
         }
     })
     .await

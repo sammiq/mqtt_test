@@ -440,6 +440,10 @@ pub struct ConnectParams {
     pub properties:  Properties,
     /// Optional will message [MQTT-3.1.2-7].
     pub will:        Option<WillParams>,
+    /// Optional username [MQTT-3.1.3-4].
+    pub username:    Option<String>,
+    /// Optional password [MQTT-3.1.3-5].
+    pub password:    Option<Vec<u8>>,
 }
 
 /// Will message parameters sent inside CONNECT [MQTT-3.1.2-8..13].
@@ -472,6 +476,8 @@ impl ConnectParams {
             clean_start: true,
             properties:  Properties::default(),
             will:        None,
+            username:    None,
+            password:    None,
         }
     }
 }
@@ -748,6 +754,12 @@ pub fn encode_connect(p: &ConnectParams) -> Vec<u8> {
             flags |= 0x20; // Will Retain [MQTT-3.1.2-13]
         }
     }
+    if p.username.is_some() {
+        flags |= 0x80; // Username Flag [MQTT-3.1.2-15]
+    }
+    if p.password.is_some() {
+        flags |= 0x40; // Password Flag [MQTT-3.1.2-17]
+    }
     body.push(flags);
 
     // Keep alive [MQTT-3.1.2-21]
@@ -764,6 +776,16 @@ pub fn encode_connect(p: &ConnectParams) -> Vec<u8> {
         will.properties.encode(&mut body);
         push_str(&will.topic, &mut body);
         push_bytes(&will.payload, &mut body);
+    }
+
+    // Username [MQTT-3.1.3-4]
+    if let Some(ref username) = p.username {
+        push_str(username, &mut body);
+    }
+
+    // Password [MQTT-3.1.3-5]
+    if let Some(ref password) = p.password {
+        push_bytes(password, &mut body);
     }
 
     prepend_fixed_header(0x10, body)

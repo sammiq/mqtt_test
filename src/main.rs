@@ -21,6 +21,7 @@ pub enum SuiteName {
     Session,
     Malformed,
     Disconnect,
+    RequestResponse,
 }
 
 impl std::fmt::Display for SuiteName {
@@ -32,7 +33,8 @@ impl std::fmt::Display for SuiteName {
             Self::Subscribe  => write!(f, "subscribe"),
             Self::Session    => write!(f, "session"),
             Self::Malformed  => write!(f, "malformed"),
-            Self::Disconnect => write!(f, "disconnect"),
+            Self::Disconnect       => write!(f, "disconnect"),
+            Self::RequestResponse  => write!(f, "request-response"),
         }
     }
 }
@@ -67,6 +69,18 @@ struct Args {
     /// Report ordering: "suite" (default) groups by test suite, "requirement" sorts by spec section
     #[arg(long, default_value = "suite")]
     order: ReportOrder,
+
+    /// Use TLS for the broker connection
+    #[arg(long)]
+    tls: bool,
+
+    /// Path to CA certificate PEM file for TLS verification
+    #[arg(long)]
+    ca_cert: Option<std::path::PathBuf>,
+
+    /// Skip TLS certificate verification (insecure)
+    #[arg(long)]
+    insecure: bool,
 }
 
 #[tokio::main]
@@ -85,11 +99,26 @@ async fn main() {
 
     let recv_timeout = Duration::from_millis(args.timeout_ms);
 
+    // Set up TLS if requested
+    if args.tls {
+        let host = args.broker.split(':').next().unwrap_or("localhost");
+        let tls = client::TlsConfig::build(
+            args.ca_cert.as_deref(),
+            args.insecure,
+            host,
+        )
+        .expect("failed to build TLS configuration");
+        client::set_tls_config(Some(tls));
+    } else {
+        client::set_tls_config(None);
+    }
+
     // Resolve which suites to run
-    let all_suites = [SuiteName::Connect, SuiteName::Ping, SuiteName::Publish, SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed, SuiteName::Disconnect];
+    let all_suites = [SuiteName::Connect, SuiteName::Ping, SuiteName::Publish, SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed, SuiteName::Disconnect, SuiteName::RequestResponse];
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 
-    println!("Testing broker at {} (timeout: {}ms)", args.broker, args.timeout_ms);
+    let tls_label = if args.tls { " (TLS)" } else { "" };
+    println!("Testing broker at {}{} (timeout: {}ms)", args.broker, tls_label, args.timeout_ms);
     println!("Suites: {}\n", suites_to_run.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
 
     // Preflight: Verify TCP reachability

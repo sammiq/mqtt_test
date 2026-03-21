@@ -5,7 +5,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 ## Project structure
 
 - `src/main.rs` — CLI entry point (clap), runs all test suites and prints report
-- `src/client.rs` — `RawClient` async TCP wrapper, `AutoDisconnect` RAII wrapper
+- `src/client.rs` — `RawClient` async TCP/TLS wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum
 - `src/codec.rs` — Custom MQTT v5 packet encoder/decoder (no external MQTT library)
 - `src/types.rs` — `Compliance` (Must/Should/May), `Outcome`, `TestResult`, `Suite`
 - `src/report.rs` — Report formatting/printing
@@ -19,15 +19,17 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 - `AutoDisconnect` wraps `RawClient` and sends DISCONNECT on drop (via `try_write`). `connect()` and `connect_and_subscribe()` return `AutoDisconnect` by default
 - Use `into_raw()` to escape auto-disconnect when a test intentionally skips DISCONNECT (e.g. abrupt disconnects for session resumption)
 - Use `RawClient` directly when DISCONNECT is the subject of the test and should be explicit in the code
-- Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror
+- TLS support via `tokio-rustls` with global `OnceLock<Option<TlsConfig>>` — avoids threading config through all test functions
+- Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror, tokio-rustls, rustls-pemfile
 
 ## Building and running
 
 ```
 cargo build
 cargo run -- --broker 127.0.0.1:1883
+cargo run -- --broker 127.0.0.1:8883 --tls --ca-cert /path/to/ca.crt
 cargo clippy   # should produce zero warnings
-./test-broker.sh   # spins up mosquitto in Docker, runs full suite
+./test-broker.sh   # spins up mosquitto in Docker, runs full suite (TCP + TLS)
 ```
 
 ## Conventions
@@ -37,3 +39,4 @@ cargo clippy   # should produce zero warnings
 - Prefer struct initialization syntax over field reassignment after Default::default()
 - Each test suite has a `TEST_COUNT` constant — update it when adding/removing tests
 - After making changes to code, always run existing tests and look to add tests for missing cases
+- `test-broker.sh` runs both TCP (port 1883) and TLS (port 8883) test passes; 2 TLS tests are timing-sensitive (MQTT-4.7.2-1, MQTT-3.14.4-3)

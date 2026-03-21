@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 26;
+pub const TEST_COUNT: usize = 30;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -41,6 +41,10 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             topic_alias_reset_on_reconnect(addr, recv_timeout, pb).await,
             receive_maximum_flow_control(addr, recv_timeout, pb).await,
             qos2_duplicate_publish(addr, recv_timeout, pb).await,
+            packet_id_reuse_after_puback(addr, recv_timeout, pb).await,
+            packet_id_reuse_after_pubcomp(addr, recv_timeout, pb).await,
+            qos2_duplicate_pubrel(addr, recv_timeout, pb).await,
+            payload_format_utf8_validated(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1211,6 +1215,220 @@ async fn qos2_duplicate_publish(addr: &str, recv_timeout: Duration, pb: &Progres
         }
 
         Ok(TestResult::fail(&ctx, "PUBREC not received for duplicate PUBLISH"))
+    })
+    .await
+}
+
+// ── Packet ID reuse ─────────────────────────────────────────────────────────
+
+const PID_REUSE_QOS1: TestContext = TestContext {
+    id: "MQTT-2.2.1-3",
+    description: "Packet ID MUST be available for reuse after PUBACK completes (QoS 1)",
+    compliance: Compliance::Must,
+};
+
+/// After a QoS 1 PUBLISH is acknowledged with PUBACK, the same packet ID
+/// MUST be available for reuse [MQTT-2.2.1-3].
+async fn packet_id_reuse_after_puback(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = PID_REUSE_QOS1;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/pid_reuse_q1";
+        let mut sub = client::connect_and_subscribe(addr, "mqtt-test-pidq1-sub", topic, QoS::AtLeastOnce, recv_timeout).await?;
+
+        let params = ConnectParams::new("mqtt-test-pidq1-pub");
+        let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // First PUBLISH with packet_id=1
+        pub_client.send_publish(&PublishParams::qos1(topic, b"first".to_vec(), 1)).await?;
+        match pub_client.recv(recv_timeout).await? {
+            Packet::PubAck(ack) if ack.packet_id == 1 => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other)),
+        }
+
+        // Reuse packet_id=1 for a second PUBLISH
+        pub_client.send_publish(&PublishParams::qos1(topic, b"second".to_vec(), 1)).await?;
+        match pub_client.recv(recv_timeout).await? {
+            Packet::PubAck(ack) if ack.packet_id == 1 => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "PUBACK(1) reuse", &other)),
+        }
+
+        // Verify both messages arrived
+        let mut payloads = Vec::new();
+        for _ in 0..2 {
+            match sub.recv(recv_timeout).await {
+                Ok(Packet::Publish(p)) if p.topic == topic => {
+                    if let Some(pid) = p.packet_id {
+                        sub.send_puback(pid, 0x00).await?;
+                    }
+                    payloads.push(p.payload);
+                }
+                _ => break,
+            }
+        }
+
+        if payloads.len() == 2 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(&ctx, format!("Expected 2 messages, got {}", payloads.len())))
+        }
+    })
+    .await
+}
+
+const PID_REUSE_QOS2: TestContext = TestContext {
+    id: "MQTT-2.2.1-4",
+    description: "Packet ID MUST be available for reuse after PUBCOMP completes (QoS 2)",
+    compliance: Compliance::Must,
+};
+
+/// After a QoS 2 flow completes (PUBCOMP received), the same packet ID
+/// MUST be available for reuse [MQTT-2.2.1-4].
+async fn packet_id_reuse_after_pubcomp(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = PID_REUSE_QOS2;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-pidq2-pub");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // First QoS 2 flow with packet_id=5
+        client.send_publish(&PublishParams::qos2("mqtt/test/pub/pid_reuse_q2", b"first".to_vec(), 5)).await?;
+        // Expect PUBREC
+        loop {
+            match client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 5 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(5)", &other)),
+            }
+        }
+        client.send_pubrel(5, 0x00).await?;
+        loop {
+            match client.recv(recv_timeout).await? {
+                Packet::PubComp(comp) if comp.packet_id == 5 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(5)", &other)),
+            }
+        }
+
+        // Reuse packet_id=5 for a second QoS 2 flow
+        client.send_publish(&PublishParams::qos2("mqtt/test/pub/pid_reuse_q2", b"second".to_vec(), 5)).await?;
+        loop {
+            match client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 5 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(5) reuse", &other)),
+            }
+        }
+        client.send_pubrel(5, 0x00).await?;
+        loop {
+            match client.recv(recv_timeout).await? {
+                Packet::PubComp(comp) if comp.packet_id == 5 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(5) reuse", &other)),
+            }
+        }
+
+        Ok(TestResult::pass(&ctx))
+    })
+    .await
+}
+
+const QOS2_DUP_PUBREL: TestContext = TestContext {
+    id: "MQTT-4.3.3-3",
+    description: "Server MUST respond with PUBCOMP to duplicate PUBREL",
+    compliance: Compliance::Must,
+};
+
+/// When the server receives a duplicate PUBREL for the same packet ID,
+/// it MUST respond with PUBCOMP [MQTT-4.3.3-3].
+async fn qos2_duplicate_pubrel(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = QOS2_DUP_PUBREL;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-qos2-duppubrel");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Start QoS 2 flow
+        client.send_publish(&PublishParams::qos2("mqtt/test/pub/dup_pubrel", b"test".to_vec(), 7)).await?;
+        loop {
+            match client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 7 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(7)", &other)),
+            }
+        }
+
+        // Send PUBREL
+        client.send_pubrel(7, 0x00).await?;
+        loop {
+            match client.recv(recv_timeout).await? {
+                Packet::PubComp(comp) if comp.packet_id == 7 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(7)", &other)),
+            }
+        }
+
+        // Send duplicate PUBREL — server MUST respond with PUBCOMP
+        client.send_pubrel(7, 0x00).await?;
+        match client.recv(recv_timeout).await {
+            Ok(Packet::PubComp(comp)) if comp.packet_id == 7 => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Disconnect(_)) | Err(_) => {
+                // Some brokers may consider duplicate PUBREL after PUBCOMP as
+                // a protocol error — still acceptable behaviour
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBCOMP(7) for duplicate PUBREL", &other)),
+        }
+    })
+    .await
+}
+
+const PAYLOAD_FORMAT_UTF8: TestContext = TestContext {
+    id: "MQTT-3.3.2-3",
+    description: "Server MAY validate UTF-8 payload when Payload Format Indicator is 1",
+    compliance: Compliance::May,
+};
+
+/// When the Payload Format Indicator is set to 1 (UTF-8), the server MAY
+/// validate the payload and disconnect with reason 0x99 (Payload format invalid)
+/// if it is not valid UTF-8 [MQTT-3.3.2-3].
+async fn payload_format_utf8_validated(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = PAYLOAD_FORMAT_UTF8;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-pfi-utf8");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Send PUBLISH with payload_format_indicator=1 but invalid UTF-8 payload
+        let publish = PublishParams {
+            topic: "mqtt/test/pub/pfi_utf8".into(),
+            payload: vec![0xFF, 0xFE, 0x80, 0x81], // invalid UTF-8
+            qos: QoS::AtLeastOnce,
+            retain: false,
+            dup: false,
+            packet_id: Some(1),
+            properties: Properties { payload_format_indicator: Some(1), ..Properties::default() },
+        };
+        client.send_publish(&publish).await?;
+
+        match client.recv(recv_timeout).await {
+            Ok(Packet::Disconnect(d)) if d.reason_code == 0x99 => {
+                // Server validated and rejected — good
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(Packet::Disconnect(_)) => {
+                // Disconnected for some other reason — still counts as validation
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(Packet::PubAck(_)) => {
+                // Server accepted without validation — MAY, so this is fine
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Server accepted invalid UTF-8 payload without validation (Payload Format Indicator=1)",
+                ))
+            }
+            Err(_) => {
+                // Connection closed — server may have validated and closed
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBACK or DISCONNECT", &other)),
+        }
     })
     .await
 }

@@ -12,7 +12,7 @@ use crate::codec::{
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 16;
+pub const TEST_COUNT: usize = 21;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -34,6 +34,11 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             unsubscribe_stops_delivery(addr, recv_timeout, pb).await,
             overlapping_subscriptions_max_qos(addr, recv_timeout, pb).await,
             subscription_id_overlapping(addr, recv_timeout, pb).await,
+            multi_level_topic(addr, recv_timeout, pb).await,
+            wildcard_middle_level(addr, recv_timeout, pb).await,
+            multiple_filters_single_subscribe(addr, recv_timeout, pb).await,
+            subscription_upgrade_qos(addr, recv_timeout, pb).await,
+            empty_topic_level(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -917,6 +922,202 @@ async fn subscription_id_overlapping(addr: &str, recv_timeout: Duration, pb: &Pr
             Ok(TestResult::fail(&ctx, "No subscription identifiers in delivered PUBLISH"))
         } else {
             Ok(TestResult::fail(&ctx, format!("Expected subscription IDs [10, 20], got {ids_seen:?}")))
+        }
+    })
+    .await
+}
+
+// ── Topic edge cases ────────────────────────────────────────────────────────
+
+const MULTI_LEVEL_TOPIC: TestContext = TestContext {
+    id: "MQTT-4.7.1-6",
+    description: "Multi-level topic filter MUST match deep topic hierarchies",
+    compliance: Compliance::Must,
+};
+
+/// A subscription to `a/b/#` MUST match `a/b/c/d/e` [MQTT-4.7.1-3].
+async fn multi_level_topic(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = MULTI_LEVEL_TOPIC;
+    run_test(ctx, pb, async {
+        let mut sub = client::connect_and_subscribe(
+            addr, "mqtt-test-multi-level-sub", "mqtt/test/deep/#", QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let params = ConnectParams::new("mqtt-test-multi-level-pub");
+        let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let publish = PublishParams::qos0("mqtt/test/deep/a/b/c/d", b"deep".to_vec());
+        pub_client.send_publish(&publish).await?;
+
+        match sub.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/deep/a/b/c/d" => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH matching a/b/#", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message received for deep topic hierarchy")),
+        }
+    })
+    .await
+}
+
+const WILDCARD_MIDDLE: TestContext = TestContext {
+    id: "MQTT-4.7.1-7",
+    description: "'+' wildcard in middle position MUST match exactly one level",
+    compliance: Compliance::Must,
+};
+
+/// A subscription to `a/+/c` MUST match `a/b/c` but NOT `a/b/d` or `a/b/c/d`.
+async fn wildcard_middle_level(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = WILDCARD_MIDDLE;
+    run_test(ctx, pb, async {
+        let mut sub = client::connect_and_subscribe(
+            addr, "mqtt-test-wc-mid-sub", "mqtt/test/wc/+/end", QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let params = ConnectParams::new("mqtt-test-wc-mid-pub");
+        let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Should match
+        let p1 = PublishParams::qos0("mqtt/test/wc/any/end", b"match".to_vec());
+        pub_client.send_publish(&p1).await?;
+
+        // Should NOT match (extra level)
+        let p2 = PublishParams::qos0("mqtt/test/wc/any/extra/end", b"no-match".to_vec());
+        pub_client.send_publish(&p2).await?;
+
+        match sub.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/wc/any/end" => {
+                // Verify no second message arrives (the non-matching one)
+                match sub.recv(Duration::from_millis(500)).await {
+                    Err(_) => Ok(TestResult::pass(&ctx)), // No extra message — correct
+                    Ok(Packet::Publish(p2)) if p2.topic == "mqtt/test/wc/any/extra/end" => {
+                        Ok(TestResult::fail(&ctx, "'+' wildcard matched across multiple levels"))
+                    }
+                    _ => Ok(TestResult::pass(&ctx)),
+                }
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH matching a/+/c", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message received for wildcard match")),
+        }
+    })
+    .await
+}
+
+const MULTI_FILTERS: TestContext = TestContext {
+    id: "MQTT-3.8.4-5",
+    description: "Multiple topic filters in single SUBSCRIBE MUST each get a reason code",
+    compliance: Compliance::Must,
+};
+
+/// A SUBSCRIBE with multiple topic filters MUST return a SUBACK with
+/// a reason code for each filter [MQTT-3.8.4-6].
+async fn multiple_filters_single_subscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = MULTI_FILTERS;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-multi-filter");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id: 1,
+            filters: vec![
+                ("mqtt/test/mf/a".into(), SubscribeOptions::default()),
+                ("mqtt/test/mf/b".into(), SubscribeOptions::default()),
+                ("mqtt/test/mf/c".into(), SubscribeOptions::default()),
+            ],
+            properties: Properties::default(),
+        };
+        client.send_subscribe(&sub).await?;
+
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(ack) => {
+                if ack.reason_codes.len() == 3 {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!("Expected 3 reason codes, got {}", ack.reason_codes.len()),
+                    ))
+                }
+            }
+            other => Ok(TestResult::fail_packet(&ctx, "SUBACK with 3 reason codes", &other)),
+        }
+    })
+    .await
+}
+
+const SUB_UPGRADE_QOS: TestContext = TestContext {
+    id: "MQTT-3.8.4-3",
+    description: "Re-subscribing at higher QoS MUST upgrade the subscription",
+    compliance: Compliance::Must,
+};
+
+/// Re-subscribing to the same topic with a higher QoS MUST upgrade the
+/// subscription. Messages should then be delivered at the new QoS.
+async fn subscription_upgrade_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SUB_UPGRADE_QOS;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-sub-upgrade");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Subscribe at QoS 0
+        let sub0 = SubscribeParams::simple(1, "mqtt/test/upgrade", QoS::AtMostOnce);
+        client.send_subscribe(&sub0).await?;
+        client.recv(recv_timeout).await?; // SUBACK
+
+        // Re-subscribe at QoS 1
+        let sub1 = SubscribeParams::simple(2, "mqtt/test/upgrade", QoS::AtLeastOnce);
+        client.send_subscribe(&sub1).await?;
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(ack) => {
+                if ack.reason_codes.first().copied() == Some(0x01) {
+                    // Granted QoS 1
+                    Ok(TestResult::pass(&ctx))
+                } else if ack.reason_codes.first().copied() == Some(0x00) {
+                    // Granted QoS 0 — downgraded
+                    Ok(TestResult::fail(
+                        &ctx,
+                        "Re-subscribe at QoS 1 returned QoS 0 — subscription not upgraded",
+                    ))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!("Unexpected SUBACK reason code: {:?}", ack.reason_codes),
+                    ))
+                }
+            }
+            other => Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
+        }
+    })
+    .await
+}
+
+const EMPTY_TOPIC_LEVEL: TestContext = TestContext {
+    id: "MQTT-4.7.3-1",
+    description: "Empty topic level (e.g. a//b) is valid and MUST match exactly",
+    compliance: Compliance::Must,
+};
+
+/// An empty topic level like `a//b` is valid per the spec. The broker MUST
+/// deliver messages published to `a//b` to subscribers of `a//b`.
+async fn empty_topic_level(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = EMPTY_TOPIC_LEVEL;
+    run_test(ctx, pb, async {
+        let mut sub = client::connect_and_subscribe(
+            addr, "mqtt-test-empty-level-sub", "mqtt/test//empty", QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let params = ConnectParams::new("mqtt-test-empty-level-pub");
+        let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let publish = PublishParams::qos0("mqtt/test//empty", b"empty-level".to_vec());
+        pub_client.send_publish(&publish).await?;
+
+        match sub.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test//empty" => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic with empty level", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message received for topic with empty level")),
         }
     })
     .await

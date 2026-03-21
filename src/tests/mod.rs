@@ -3,6 +3,7 @@ pub mod disconnect;
 pub mod malformed;
 pub mod ping;
 pub mod publish;
+pub mod request_response;
 pub mod session;
 pub mod subscribe;
 
@@ -41,8 +42,9 @@ pub async fn run_selected(
             SuiteName::Publish    => ("PUBLISH",                publish::TEST_COUNT),
             SuiteName::Subscribe  => ("SUBSCRIBE / UNSUBSCRIBE", subscribe::TEST_COUNT),
             SuiteName::Session    => ("SESSION",                session::TEST_COUNT),
-            SuiteName::Malformed  => ("MALFORMED PACKETS",      malformed::TEST_COUNT),
-            SuiteName::Disconnect => ("DISCONNECT",             disconnect::TEST_COUNT),
+            SuiteName::Malformed        => ("MALFORMED PACKETS",      malformed::TEST_COUNT),
+            SuiteName::Disconnect       => ("DISCONNECT",             disconnect::TEST_COUNT),
+            SuiteName::RequestResponse  => ("REQUEST / RESPONSE",    request_response::TEST_COUNT),
         };
         let pb = make_progress_bar(mp, name, count);
         pb.println(format!("\n{name}\n{}", "-".repeat(name.len())));
@@ -53,8 +55,9 @@ pub async fn run_selected(
             SuiteName::Publish    => report.add(publish::run(addr, recv_timeout, &pb).await),
             SuiteName::Subscribe  => report.add(subscribe::run(addr, recv_timeout, &pb).await),
             SuiteName::Session    => report.add(session::run(addr, recv_timeout, &pb).await),
-            SuiteName::Malformed  => report.add(malformed::run(addr, recv_timeout, &pb).await),
-            SuiteName::Disconnect => report.add(disconnect::run(addr, recv_timeout, &pb).await),
+            SuiteName::Malformed        => report.add(malformed::run(addr, recv_timeout, &pb).await),
+            SuiteName::Disconnect       => report.add(disconnect::run(addr, recv_timeout, &pb).await),
+            SuiteName::RequestResponse  => report.add(request_response::run(addr, recv_timeout, &pb).await),
         }
 
         pb.finish_and_clear();

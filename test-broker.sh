@@ -58,8 +58,6 @@ fi
 
 echo "Running MQTT compliance tests (TCP + TLS)..."
 echo
-cargo run -- \
-    --broker "127.0.0.1:$PORT" \
-    --tls-broker "127.0.0.1:$TLS_PORT" \
-    --ca-cert "$CERT_DIR/ca.crt" \
-    "$@"
+cargo run -- 127.0.0.1 \
+    --tcp-port "$PORT" --tls-port "$TLS_PORT" \
+    --ca-cert "$CERT_DIR/ca.crt" "$@"

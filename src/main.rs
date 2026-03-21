@@ -44,14 +44,21 @@ impl std::fmt::Display for SuiteName {
 #[derive(Parser)]
 #[command(name = "mqtt_test", about = "MQTT v5 broker compliance tester")]
 struct Args {
-    /// Broker address for TCP tests, e.g. 127.0.0.1:1883
-    #[arg(short, long, default_value = "127.0.0.1:1883")]
-    broker: String,
+    /// Broker hostname or IP address
+    #[arg(default_value = "127.0.0.1")]
+    host: String,
 
-    /// TLS broker address for TLS-specific tests, e.g. 127.0.0.1:8883.
-    /// When provided, the TLS suite is included automatically.
+    /// TCP port for MQTT
+    #[arg(long, default_value_t = 1883)]
+    tcp_port: u16,
+
+    /// TLS port for MQTT (default: 8883)
+    #[arg(long, default_value_t = 8883)]
+    tls_port: u16,
+
+    /// Skip TLS tests entirely
     #[arg(long)]
-    tls_broker: Option<String>,
+    no_tls: bool,
 
     /// Timeout in milliseconds to wait for each broker response
     #[arg(short, long, default_value_t = 5000)]
@@ -77,13 +84,9 @@ struct Args {
     #[arg(long, default_value = "suite")]
     order: ReportOrder,
 
-    /// Path to CA certificate PEM file for TLS verification
+    /// Path to CA certificate PEM file for TLS verification (omit for insecure)
     #[arg(long)]
     ca_cert: Option<std::path::PathBuf>,
-
-    /// Skip TLS certificate verification (insecure)
-    #[arg(long)]
-    insecure: bool,
 }
 
 #[tokio::main]
@@ -101,17 +104,45 @@ async fn main() {
     tracing_subscriber::fmt().with_max_level(level).init();
 
     let recv_timeout = Duration::from_millis(args.timeout_ms);
+    let tcp_addr = format!("{}:{}", args.host, args.tcp_port);
 
-    // Build TLS config if a TLS broker was specified
-    let tls_config = args.tls_broker.as_ref().map(|tls_addr| {
-        let host = tls_addr.split(':').next().unwrap_or("localhost");
-        client::TlsConfig::build(
-            args.ca_cert.as_deref(),
-            args.insecure,
-            host,
-        )
-        .expect("failed to build TLS configuration")
-    });
+    // Determine whether to run TLS tests.
+    // By default we probe :8883 and skip gracefully if unreachable.
+    // --no-tls disables TLS entirely. Explicit --tls-port makes failure fatal.
+    let tls_port_is_explicit = std::env::args().any(|a| a.starts_with("--tls-port"));
+    let (tls_addr, tls_config) = if args.no_tls {
+        (None, None)
+    } else {
+        let addr = format!("{}:{}", args.host, args.tls_port);
+
+        // Preflight TLS probe
+        let tls_reachable = matches!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect(&addr),
+            ).await,
+            Ok(Ok(_))
+        );
+
+        if !tls_reachable {
+            if tls_port_is_explicit {
+                eprintln!("Error: cannot connect to TLS endpoint at {addr}");
+                std::process::exit(1);
+            }
+            // Default port, not reachable — skip TLS gracefully
+            (None, None)
+        } else {
+            // No --ca-cert means insecure mode
+            let insecure = args.ca_cert.is_none();
+            let config = client::TlsConfig::build(
+                args.ca_cert.as_deref(),
+                insecure,
+                &args.host,
+            )
+            .expect("failed to build TLS configuration");
+            (Some(addr), Some(config))
+        }
+    };
 
     // Resolve which suites to run
     let all_suites = if tls_config.is_some() {
@@ -129,55 +160,28 @@ async fn main() {
     };
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 
-    println!("Testing broker at {} (timeout: {}ms)", args.broker, args.timeout_ms);
-    if let Some(ref tls_addr) = args.tls_broker {
-        println!("TLS broker at {tls_addr}");
+    println!("Testing broker at {tcp_addr} (timeout: {}ms)", args.timeout_ms);
+    if let Some(ref addr) = tls_addr {
+        println!("TLS endpoint at {addr}");
+    } else if !args.no_tls {
+        println!("TLS endpoint not reachable, skipping TLS suite");
     }
     println!("Suites: {}\n", suites_to_run.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
 
     // Preflight: Verify TCP reachability
     print!("Preflight: TCP connection ... ");
-    match tokio::time::timeout(
-        recv_timeout,
-        tokio::net::TcpStream::connect(&args.broker),
-    )
-    .await
-    {
+    match tokio::time::timeout(recv_timeout, tokio::net::TcpStream::connect(&tcp_addr)).await {
         Ok(Ok(stream)) => {
             drop(stream);
             println!("ok");
         }
         Ok(Err(e)) => {
-            eprintln!("FAILED\n  Cannot connect to {}: {e}", args.broker);
+            eprintln!("FAILED\n  Cannot connect to {tcp_addr}: {e}");
             std::process::exit(1);
         }
         Err(_) => {
-            eprintln!("FAILED\n  Connection to {} timed out", args.broker);
+            eprintln!("FAILED\n  Connection to {tcp_addr} timed out");
             std::process::exit(1);
-        }
-    }
-
-    // Preflight: Verify TLS reachability if configured
-    if let Some(ref tls_addr) = args.tls_broker {
-        print!("Preflight: TLS connection ... ");
-        match tokio::time::timeout(
-            recv_timeout,
-            tokio::net::TcpStream::connect(tls_addr),
-        )
-        .await
-        {
-            Ok(Ok(stream)) => {
-                drop(stream);
-                println!("ok");
-            }
-            Ok(Err(e)) => {
-                eprintln!("FAILED\n  Cannot connect to {tls_addr}: {e}");
-                std::process::exit(1);
-            }
-            Err(_) => {
-                eprintln!("FAILED\n  Connection to {tls_addr} timed out");
-                std::process::exit(1);
-            }
         }
     }
 
@@ -190,8 +194,8 @@ async fn main() {
         mp.set_draw_target(ProgressDrawTarget::hidden());
     }
 
-    let tls_info = args.tls_broker.as_deref().zip(tls_config.as_ref());
-    let report = tests::run_selected(&args.broker, tls_info, recv_timeout, suites_to_run, &mp).await;
+    let tls_info = tls_addr.as_deref().zip(tls_config.as_ref());
+    let report = tests::run_selected(&tcp_addr, tls_info, recv_timeout, suites_to_run, &mp).await;
 
     println!();
     report.print(args.verbose, args.order);

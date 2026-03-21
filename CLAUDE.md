@@ -26,8 +26,9 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 
 ```
 cargo build
-cargo run -- --broker 127.0.0.1:1883
-cargo run -- --broker 127.0.0.1:1883 --tls-broker 127.0.0.1:8883 --ca-cert /path/to/ca.crt
+cargo run -- 127.0.0.1                                # TCP :1883, tries TLS :8883
+cargo run -- 127.0.0.1 --ca-cert /path/to/ca.crt      # verify TLS certs
+cargo run -- 127.0.0.1 --no-tls                        # skip TLS suite
 cargo clippy   # should produce zero warnings
 ./test-broker.sh   # spins up mosquitto in Docker, runs full suite (TCP + TLS)
 ```

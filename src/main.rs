@@ -14,6 +14,7 @@ use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SuiteName {
+    Transport,
     Connect,
     Ping,
     Publish,
@@ -22,12 +23,12 @@ pub enum SuiteName {
     Malformed,
     Disconnect,
     RequestResponse,
-    Tls,
 }
 
 impl std::fmt::Display for SuiteName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Transport  => write!(f, "transport"),
             Self::Connect    => write!(f, "connect"),
             Self::Ping       => write!(f, "ping"),
             Self::Publish    => write!(f, "publish"),
@@ -36,7 +37,6 @@ impl std::fmt::Display for SuiteName {
             Self::Malformed  => write!(f, "malformed"),
             Self::Disconnect       => write!(f, "disconnect"),
             Self::RequestResponse  => write!(f, "request-response"),
-            Self::Tls              => write!(f, "tls"),
         }
     }
 }
@@ -76,7 +76,7 @@ struct Args {
     #[arg(long)]
     trace: bool,
 
-    /// Run only specific suites (comma-separated: connect,ping,publish,subscribe,tls)
+    /// Run only specific suites (comma-separated: transport,connect,ping,publish,...)
     #[arg(short, long, value_delimiter = ',')]
     suite: Option<Vec<SuiteName>>,
 
@@ -145,47 +145,20 @@ async fn main() {
     };
 
     // Resolve which suites to run
-    let all_suites = if tls_config.is_some() {
-        vec![
-            SuiteName::Connect, SuiteName::Ping, SuiteName::Publish,
-            SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed,
-            SuiteName::Disconnect, SuiteName::RequestResponse, SuiteName::Tls,
-        ]
-    } else {
-        vec![
-            SuiteName::Connect, SuiteName::Ping, SuiteName::Publish,
-            SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed,
-            SuiteName::Disconnect, SuiteName::RequestResponse,
-        ]
-    };
+    let all_suites = vec![
+        SuiteName::Transport, SuiteName::Connect, SuiteName::Ping,
+        SuiteName::Publish, SuiteName::Subscribe, SuiteName::Session,
+        SuiteName::Malformed, SuiteName::Disconnect, SuiteName::RequestResponse,
+    ];
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 
     println!("Testing broker at {tcp_addr} (timeout: {}ms)", args.timeout_ms);
     if let Some(ref addr) = tls_addr {
         println!("TLS endpoint at {addr}");
     } else if !args.no_tls {
-        println!("TLS endpoint not reachable, skipping TLS suite");
+        println!("TLS endpoint not reachable, skipping TLS transport test");
     }
     println!("Suites: {}\n", suites_to_run.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
-
-    // Preflight: Verify TCP reachability
-    print!("Preflight: TCP connection ... ");
-    match tokio::time::timeout(recv_timeout, tokio::net::TcpStream::connect(&tcp_addr)).await {
-        Ok(Ok(stream)) => {
-            drop(stream);
-            println!("ok");
-        }
-        Ok(Err(e)) => {
-            eprintln!("FAILED\n  Cannot connect to {tcp_addr}: {e}");
-            std::process::exit(1);
-        }
-        Err(_) => {
-            eprintln!("FAILED\n  Connection to {tcp_addr} timed out");
-            std::process::exit(1);
-        }
-    }
-
-    println!();
 
     // Set up progress bars — hide when debug logging is active or stdout is not a TTY.
     let mp = MultiProgress::new();

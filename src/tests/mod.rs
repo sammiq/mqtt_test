@@ -6,11 +6,13 @@ pub mod publish;
 pub mod request_response;
 pub mod session;
 pub mod subscribe;
+pub mod tls;
 
 use std::time::Duration;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
+use crate::client::TlsConfig;
 use crate::report::Report;
 use crate::SuiteName;
 
@@ -28,8 +30,10 @@ fn make_progress_bar(mp: &MultiProgress, name: &str, count: usize) -> ProgressBa
 }
 
 /// Run only the named suites against the broker at `addr`.
+/// TLS-specific suites use `tls_info` (address + config) when provided.
 pub async fn run_selected(
     addr: &str,
+    tls_info: Option<(&str, &TlsConfig)>,
     recv_timeout: Duration,
     suites: &[SuiteName],
     mp: &MultiProgress,
@@ -45,6 +49,7 @@ pub async fn run_selected(
             SuiteName::Malformed        => ("MALFORMED PACKETS",      malformed::TEST_COUNT),
             SuiteName::Disconnect       => ("DISCONNECT",             disconnect::TEST_COUNT),
             SuiteName::RequestResponse  => ("REQUEST / RESPONSE",    request_response::TEST_COUNT),
+            SuiteName::Tls              => ("TLS",                   tls::TEST_COUNT),
         };
         let pb = make_progress_bar(mp, name, count);
         pb.println(format!("\n{name}\n{}", "-".repeat(name.len())));
@@ -58,6 +63,13 @@ pub async fn run_selected(
             SuiteName::Malformed        => report.add(malformed::run(addr, recv_timeout, &pb).await),
             SuiteName::Disconnect       => report.add(disconnect::run(addr, recv_timeout, &pb).await),
             SuiteName::RequestResponse  => report.add(request_response::run(addr, recv_timeout, &pb).await),
+            SuiteName::Tls => {
+                if let Some((tls_addr, tls_config)) = tls_info {
+                    report.add(tls::run(tls_addr, tls_config, recv_timeout, &pb).await);
+                } else {
+                    pb.println("  [SKIP] TLS suite requires --tls-broker");
+                }
+            }
         }
 
         pb.finish_and_clear();

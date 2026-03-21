@@ -6,7 +6,7 @@
 
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -24,17 +24,6 @@ use crate::codec::{
     self, ConnectParams, Packet, Properties, PublishParams, SubscribeParams, UnsubscribeParams,
 };
 
-/// Process-level TLS configuration. When set, `connect_tcp` upgrades to TLS.
-static GLOBAL_TLS: OnceLock<Option<TlsConfig>> = OnceLock::new();
-
-/// Initialise the global TLS configuration (call once from main).
-pub fn set_tls_config(tls: Option<TlsConfig>) {
-    let _ = GLOBAL_TLS.set(tls);
-}
-
-fn global_tls() -> Option<&'static TlsConfig> {
-    GLOBAL_TLS.get().and_then(|o| o.as_ref())
-}
 
 // ── Transport ───────────────────────────────────────────────────────────────
 
@@ -208,31 +197,19 @@ pub struct RawClient {
 }
 
 impl RawClient {
-    /// Open a connection (TCP or TLS depending on global config).
-    /// Does *not* send CONNECT.
+    /// Open a plain TCP connection. Does *not* send CONNECT.
     pub async fn connect_tcp(addr: &str) -> Result<Self> {
         let tcp = TcpStream::connect(addr)
             .await
             .with_context(|| format!("TCP connect to {addr} failed"))?;
 
-        let transport = if let Some(tls) = global_tls() {
-            let tls_stream = tls.connector
-                .connect(tls.server_name.clone(), tcp)
-                .await
-                .context("TLS handshake failed")?;
-            Transport::Tls(tls_stream)
-        } else {
-            Transport::Tcp(tcp)
-        };
-
         Ok(Self {
-            stream: transport,
+            stream: Transport::Tcp(tcp),
             read_buf: BytesMut::with_capacity(4096),
         })
     }
 
     /// Open a TLS connection. Does *not* send CONNECT.
-    #[allow(dead_code)]
     pub async fn connect_tls(addr: &str, tls: &TlsConfig) -> Result<Self> {
         let tcp = TcpStream::connect(addr)
             .await
@@ -410,7 +387,6 @@ pub async fn connect(
 }
 
 /// Convenience: open TLS, send CONNECT, return the client and the CONNACK.
-#[allow(dead_code)]
 pub async fn connect_tls(
     addr: &str,
     params: &ConnectParams,

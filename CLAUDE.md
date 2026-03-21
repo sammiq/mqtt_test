@@ -19,7 +19,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 - `AutoDisconnect` wraps `RawClient` and sends DISCONNECT on drop (via `try_write`). `connect()` and `connect_and_subscribe()` return `AutoDisconnect` by default
 - Use `into_raw()` to escape auto-disconnect when a test intentionally skips DISCONNECT (e.g. abrupt disconnects for session resumption)
 - Use `RawClient` directly when DISCONNECT is the subject of the test and should be explicit in the code
-- TLS support via `tokio-rustls` with global `OnceLock<Option<TlsConfig>>` — avoids threading config through all test functions
+- TLS support via `tokio-rustls` with explicit `TlsConfig` passed to the TLS suite — other suites always use plain TCP
 - Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror, tokio-rustls, rustls-pemfile
 
 ## Building and running
@@ -27,7 +27,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 ```
 cargo build
 cargo run -- --broker 127.0.0.1:1883
-cargo run -- --broker 127.0.0.1:8883 --tls --ca-cert /path/to/ca.crt
+cargo run -- --broker 127.0.0.1:1883 --tls-broker 127.0.0.1:8883 --ca-cert /path/to/ca.crt
 cargo clippy   # should produce zero warnings
 ./test-broker.sh   # spins up mosquitto in Docker, runs full suite (TCP + TLS)
 ```
@@ -39,4 +39,5 @@ cargo clippy   # should produce zero warnings
 - Prefer struct initialization syntax over field reassignment after Default::default()
 - Each test suite has a `TEST_COUNT` constant — update it when adding/removing tests
 - After making changes to code, always run existing tests and look to add tests for missing cases
-- `test-broker.sh` runs both TCP (port 1883) and TLS (port 8883) test passes; 2 TLS tests are timing-sensitive (MQTT-4.7.2-1, MQTT-3.14.4-3)
+- `test-broker.sh` runs a single pass with TCP (port 1883) and TLS suite (port 8883)
+- Never commit changes as part of another task, unless you have asked explicitly to do so

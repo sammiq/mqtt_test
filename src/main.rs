@@ -22,6 +22,7 @@ pub enum SuiteName {
     Malformed,
     Disconnect,
     RequestResponse,
+    Tls,
 }
 
 impl std::fmt::Display for SuiteName {
@@ -35,6 +36,7 @@ impl std::fmt::Display for SuiteName {
             Self::Malformed  => write!(f, "malformed"),
             Self::Disconnect       => write!(f, "disconnect"),
             Self::RequestResponse  => write!(f, "request-response"),
+            Self::Tls              => write!(f, "tls"),
         }
     }
 }
@@ -42,9 +44,14 @@ impl std::fmt::Display for SuiteName {
 #[derive(Parser)]
 #[command(name = "mqtt_test", about = "MQTT v5 broker compliance tester")]
 struct Args {
-    /// Broker address, e.g. 127.0.0.1:1883
+    /// Broker address for TCP tests, e.g. 127.0.0.1:1883
     #[arg(short, long, default_value = "127.0.0.1:1883")]
     broker: String,
+
+    /// TLS broker address for TLS-specific tests, e.g. 127.0.0.1:8883.
+    /// When provided, the TLS suite is included automatically.
+    #[arg(long)]
+    tls_broker: Option<String>,
 
     /// Timeout in milliseconds to wait for each broker response
     #[arg(short, long, default_value_t = 5000)]
@@ -62,17 +69,13 @@ struct Args {
     #[arg(long)]
     trace: bool,
 
-    /// Run only specific suites (comma-separated: connect,ping,publish,subscribe)
+    /// Run only specific suites (comma-separated: connect,ping,publish,subscribe,tls)
     #[arg(short, long, value_delimiter = ',')]
     suite: Option<Vec<SuiteName>>,
 
     /// Report ordering: "suite" (default) groups by test suite, "requirement" sorts by spec section
     #[arg(long, default_value = "suite")]
     order: ReportOrder,
-
-    /// Use TLS for the broker connection
-    #[arg(long)]
-    tls: bool,
 
     /// Path to CA certificate PEM file for TLS verification
     #[arg(long)]
@@ -99,26 +102,37 @@ async fn main() {
 
     let recv_timeout = Duration::from_millis(args.timeout_ms);
 
-    // Set up TLS if requested
-    if args.tls {
-        let host = args.broker.split(':').next().unwrap_or("localhost");
-        let tls = client::TlsConfig::build(
+    // Build TLS config if a TLS broker was specified
+    let tls_config = args.tls_broker.as_ref().map(|tls_addr| {
+        let host = tls_addr.split(':').next().unwrap_or("localhost");
+        client::TlsConfig::build(
             args.ca_cert.as_deref(),
             args.insecure,
             host,
         )
-        .expect("failed to build TLS configuration");
-        client::set_tls_config(Some(tls));
-    } else {
-        client::set_tls_config(None);
-    }
+        .expect("failed to build TLS configuration")
+    });
 
     // Resolve which suites to run
-    let all_suites = [SuiteName::Connect, SuiteName::Ping, SuiteName::Publish, SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed, SuiteName::Disconnect, SuiteName::RequestResponse];
+    let all_suites = if tls_config.is_some() {
+        vec![
+            SuiteName::Connect, SuiteName::Ping, SuiteName::Publish,
+            SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed,
+            SuiteName::Disconnect, SuiteName::RequestResponse, SuiteName::Tls,
+        ]
+    } else {
+        vec![
+            SuiteName::Connect, SuiteName::Ping, SuiteName::Publish,
+            SuiteName::Subscribe, SuiteName::Session, SuiteName::Malformed,
+            SuiteName::Disconnect, SuiteName::RequestResponse,
+        ]
+    };
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 
-    let tls_label = if args.tls { " (TLS)" } else { "" };
-    println!("Testing broker at {}{} (timeout: {}ms)", args.broker, tls_label, args.timeout_ms);
+    println!("Testing broker at {} (timeout: {}ms)", args.broker, args.timeout_ms);
+    if let Some(ref tls_addr) = args.tls_broker {
+        println!("TLS broker at {tls_addr}");
+    }
     println!("Suites: {}\n", suites_to_run.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
 
     // Preflight: Verify TCP reachability
@@ -143,6 +157,30 @@ async fn main() {
         }
     }
 
+    // Preflight: Verify TLS reachability if configured
+    if let Some(ref tls_addr) = args.tls_broker {
+        print!("Preflight: TLS connection ... ");
+        match tokio::time::timeout(
+            recv_timeout,
+            tokio::net::TcpStream::connect(tls_addr),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => {
+                drop(stream);
+                println!("ok");
+            }
+            Ok(Err(e)) => {
+                eprintln!("FAILED\n  Cannot connect to {tls_addr}: {e}");
+                std::process::exit(1);
+            }
+            Err(_) => {
+                eprintln!("FAILED\n  Connection to {tls_addr} timed out");
+                std::process::exit(1);
+            }
+        }
+    }
+
     println!();
 
     // Set up progress bars — hide when debug logging is active or stdout is not a TTY.
@@ -152,7 +190,8 @@ async fn main() {
         mp.set_draw_target(ProgressDrawTarget::hidden());
     }
 
-    let report = tests::run_selected(&args.broker, recv_timeout, suites_to_run, &mp).await;
+    let tls_info = args.tls_broker.as_deref().zip(tls_config.as_ref());
+    let report = tests::run_selected(&args.broker, tls_info, recv_timeout, suites_to_run, &mp).await;
 
     println!();
     report.print(args.verbose, args.order);

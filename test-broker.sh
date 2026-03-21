@@ -56,12 +56,10 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     exit 1
 fi
 
-echo "Running MQTT compliance tests (TCP)..."
+echo "Running MQTT compliance tests (TCP + TLS)..."
 echo
-cargo run -- --broker "127.0.0.1:$PORT" "$@"
-
-echo
-echo "============================================================"
-echo "Running MQTT compliance tests (TLS)..."
-echo
-cargo run -- --broker "127.0.0.1:$TLS_PORT" --tls --ca-cert "$CERT_DIR/ca.crt" "$@"
+cargo run -- \
+    --broker "127.0.0.1:$PORT" \
+    --tls-broker "127.0.0.1:$TLS_PORT" \
+    --ca-cert "$CERT_DIR/ca.crt" \
+    "$@"

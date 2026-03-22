@@ -12,7 +12,7 @@ use crate::codec::{
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 21;
+pub const TEST_COUNT: usize = 26;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -39,6 +39,11 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             multiple_filters_single_subscribe(addr, recv_timeout, pb).await,
             subscription_upgrade_qos(addr, recv_timeout, pb).await,
             empty_topic_level(addr, recv_timeout, pb).await,
+            case_sensitive_topic(addr, recv_timeout, pb).await,
+            exact_char_match(addr, recv_timeout, pb).await,
+            topic_level_separator_distinct(addr, recv_timeout, pb).await,
+            unsubscribe_stops_new_messages(addr, recv_timeout, pb).await,
+            unsubscribe_buffered_messages(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1118,6 +1123,329 @@ async fn empty_topic_level(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
             }
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH on topic with empty level", &other)),
             Err(_) => Ok(TestResult::fail(&ctx, "No message received for topic with empty level")),
+        }
+    })
+    .await
+}
+
+const CASE_SENSITIVE: TestContext = TestContext {
+    id: "MQTT-4.7.3-3",
+    description: "Server MUST NOT normalize topic names — matching is case-sensitive",
+    compliance: Compliance::Must,
+};
+
+/// Topic names are case-sensitive. Subscribe to "mqtt/Test/CASE" and verify
+/// that a publish to "mqtt/test/case" (different case) is NOT received, while
+/// a publish to "mqtt/Test/CASE" IS received [MQTT-4.7.3-3].
+async fn case_sensitive_topic(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CASE_SENSITIVE;
+    run_test(ctx, pb, async {
+        let mut sub = client::connect_and_subscribe(
+            addr, "mqtt-test-case-sub", "mqtt/Test/CASE", QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let params = ConnectParams::new("mqtt-test-case-pub");
+        let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Publish with different case — should NOT match
+        pub_client
+            .send_publish(&PublishParams::qos0("mqtt/test/case", b"wrong-case".to_vec()))
+            .await?;
+
+        match sub.recv(Duration::from_secs(1)).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/case" => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "Received message on case-different topic — server normalized topic names",
+                ));
+            }
+            _ => {} // Expected: no message or timeout
+        }
+
+        // Publish with exact case — MUST match
+        pub_client
+            .send_publish(&PublishParams::qos0("mqtt/Test/CASE", b"right-case".to_vec()))
+            .await?;
+
+        match sub.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/Test/CASE" => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH on \"mqtt/Test/CASE\"", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message received for exact-case topic")),
+        }
+    })
+    .await
+}
+
+const EXACT_CHAR: TestContext = TestContext {
+    id: "MQTT-4.7.3-4",
+    description: "Non-wildcard topic levels MUST match character-for-character",
+    compliance: Compliance::Must,
+};
+
+/// Non-wildcard levels in a topic filter must match character-for-character.
+/// Subscribe to "mqtt/exact/match", verify "mqtt/exact/match" matches but
+/// "mqtt/exact/matcH" does not [MQTT-4.7.3-4].
+async fn exact_char_match(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = EXACT_CHAR;
+    run_test(ctx, pb, async {
+        let mut sub = client::connect_and_subscribe(
+            addr, "mqtt-test-exact-sub", "mqtt/exact/match", QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let params = ConnectParams::new("mqtt-test-exact-pub");
+        let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Publish with one character different — should NOT match
+        pub_client
+            .send_publish(&PublishParams::qos0("mqtt/exact/matcH", b"near-miss".to_vec()))
+            .await?;
+
+        match sub.recv(Duration::from_secs(1)).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/exact/matcH" => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "Received message on topic differing by one character — not character-for-character matching",
+                ));
+            }
+            _ => {} // Expected: no message or timeout
+        }
+
+        // Publish with exact match — MUST match
+        pub_client
+            .send_publish(&PublishParams::qos0("mqtt/exact/match", b"exact".to_vec()))
+            .await?;
+
+        match sub.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/exact/match" => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH on \"mqtt/exact/match\"", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message received for exact-match topic")),
+        }
+    })
+    .await
+}
+
+const LEVEL_SEPARATOR_DISTINCT: TestContext = TestContext {
+    id: "MQTT-4.7.0-1",
+    description: "Topic level separator creates distinct levels — empty level is a separate level",
+    compliance: Compliance::Must,
+};
+
+/// The topic level separator '/' creates distinct levels. "a/b" and "a//b" are
+/// different topics because "a//b" has an empty level between two separators.
+/// Subscribe to "a/b", verify "a/b" matches but "a//b" does not. Then subscribe
+/// to "a//b" and verify "a//b" matches [MQTT-4.7.0-1].
+async fn topic_level_separator_distinct(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = LEVEL_SEPARATOR_DISTINCT;
+    run_test(ctx, pb, async {
+        // Subscriber 1: subscribe to "mqtt/test/sep/a/b"
+        let mut sub1 = client::connect_and_subscribe(
+            addr, "mqtt-test-sep-sub1", "mqtt/test/sep/a/b", QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let params = ConnectParams::new("mqtt-test-sep-pub");
+        let (mut pub_client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Publish to "mqtt/test/sep/a//b" (extra empty level) — should NOT match sub1
+        pub_client
+            .send_publish(&PublishParams::qos0("mqtt/test/sep/a//b", b"empty-level".to_vec()))
+            .await?;
+
+        match sub1.recv(Duration::from_secs(1)).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a//b" => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "Subscriber to \"a/b\" received message published to \"a//b\" — empty level not treated as distinct",
+                ));
+            }
+            _ => {} // Expected: no message or timeout
+        }
+
+        // Publish to "mqtt/test/sep/a/b" — MUST match sub1
+        pub_client
+            .send_publish(&PublishParams::qos0("mqtt/test/sep/a/b", b"normal".to_vec()))
+            .await?;
+
+        match sub1.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a/b" => {}
+            Ok(other) => return Ok(TestResult::fail_packet(&ctx, "PUBLISH on \"mqtt/test/sep/a/b\"", &other)),
+            Err(_) => return Ok(TestResult::fail(&ctx, "No message received for \"mqtt/test/sep/a/b\"")),
+        }
+
+        // Subscriber 2: subscribe to "mqtt/test/sep/a//b" and verify it matches
+        let mut sub2 = client::connect_and_subscribe(
+            addr, "mqtt-test-sep-sub2", "mqtt/test/sep/a//b", QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        pub_client
+            .send_publish(&PublishParams::qos0("mqtt/test/sep/a//b", b"empty-level-2".to_vec()))
+            .await?;
+
+        match sub2.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a//b" => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH on \"mqtt/test/sep/a//b\"", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message received for \"mqtt/test/sep/a//b\"")),
+        }
+    })
+    .await
+}
+
+// ── Unsubscribe completeness ────────────────────────────────────────────────
+
+const UNSUB_STOPS_NEW: TestContext = TestContext {
+    id: "MQTT-3.10.4-1",
+    description: "After UNSUBSCRIBE, server MUST stop adding new messages for that topic",
+    compliance: Compliance::Must,
+};
+
+/// After receiving UNSUBSCRIBE, the server MUST stop adding any new messages
+/// matching the filter for delivery to the client [MQTT-3.10.4-1].
+///
+/// This test differs from MQTT-3.10.4-6 (basic delivery stop) by:
+/// 1. Explicitly verifying delivery works before unsubscribe
+/// 2. Waiting for UNSUBACK before publishing
+/// 3. Publishing multiple messages after unsubscribe with a small delay
+async fn unsubscribe_stops_new_messages(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UNSUB_STOPS_NEW;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/unsub/stop";
+
+        // Use two clients: one subscriber, one publisher
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-unsub-stop-sub", topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let pub_params = ConnectParams::new("mqtt-test-unsub-stop-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_params, recv_timeout).await?;
+
+        // Step 1: Verify delivery works before unsubscribe
+        pub_client.send_publish(&PublishParams::qos0(topic, b"before-unsub".to_vec())).await?;
+        match sub_client.recv(recv_timeout).await? {
+            Packet::Publish(p) if p.topic == topic => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "PUBLISH before unsubscribe", &other)),
+        }
+
+        // Step 2: Unsubscribe and wait for UNSUBACK
+        let unsub = UnsubscribeParams::simple(2, topic);
+        sub_client.send_unsubscribe(&unsub).await?;
+        match sub_client.recv(recv_timeout).await? {
+            Packet::UnsubAck(_) => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "UNSUBACK", &other)),
+        }
+
+        // Step 3: Small delay to ensure server has processed the unsubscribe
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Step 4: Publish multiple messages — none should be delivered
+        for i in 0..5 {
+            pub_client.send_publish(&PublishParams::qos0(topic, format!("after-unsub-{i}").into_bytes())).await?;
+        }
+
+        // Step 5: Verify none arrive
+        match sub_client.recv(Duration::from_secs(2)).await {
+            Err(_) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                Ok(TestResult::fail(&ctx, "Message delivered after UNSUBSCRIBE + UNSUBACK"))
+            }
+            Ok(_) => Ok(TestResult::pass(&ctx)),
+        }
+    })
+    .await
+}
+
+const UNSUB_BUFFERED: TestContext = TestContext {
+    id: "MQTT-3.10.4-3",
+    description: "Server MAY continue delivering already-buffered messages after UNSUBSCRIBE",
+    compliance: Compliance::May,
+};
+
+/// After UNSUBSCRIBE, the server MAY continue to deliver messages that were
+/// already buffered or in-flight before the UNSUBACK was sent [MQTT-3.10.4-3].
+/// This is a MAY — we just check the server behaves reasonably (does not crash,
+/// UNSUBACK is received) regardless of whether buffered messages still arrive.
+async fn unsubscribe_buffered_messages(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UNSUB_BUFFERED;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/unsub/buffered";
+
+        // Subscribe at QoS 1 so messages are properly queued
+        let params = ConnectParams::new("mqtt-test-unsub-buf");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+        client.send_subscribe(&sub).await?;
+        match client.recv(recv_timeout).await? {
+            Packet::SubAck(_) => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
+        }
+
+        // Publish several QoS 1 messages from a separate client to build up a buffer
+        let pub_params = ConnectParams::new("mqtt-test-unsub-buf-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_params, recv_timeout).await?;
+        for i in 1..=5u16 {
+            pub_client.send_publish(&PublishParams::qos1(topic, format!("buf-{i}").into_bytes(), i)).await?;
+        }
+
+        // Drain PUBACKs from publisher
+        for _ in 0..5 {
+            match pub_client.recv(recv_timeout).await {
+                Ok(Packet::PubAck(_)) => {}
+                _ => break,
+            }
+        }
+
+        // Unsubscribe immediately — some messages may still be in-flight
+        let unsub = UnsubscribeParams::simple(2, topic);
+        client.send_unsubscribe(&unsub).await?;
+
+        // Drain any in-flight PUBLISH and look for UNSUBACK
+        let mut got_unsuback = false;
+        let mut buffered_count = 0u32;
+        for _ in 0..20 {
+            match client.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Publish(p)) if p.topic == topic => {
+                    buffered_count += 1;
+                    // ACK QoS 1 messages
+                    if let Some(pid) = p.packet_id {
+                        client.send_puback(pid, 0x00).await?;
+                    }
+                }
+                Ok(Packet::UnsubAck(ack)) if ack.packet_id == 2 => {
+                    got_unsuback = true;
+                    break;
+                }
+                _ => break,
+            }
+        }
+
+        // If we haven't seen UNSUBACK yet, try once more
+        if !got_unsuback {
+            match client.recv(recv_timeout).await {
+                Ok(Packet::UnsubAck(ack)) if ack.packet_id == 2 => {
+                    got_unsuback = true;
+                }
+                _ => {}
+            }
+        }
+
+        if !got_unsuback {
+            return Ok(TestResult::fail(&ctx, "UNSUBACK not received"));
+        }
+
+        if buffered_count > 0 {
+            // Server delivered buffered messages — MAY behaviour detected
+            Ok(TestResult::pass(&ctx))
+        } else {
+            // Server did not deliver any buffered messages — also valid, but MAY not detected
+            Ok(TestResult::fail(
+                &ctx,
+                "Server did not deliver any buffered messages after UNSUBSCRIBE (MAY behaviour not detected)",
+            ))
         }
     })
     .await

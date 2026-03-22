@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 30;
+pub const TEST_COUNT: usize = 32;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -45,6 +45,8 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             packet_id_reuse_after_pubcomp(addr, recv_timeout, pb).await,
             qos2_duplicate_pubrel(addr, recv_timeout, pb).await,
             payload_format_utf8_validated(addr, recv_timeout, pb).await,
+            user_properties_order(addr, recv_timeout, pb).await,
+            retained_qos0_stored(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1429,6 +1431,145 @@ async fn payload_format_utf8_validated(addr: &str, recv_timeout: Duration, pb: &
             }
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBACK or DISCONNECT", &other)),
         }
+    })
+    .await
+}
+
+// ── User Properties ordering ─────────────────────────────────────────────
+
+const USER_PROPS_ORDER: TestContext = TestContext {
+    id: "MQTT-3.3.2-17",
+    description: "User Properties order MUST be maintained when forwarding",
+    compliance: Compliance::Must,
+};
+
+/// The order of User Properties MUST be maintained when the server forwards
+/// a PUBLISH packet [MQTT-3.3.2-17].
+async fn user_properties_order(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = USER_PROPS_ORDER;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/up_order";
+
+        // Subscriber
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-uporder-sub", topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        // Publisher
+        let pub_conn = ConnectParams::new("mqtt-test-uporder-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        let ordered_props = vec![
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "2".to_string()),
+            ("c".to_string(), "3".to_string()),
+        ];
+
+        let pub_params = PublishParams {
+            topic:      topic.to_string(),
+            payload:    b"order-test".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     false,
+            dup:        false,
+            packet_id:  None,
+            properties: Properties { user_properties: ordered_props.clone(), ..Properties::default() },
+        };
+        pub_client.send_publish(&pub_params).await?;
+
+        match sub_client.recv(recv_timeout).await? {
+            Packet::Publish(p) if p.topic == topic => {
+                if p.properties.user_properties == ordered_props {
+                    Ok(TestResult::pass(&ctx))
+                } else if p.properties.user_properties.is_empty() {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        "No user properties in forwarded PUBLISH",
+                    ))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!(
+                            "User properties order not maintained: expected {:?}, got {:?}",
+                            ordered_props, p.properties.user_properties
+                        ),
+                    ))
+                }
+            }
+            other => {
+                Ok(TestResult::fail_packet(&ctx, &format!("PUBLISH on topic \"{topic}\""), &other))
+            }
+        }
+    })
+    .await
+}
+
+// ── QoS 0 retained storage ──────────────────────────────────────────────
+
+const RETAINED_QOS0: TestContext = TestContext {
+    id: "MQTT-3.3.1-11",
+    description: "Server SHOULD store QoS 0 retained message",
+    compliance: Compliance::Should,
+};
+
+/// The server SHOULD store the last retained message for a topic even when
+/// it was published at QoS 0 [MQTT-3.3.1-11].
+async fn retained_qos0_stored(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = RETAINED_QOS0;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/retain_qos0";
+
+        // Publish a QoS 0 retained message
+        let pub_conn = ConnectParams::new("mqtt-test-retq0-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        let pub_params = PublishParams {
+            topic:      topic.to_string(),
+            payload:    b"retained-qos0".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     true,
+            dup:        false,
+            packet_id:  None,
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&pub_params).await?;
+
+        // Give the broker time to store it
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Subscribe from a new client — should receive the retained message
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-retq0-sub", topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let result = match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic && !p.payload.is_empty() => {
+                TestResult::pass(&ctx)
+            }
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                TestResult::fail(
+                    &ctx,
+                    "Retained message delivered but payload was empty",
+                )
+            }
+            Ok(other) => {
+                TestResult::fail_packet(&ctx, "retained PUBLISH", &other)
+            }
+            Err(_) => {
+                TestResult::fail(
+                    &ctx,
+                    "No QoS 0 retained message delivered to new subscriber (server MAY discard)",
+                )
+            }
+        };
+
+        // Clean up: remove retained message
+        let cleanup_conn = ConnectParams::new("mqtt-test-retq0-cleanup");
+        if let Ok((mut c, _)) = client::connect(addr, &cleanup_conn, recv_timeout).await {
+            let clear = PublishParams::retained(topic, Vec::new());
+            let _ = c.send_publish(&clear).await;
+        }
+
+        Ok(result)
     })
     .await
 }

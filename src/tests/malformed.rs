@@ -14,7 +14,7 @@ use crate::codec::{ConnectParams, Packet};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 15;
+pub const TEST_COUNT: usize = 19;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -35,6 +35,10 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             subscribe_wrong_fixed_header_bits(addr, recv_timeout, pb).await,
             username_flag_truncated_payload(addr, recv_timeout, pb).await,
             password_flag_truncated_payload(addr, recv_timeout, pb).await,
+            utf8_surrogate_pair_in_topic(addr, recv_timeout, pb).await,
+            puback_invalid_fixed_header_flags(addr, recv_timeout, pb).await,
+            will_qos_three(addr, recv_timeout, pb).await,
+            disconnect_reserved_bits(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -514,6 +518,133 @@ async fn username_flag_truncated_payload(addr: &str, recv_timeout: Duration, pb:
             0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
         ];
         client.send_raw(bad_connect).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const UTF8_SURROGATE: TestContext = TestContext {
+    id: "MQTT-1.5.4-1",
+    description: "Server MUST reject ill-formed UTF-8 (surrogate pairs D800-DFFF) in strings",
+    compliance: Compliance::Must,
+};
+
+/// A UTF-8 Encoded String MUST NOT include encodings of UTF-16 surrogates
+/// (U+D800..U+DFFF) [MQTT-1.5.4-1]. Send a PUBLISH with a topic containing
+/// the ill-formed byte sequence 0xED 0xA0 0x80 (surrogate U+D800).
+async fn utf8_surrogate_pair_in_topic(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UTF8_SURROGATE;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-utf8-surrogate");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // PUBLISH with topic "mqtt/\xED\xA0\x80" — contains surrogate U+D800.
+        // Topic is 8 bytes: "mqtt/" (5) + 0xED 0xA0 0x80 (3).
+        #[rustfmt::skip]
+        let bad_publish: &[u8] = &[
+            0x30,                                               // PUBLISH | QoS=0
+            0x0D,                                               // remaining length = 13
+            0x00, 0x08,                                         // topic length = 8
+            b'm', b'q', b't', b't', b'/',                      // "mqtt/"
+            0xED, 0xA0, 0x80,                                   // ill-formed: surrogate U+D800
+            0x00,                                               // properties length = 0
+            0x48, 0x49,                                         // payload "HI"
+        ];
+        client.send_raw(bad_publish).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const PUBACK_BAD_FLAGS: TestContext = TestContext {
+    id: "MQTT-2.1.3-1",
+    description: "Server MUST reject PUBACK with non-zero reserved fixed header flags",
+    compliance: Compliance::Must,
+};
+
+/// The fixed header flags for PUBACK (packet type 4) MUST be 0000 [MQTT-2.1.3-1].
+/// Sending 0x41 (flags = 0001) instead of 0x40 is a malformed packet.
+async fn puback_invalid_fixed_header_flags(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = PUBACK_BAD_FLAGS;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-puback-flags");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // PUBACK with non-zero reserved flags: 0x41 instead of 0x40.
+        // Packet ID = 1, reason code = 0x00 (Success).
+        #[rustfmt::skip]
+        let bad_puback: &[u8] = &[
+            0x41,               // PUBACK with reserved bit 0 set (should be 0x40)
+            0x02,               // remaining length = 2
+            0x00, 0x01,         // packet ID = 1
+        ];
+        client.send_raw(bad_puback).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const WILL_QOS_THREE: TestContext = TestContext {
+    id: "MQTT-3.1.2-12",
+    description: "CONNECT with Will QoS=3 MUST be rejected as malformed",
+    compliance: Compliance::Must,
+};
+
+/// If Will QoS bits are both set (value 3), the CONNECT is malformed [MQTT-3.1.2-12].
+/// Connect flags byte: will_flag=1, will_qos=3, clean_start=1 → 0b_0001_1110 = 0x1E.
+async fn will_qos_three(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = WILL_QOS_THREE;
+    run_test(ctx, pb, async {
+        let mut client = RawClient::connect_tcp(addr).await?;
+
+        // CONNECT with Will Flag=1, Will QoS=3 (both bits set), Clean Start=1.
+        // Connect flags = 0x1E = 0b_0001_1110.
+        // Payload: client ID "test", will properties (empty), will topic "w", will payload "x".
+        #[rustfmt::skip]
+        let bad_connect: &[u8] = &[
+            0x10,                                           // CONNECT fixed header
+            0x18,                                           // remaining length = 24
+            0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+            0x05,                                           // protocol version 5
+            0x1E,                                           // flags: clean_start=1, will=1, will_qos=3
+            0x00, 0x3C,                                     // keep alive = 60
+            0x00,                                           // connect properties length = 0
+            0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+            0x00,                                           // will properties length = 0
+            0x00, 0x01, b'w',                               // will topic "w"
+            0x00, 0x01, b'x',                               // will payload "x"
+        ];
+        client.send_raw(bad_connect).await?;
+
+        Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
+    })
+    .await
+}
+
+const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
+    id: "MQTT-3.14.0-1",
+    description: "DISCONNECT reserved bits MUST be zero; non-zero is malformed",
+    compliance: Compliance::Must,
+};
+
+/// The DISCONNECT fixed header byte MUST have reserved bits 3-0 = 0000 [MQTT-3.14.0-1].
+/// Sending 0xE1 (reserved bit 0 set) instead of 0xE0 is a malformed packet.
+async fn disconnect_reserved_bits(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = DISCONNECT_BAD_RESERVED;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-disc-reserved");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // DISCONNECT with non-zero reserved bits: 0xE1 instead of 0xE0.
+        #[rustfmt::skip]
+        let bad_disconnect: &[u8] = &[
+            0xE1,               // DISCONNECT with reserved bit 0 set (should be 0xE0)
+            0x00,               // remaining length = 0
+        ];
+        client.send_raw(bad_disconnect).await?;
 
         Ok(expect_disconnect(&mut client, recv_timeout, &ctx).await)
     })

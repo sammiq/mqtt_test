@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillPa
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 8;
+pub const TEST_COUNT: usize = 9;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -23,6 +23,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             disconnect_reason_session_takeover(addr, recv_timeout, pb).await,
             disconnect_on_packet_too_large(addr, recv_timeout, pb).await,
             disconnect_reason_string(addr, recv_timeout, pb).await,
+            disconnect_on_protocol_error(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -396,6 +397,60 @@ async fn disconnect_reason_string(addr: &str, recv_timeout: Duration, pb: &Progr
                     "No DISCONNECT received (connection closed without reason)",
                 ))
             }
+        }
+    })
+    .await
+}
+
+const DISCONNECT_PROTOCOL_ERROR: TestContext = TestContext {
+    id: "MQTT-4.13.1-1",
+    description: "Server SHOULD send DISCONNECT with Reason Code before closing on protocol error",
+    compliance: Compliance::Should,
+};
+
+/// When the server detects a protocol error, it SHOULD send a DISCONNECT
+/// packet with an appropriate reason code before closing the connection
+/// [MQTT-4.13.1-1]. We trigger this by sending a PUBLISH with Topic Alias = 0,
+/// which is explicitly invalid per the spec (protocol error).
+async fn disconnect_on_protocol_error(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = DISCONNECT_PROTOCOL_ERROR;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-proto-err");
+        let (client, _) = client::connect(addr, &params, recv_timeout).await?;
+        let mut client = client.into_raw();
+
+        // Send a PUBLISH with Topic Alias = 0, which is a protocol error
+        // (Topic Alias MUST be > 0 when present)
+        let mut publish = PublishParams::qos0("mqtt/test/proto/error", b"bad-alias".to_vec());
+        publish.properties.topic_alias = Some(0);
+        client.send_publish(&publish).await?;
+
+        // Server SHOULD send DISCONNECT with a reason code before closing
+        match client.recv(recv_timeout).await {
+            Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(Packet::Disconnect(d)) => {
+                Ok(TestResult::fail(
+                    &ctx,
+                    format!(
+                        "DISCONNECT received but reason code {:#04x} does not indicate error (expected >= 0x80)",
+                        d.reason_code
+                    ),
+                ))
+            }
+            Err(_) => {
+                // Connection closed without DISCONNECT — server did not send one
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Connection closed without sending DISCONNECT (server SHOULD send DISCONNECT before closing)",
+                ))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(
+                &ctx,
+                "DISCONNECT with error reason code",
+                &other,
+            )),
         }
     })
     .await

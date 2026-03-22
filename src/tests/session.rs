@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 7;
+pub const TEST_COUNT: usize = 9;
 
 /// Clean up a persistent session by reconnecting with clean_start=true.
 async fn cleanup_session(addr: &str, client_id: &str, recv_timeout: Duration) {
@@ -30,6 +30,8 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             session_expiry_zero(addr, recv_timeout, pb).await,
             session_expiry_max(addr, recv_timeout, pb).await,
             session_takeover(addr, recv_timeout, pb).await,
+            session_expiry_discard(addr, recv_timeout, pb).await,
+            session_present_verify_persistence(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -429,6 +431,147 @@ async fn session_takeover(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
             Err(_) => TestResult::pass(&ctx), // Connection closed
             Ok(Packet::Disconnect(_)) => TestResult::pass(&ctx),
             Ok(other) => TestResult::fail_packet(&ctx, "DISCONNECT or connection close", &other),
+        };
+
+        cleanup_session(addr, client_id, recv_timeout).await;
+
+        Ok(result)
+    })
+    .await
+}
+
+const SESSION_EXPIRY_DISCARD: TestContext = TestContext {
+    id: "MQTT-4.1.0-1",
+    description: "Server MUST discard session state when Session Expiry Interval has passed",
+    compliance: Compliance::Must,
+};
+
+/// The server MUST discard session state when the network connection is closed
+/// and the Session Expiry Interval has passed [MQTT-4.1.0-1/2]. Connect with a
+/// 2-second expiry, disconnect, wait 3 seconds, then verify the session is gone.
+async fn session_expiry_discard(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SESSION_EXPIRY_DISCARD;
+    run_test(ctx, pb, async {
+        let client_id = "mqtt-test-session-exp-discard";
+        let topic = "mqtt/test/session/expiry_discard";
+
+        // 1. Connect with a 2-second session expiry and subscribe.
+        let mut params = ConnectParams::new(client_id);
+        params.properties.session_expiry_interval = Some(2);
+        let (mut c1, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+        c1.send_subscribe(&sub).await?;
+        c1.recv(recv_timeout).await?; // SUBACK
+
+        drop(c1); // Graceful disconnect
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 2. Verify session exists before expiry.
+        let mut params2 = ConnectParams::new(client_id);
+        params2.clean_start = false;
+        params2.properties.session_expiry_interval = Some(2);
+        let (_c2, connack_before) = client::connect(addr, &params2, recv_timeout).await?;
+        drop(_c2);
+
+        if !connack_before.session_present {
+            cleanup_session(addr, client_id, recv_timeout).await;
+            return Ok(TestResult::fail(
+                &ctx,
+                "Session not present immediately after disconnect (expected session_present=1)",
+            ));
+        }
+
+        // 3. Wait for the session to expire (3 seconds > 2-second expiry).
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // 4. Reconnect — session should be gone.
+        let mut params3 = ConnectParams::new(client_id);
+        params3.clean_start = false;
+        let (_c3, connack_after) = client::connect(addr, &params3, recv_timeout).await?;
+
+        cleanup_session(addr, client_id, recv_timeout).await;
+
+        if !connack_after.session_present {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                "Session still present after Session Expiry Interval passed (expected session_present=0)",
+            ))
+        }
+    })
+    .await
+}
+
+const SESSION_PRESENT_PERSISTENCE: TestContext = TestContext {
+    id: "MQTT-3.2.2-2",
+    description: "Session Present=1 when Clean Start=0 and session exists, verifying subscription persistence",
+    compliance: Compliance::Must,
+};
+
+/// When a client reconnects with Clean Start=0 and the server has session state,
+/// the CONNACK MUST contain Session Present=1 [MQTT-3.2.2-2] and the subscription
+/// must deliver messages without re-subscribing. This verifies the end-to-end
+/// persistence guarantee beyond just the session_present flag.
+async fn session_present_verify_persistence(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SESSION_PRESENT_PERSISTENCE;
+    run_test(ctx, pb, async {
+        let client_id = "mqtt-test-session-pres-persist";
+        let pub_id = "mqtt-test-session-pres-pub";
+        let topic = "mqtt/test/session/present_persist";
+
+        // 1. Connect with persistent session, subscribe at QoS 1, disconnect abruptly.
+        let mut params = ConnectParams::new(client_id);
+        params.properties.session_expiry_interval = Some(60);
+        let (mut c1, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+        c1.send_subscribe(&sub).await?;
+        c1.recv(recv_timeout).await?; // SUBACK
+
+        // Disconnect abruptly so messages queue
+        drop(c1.into_raw());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // 2. Publish a QoS 1 message while subscriber is offline.
+        let pub_conn = ConnectParams::new(pub_id);
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        pub_client.send_publish(&PublishParams::qos1(topic, b"persist-verify".to_vec(), 1)).await?;
+        for _ in 0..5 {
+            if let Ok(Packet::PubAck(_)) = pub_client.recv(recv_timeout).await { break }
+        }
+        drop(pub_client);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 3. Reconnect with Clean Start=0.
+        let mut params2 = ConnectParams::new(client_id);
+        params2.clean_start = false;
+        params2.properties.session_expiry_interval = Some(60);
+        let (mut c2, connack) = client::connect(addr, &params2, recv_timeout).await?;
+
+        if !connack.session_present {
+            cleanup_session(addr, client_id, recv_timeout).await;
+            return Ok(TestResult::fail(
+                &ctx,
+                "Session Present=0 on reconnect with Clean Start=0 (expected 1)",
+            ));
+        }
+
+        // 4. Verify queued message is delivered — proves session state was preserved.
+        let result = match c2.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                TestResult::pass(&ctx)
+            }
+            Ok(other) => {
+                TestResult::fail_packet(&ctx, "queued PUBLISH from persisted session", &other)
+            }
+            Err(_) => {
+                TestResult::fail(
+                    &ctx,
+                    "Session Present=1 but queued message not delivered — session state incomplete",
+                )
+            }
         };
 
         cleanup_session(addr, client_id, recv_timeout).await;

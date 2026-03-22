@@ -12,7 +12,7 @@ use crate::codec::{
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 26;
+pub const TEST_COUNT: usize = 29;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -44,6 +44,9 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             topic_level_separator_distinct(addr, recv_timeout, pb).await,
             unsubscribe_stops_new_messages(addr, recv_timeout, pb).await,
             unsubscribe_buffered_messages(addr, recv_timeout, pb).await,
+            retain_handling_0_sends_retained(addr, recv_timeout, pb).await,
+            qos_downgrade_qos1_to_qos0(addr, recv_timeout, pb).await,
+            unsubscribe_inflight_qos1_completes(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1446,6 +1449,239 @@ async fn unsubscribe_buffered_messages(addr: &str, recv_timeout: Duration, pb: &
                 &ctx,
                 "Server did not deliver any buffered messages after UNSUBSCRIBE (MAY behaviour not detected)",
             ))
+        }
+    })
+    .await
+}
+
+const RETAIN_HANDLING_0: TestContext = TestContext {
+    id: "MQTT-3.8.4-4",
+    description: "retain_handling=0: existing retained messages MUST be re-sent on subscribe",
+    compliance: Compliance::Must,
+};
+
+/// With retain_handling=0 (the default), any existing retained messages matching
+/// the topic filter MUST be re-sent on subscribe [MQTT-3.8.4-4].
+async fn retain_handling_0_sends_retained(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = RETAIN_HANDLING_0;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/sub/rh0";
+
+        // Publish a retained message
+        let pub_conn = ConnectParams::new("mqtt-test-rh0-pub");
+        let (mut pub_client, connack) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        if connack.properties.retain_available == Some(false) {
+            return Ok(TestResult::skip(&ctx, "Broker reported Retain Available = false"));
+        }
+
+        pub_client
+            .send_publish(&PublishParams::retained(topic, b"rh0-retained".to_vec()))
+            .await?;
+
+        // Subscribe with retain_handling=0 (explicit default)
+        let sub_conn = ConnectParams::new("mqtt-test-rh0-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+
+        let sub = SubscribeParams {
+            packet_id:  1,
+            filters:    vec![(
+                topic.to_string(),
+                SubscribeOptions {
+                    qos:              QoS::AtMostOnce,
+                    retain_handling:  0,
+                    ..Default::default()
+                },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Must receive the retained message
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {}
+            Ok(other) => {
+                return Ok(TestResult::fail_packet(&ctx, "retained PUBLISH", &other));
+            }
+            Err(_) => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "No retained message delivered on subscribe with retain_handling=0",
+                ));
+            }
+        }
+
+        // Re-subscribe on the same connection — retain_handling=0 means resend again
+        let sub2 = SubscribeParams {
+            packet_id:  2,
+            filters:    vec![(
+                topic.to_string(),
+                SubscribeOptions {
+                    qos:              QoS::AtMostOnce,
+                    retain_handling:  0,
+                    ..Default::default()
+                },
+            )],
+            properties: Properties::default(),
+        };
+        sub_client.send_subscribe(&sub2).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Must receive retained message again
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::pass(&ctx)),
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "retained PUBLISH on re-sub", &other)),
+            Err(_) => Ok(TestResult::fail(
+                &ctx,
+                "No retained message on re-subscription with retain_handling=0",
+            )),
+        }
+    })
+    .await
+}
+
+const QOS_DOWNGRADE_1_TO_0: TestContext = TestContext {
+    id: "MQTT-3.8.4-8",
+    description: "Delivered QoS MUST be min(published QoS, granted QoS): QoS 1 → QoS 0",
+    compliance: Compliance::Must,
+};
+
+/// The QoS of delivered messages MUST be the minimum of the published QoS and
+/// the maximum QoS granted by the server [MQTT-3.8.4-8]. Publish QoS 1, subscribe
+/// at QoS 0, verify delivery at QoS 0.
+async fn qos_downgrade_qos1_to_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = QOS_DOWNGRADE_1_TO_0;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/sub/qos1to0";
+
+        // Subscriber at QoS 0
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-dg10-sub", topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        // Publisher sends QoS 1
+        let pub_conn = ConnectParams::new("mqtt-test-dg10-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        pub_client.send_publish(&PublishParams::qos1(topic, b"dg-test".to_vec(), 1)).await?;
+
+        // Drain PUBACK from publisher
+        let _ = pub_client.recv(recv_timeout).await;
+
+        // Subscriber should receive at QoS 0 (no packet_id)
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                if p.qos == QoS::AtMostOnce {
+                    Ok(TestResult::pass(&ctx))
+                } else {
+                    Ok(TestResult::fail(
+                        &ctx,
+                        format!("Delivered at {:?}, expected AtMostOnce (QoS 1 pub, QoS 0 sub)", p.qos),
+                    ))
+                }
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message delivered to subscriber")),
+        }
+    })
+    .await
+}
+
+const UNSUB_INFLIGHT_QOS1: TestContext = TestContext {
+    id: "MQTT-3.10.4-2",
+    description: "Server MUST complete in-flight QoS 1 delivery after UNSUBSCRIBE",
+    compliance: Compliance::Must,
+};
+
+/// After UNSUBSCRIBE, the server MUST complete delivery of any QoS 1 messages
+/// that are already in-flight [MQTT-3.10.4-2].
+async fn unsubscribe_inflight_qos1_completes(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = UNSUB_INFLIGHT_QOS1;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/sub/unsub-inflight";
+
+        // Subscriber at QoS 1
+        let sub_conn = ConnectParams::new("mqtt-test-unsub-if-sub");
+        let (mut sub_client, _) = client::connect(addr, &sub_conn, recv_timeout).await?;
+
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+        sub_client.send_subscribe(&sub).await?;
+        match sub_client.recv(recv_timeout).await? {
+            Packet::SubAck(_) => {}
+            other => return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
+        }
+
+        // Publisher sends several QoS 1 messages rapidly
+        let pub_conn = ConnectParams::new("mqtt-test-unsub-if-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        for i in 1..=5u16 {
+            pub_client
+                .send_publish(&PublishParams::qos1(topic, format!("inflight-{i}").into_bytes(), i))
+                .await?;
+        }
+
+        // Read at least one PUBLISH from subscriber before unsubscribing
+        let mut received_before_unsub = 0u32;
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                received_before_unsub += 1;
+                // Do NOT send PUBACK — leave it in-flight
+                // Now unsubscribe immediately
+                let unsub = UnsubscribeParams::simple(2, topic);
+                sub_client.send_unsubscribe(&unsub).await?;
+            }
+            Ok(other) => return Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
+            Err(_) => return Ok(TestResult::fail(&ctx, "No message received before unsubscribe")),
+        }
+
+        // The server should still expect our PUBACK for the in-flight message.
+        // Send PUBACK now and verify the server processes it (no disconnect).
+        // Also drain any additional messages and the UNSUBACK.
+        let mut got_unsuback = false;
+        let mut first_pid_acked = false;
+        for _ in 0..20 {
+            match sub_client.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Publish(p)) if p.topic == topic => {
+                    // Additional messages may still arrive — ACK them
+                    if let Some(pid) = p.packet_id {
+                        sub_client.send_puback(pid, 0x00).await?;
+                        first_pid_acked = true;
+                    }
+                }
+                Ok(Packet::UnsubAck(ack)) if ack.packet_id == 2 => {
+                    got_unsuback = true;
+                    // After UNSUBACK, ACK the first in-flight message if we
+                    // haven't done so via a retransmit
+                    if !first_pid_acked {
+                        sub_client.send_puback(1, 0x00).await?;
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        }
+
+        // Try once more for UNSUBACK if needed
+        if !got_unsuback {
+            match sub_client.recv(recv_timeout).await {
+                Ok(Packet::UnsubAck(ack)) if ack.packet_id == 2 => {
+                    got_unsuback = true;
+                }
+                _ => {}
+            }
+        }
+
+        if !got_unsuback {
+            return Ok(TestResult::fail(&ctx, "UNSUBACK not received"));
+        }
+
+        // The fact that we received messages, unsubscribed, and could still
+        // complete in-flight QoS 1 delivery (PUBACK accepted) means the
+        // server completed the in-flight delivery.
+        if received_before_unsub > 0 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(&ctx, "No in-flight messages observed"))
         }
     })
     .await

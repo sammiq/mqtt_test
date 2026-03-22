@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 37;
+pub const TEST_COUNT: usize = 39;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -52,6 +52,8 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             qos1_initial_delivery_dup_zero(addr, recv_timeout, pb).await,
             control_packets_when_quota_zero(addr, recv_timeout, pb).await,
             retain_zero_preserves_existing(addr, recv_timeout, pb).await,
+            ordered_topic_qos0(addr, recv_timeout, pb).await,
+            content_type_forwarded_unaltered(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1918,6 +1920,148 @@ async fn retain_zero_preserves_existing(addr: &str, recv_timeout: Duration, pb: 
         }
 
         Ok(result)
+    })
+    .await
+}
+
+const ORDERED_TOPIC_QOS0: TestContext = TestContext {
+    id: "MQTT-4.6.0-5",
+    description: "Server MUST deliver QoS 0 messages in order for an Ordered Topic",
+    compliance: Compliance::Must,
+};
+
+/// By default, the server MUST treat every topic as an Ordered Topic and deliver
+/// messages in the order received from each client, per QoS level [MQTT-4.6.0-5].
+/// This test verifies ordering for QoS 0 messages (complementing the existing
+/// QoS 1 ordering test at MQTT-4.6.0-1).
+async fn ordered_topic_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = ORDERED_TOPIC_QOS0;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/ordered_qos0";
+
+        // Subscriber at QoS 0
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-ord0-sub", topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        // Publisher sends 10 QoS 0 messages in order
+        let pub_conn = ConnectParams::new("mqtt-test-ord0-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        for i in 0u32..10 {
+            let params = PublishParams {
+                topic:      topic.to_string(),
+                qos:        QoS::AtMostOnce,
+                retain:     false,
+                payload:    format!("ord-{i}").into_bytes(),
+                packet_id:  None,
+                dup:        false,
+                properties: Properties::default(),
+            };
+            pub_client.send_publish(&params).await?;
+        }
+
+        // Receive and verify order
+        let mut received = Vec::new();
+        for _ in 0..10 {
+            match sub_client.recv(recv_timeout).await {
+                Ok(Packet::Publish(p)) if p.topic == topic => {
+                    received.push(String::from_utf8_lossy(&p.payload).to_string());
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+
+        let expected: Vec<String> = (0..10).map(|i| format!("ord-{i}")).collect();
+        if received == expected {
+            Ok(TestResult::pass(&ctx))
+        } else if received.len() < 10 {
+            // QoS 0 may lose messages — still a pass if ordering is preserved
+            let is_ordered = received.windows(2).all(|w| w[0] < w[1]);
+            if is_ordered && received.len() >= 5 {
+                Ok(TestResult::pass(&ctx))
+            } else if is_ordered {
+                Ok(TestResult::fail(
+                    &ctx,
+                    format!("Only {}/10 messages received (ordered, but too few)", received.len()),
+                ))
+            } else {
+                Ok(TestResult::fail(
+                    &ctx,
+                    format!("Messages arrived out of order: {received:?}"),
+                ))
+            }
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("Messages arrived out of order: {received:?}"),
+            ))
+        }
+    })
+    .await
+}
+
+const CONTENT_TYPE_FORWARDED: TestContext = TestContext {
+    id: "MQTT-3.3.2-19",
+    description: "Content Type MUST be forwarded unaltered by the server",
+    compliance: Compliance::Must,
+};
+
+/// The server MUST forward the Content Type property unaltered to receivers
+/// [MQTT-3.3.2-19].
+async fn content_type_forwarded_unaltered(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CONTENT_TYPE_FORWARDED;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/content_type_fwd";
+        let content_type = "application/octet-stream; charset=utf-8";
+
+        // Subscriber
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-ct-fwd-sub", topic, QoS::AtLeastOnce, recv_timeout,
+        ).await?;
+
+        // Publisher sends with Content Type
+        let pub_conn = ConnectParams::new("mqtt-test-ct-fwd-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        let params = PublishParams {
+            topic:      topic.to_string(),
+            qos:        QoS::AtLeastOnce,
+            retain:     false,
+            payload:    b"ct-test".to_vec(),
+            packet_id:  Some(1),
+            dup:        false,
+            properties: Properties {
+                content_type: Some(content_type.to_string()),
+                ..Default::default()
+            },
+        };
+        pub_client.send_publish(&params).await?;
+
+        // Drain PUBACK
+        let _ = pub_client.recv(recv_timeout).await;
+
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                if let Some(pid) = p.packet_id {
+                    sub_client.send_puback(pid, 0x00).await?;
+                }
+                match p.properties.content_type.as_deref() {
+                    Some(ct) if ct == content_type => Ok(TestResult::pass(&ctx)),
+                    Some(ct) => Ok(TestResult::fail(
+                        &ctx,
+                        format!("Content Type altered: expected \"{content_type}\", got \"{ct}\""),
+                    )),
+                    None => Ok(TestResult::fail(
+                        &ctx,
+                        "Content Type property was stripped by server",
+                    )),
+                }
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No message delivered")),
+        }
     })
     .await
 }

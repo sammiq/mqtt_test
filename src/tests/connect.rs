@@ -10,7 +10,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 39;
+pub const TEST_COUNT: usize = 42;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -55,6 +55,9 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             password_without_username(addr, recv_timeout, pb).await,
             empty_username(addr, recv_timeout, pb).await,
             username_only(addr, recv_timeout, pb).await,
+            will_non_retained(addr, recv_timeout, pb).await,
+            topic_alias_maximum_zero(addr, recv_timeout, pb).await,
+            connack_before_close_on_error(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1542,6 +1545,198 @@ async fn username_only(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
                 &ctx,
                 format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
             ))
+        }
+    })
+    .await
+}
+
+// ── Will Retain=0 → non-retained ────────────────────────────────────────
+
+const WILL_NON_RETAINED: TestContext = TestContext {
+    id: "MQTT-3.1.2-14",
+    description: "Will Retain=0: will message MUST be published as non-retained",
+    compliance: Compliance::Must,
+};
+
+/// When Will Flag=1 and Will Retain=0, the server MUST publish the will
+/// message as a non-retained message [MQTT-3.1.2-14].
+async fn will_non_retained(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = WILL_NON_RETAINED;
+    run_test(ctx, pb, async {
+        let will_topic = "mqtt/test/will/nonretain";
+
+        // Clear any existing retained message on this topic
+        let clear_params = ConnectParams::new("mqtt-test-will-nr-clear");
+        let (mut clear_client, _) = client::connect(addr, &clear_params, recv_timeout).await?;
+        clear_client.send_publish(&PublishParams::retained(will_topic, vec![])).await?;
+        drop(clear_client);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Subscribe first so we receive the will message when it's published
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-will-nr-sub", will_topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        // Connect with a non-retained will message (retain=false)
+        let mut will_params = ConnectParams::new("mqtt-test-will-nr-pub");
+        will_params.will = Some(WillParams {
+            topic:      will_topic.to_string(),
+            payload:    b"non-retained-will".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     false,
+            properties: Properties::default(),
+        });
+        let (will_client, _) = client::connect(addr, &will_params, recv_timeout).await?;
+
+        // Drop without DISCONNECT to trigger will
+        drop(will_client.into_raw());
+
+        // Wait for will message on subscriber
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == will_topic => {
+                drop(sub_client);
+
+                // Verify it was NOT stored as retained: new subscriber should NOT receive it
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let mut sub2 = client::connect_and_subscribe(
+                    addr, "mqtt-test-will-nr-sub2", will_topic, QoS::AtMostOnce, recv_timeout,
+                ).await?;
+
+                match sub2.recv(Duration::from_secs(1)).await {
+                    Ok(Packet::Publish(p2)) if p2.topic == will_topic && !p2.payload.is_empty() => {
+                        Ok(TestResult::fail(
+                            &ctx,
+                            "Will message with Retain=0 was stored as retained (new subscriber received it)",
+                        ))
+                    }
+                    _ => Ok(TestResult::pass(&ctx)),
+                }
+            }
+            Ok(other) => {
+                Ok(TestResult::fail_packet(&ctx, "PUBLISH (will message)", &other))
+            }
+            Err(_) => {
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Will message not published after ungraceful disconnect",
+                ))
+            }
+        }
+    })
+    .await
+}
+
+// ── Topic Alias Maximum=0 ───────────────────────────────────────────────
+
+const TOPIC_ALIAS_MAX_ZERO: TestContext = TestContext {
+    id: "MQTT-3.1.2-26",
+    description: "Topic Alias Maximum=0: server MUST NOT send Topic Aliases to client",
+    compliance: Compliance::Must,
+};
+
+/// If the client sets Topic Alias Maximum=0 in CONNECT, the server MUST NOT
+/// send any Topic Aliases in PUBLISH packets to that client [MQTT-3.1.2-26].
+async fn topic_alias_maximum_zero(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = TOPIC_ALIAS_MAX_ZERO;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/connect/ta_zero";
+
+        // Connect subscriber with topic_alias_maximum=0
+        let mut sub_params = ConnectParams::new("mqtt-test-ta0-sub");
+        sub_params.properties.topic_alias_maximum = Some(0);
+        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
+
+        let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Publish several messages from another client to increase chance of alias use
+        let pub_conn = ConnectParams::new("mqtt-test-ta0-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        for i in 0..5 {
+            pub_client.send_publish(&PublishParams::qos0(
+                topic, format!("ta0-msg-{i}").into_bytes(),
+            )).await?;
+        }
+
+        // Receive messages and verify none have a topic alias
+        let mut received = 0;
+        for _ in 0..5 {
+            match sub_client.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Publish(p)) if p.topic == topic => {
+                    if let Some(alias) = p.properties.topic_alias {
+                        return Ok(TestResult::fail(&ctx, format!(
+                            "Server sent Topic Alias {alias} to client with Topic Alias Maximum=0",
+                        )));
+                    }
+                    received += 1;
+                }
+                _ => break,
+            }
+        }
+
+        if received > 0 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(&ctx, "No messages received to verify topic alias behavior"))
+        }
+    })
+    .await
+}
+
+// ── CONNACK before close on error ───────────────────────────────────────
+
+const CONNACK_BEFORE_CLOSE: TestContext = TestContext {
+    id: "MQTT-3.1.4-2",
+    description: "Server MAY send CONNACK with reason >= 0x80 before closing on error",
+    compliance: Compliance::May,
+};
+
+/// When the server rejects a CONNECT (e.g. due to a malformed packet), it MAY
+/// send a CONNACK with a Reason Code of 0x80 or greater before closing the
+/// network connection [MQTT-3.1.4-2].
+async fn connack_before_close_on_error(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = CONNACK_BEFORE_CLOSE;
+    run_test(ctx, pb, async {
+        let mut client = RawClient::connect_tcp(addr).await?;
+
+        // CONNECT with reserved flag set (bit 0 = 1) — this is a malformed packet
+        #[rustfmt::skip]
+        let bad_connect: &[u8] = &[
+            0x10,                                       // CONNECT fixed header
+            0x0F,                                       // remaining length = 15
+            0x00, 0x04, b'M', b'Q', b'T', b'T',        // protocol name "MQTT"
+            0x05,                                       // protocol version 5
+            0x03,                                       // connect flags: clean start + reserved bit set
+            0x00, 0x3C,                                 // keep alive = 60
+            0x00,                                       // properties length = 0
+            0x00, 0x00,                                 // client ID length = 0
+        ];
+        client.send_raw(bad_connect).await?;
+
+        match client.recv(recv_timeout).await {
+            Ok(Packet::ConnAck(connack)) if connack.reason_code >= 0x80 => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(Packet::ConnAck(connack)) => {
+                Ok(TestResult::fail(
+                    &ctx,
+                    format!(
+                        "CONNACK reason {:#04x} (expected >= 0x80 for malformed CONNECT)",
+                        connack.reason_code
+                    ),
+                ))
+            }
+            Err(_) | Ok(Packet::Disconnect(_)) => {
+                // Server closed without sending CONNACK — allowed (it's a MAY)
+                Ok(TestResult::fail(
+                    &ctx,
+                    "Server closed connection without sending CONNACK (MAY behavior)",
+                ))
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
         }
     })
     .await

@@ -251,6 +251,12 @@ impl RawClient {
         self.send_raw(&codec::encode_pub_response(6, packet_id, reason_code)).await
     }
 
+    /// Send PUBCOMP in response to a PUBREL.
+    #[allow(dead_code)]
+    pub async fn send_pubcomp(&mut self, packet_id: u16, reason_code: u8) -> Result<()> {
+        self.send_raw(&codec::encode_pub_response(7, packet_id, reason_code)).await
+    }
+
     pub async fn send_subscribe(&mut self, params: &SubscribeParams) -> Result<()> {
         self.send_raw(&codec::encode_subscribe(params)).await
     }

@@ -9,7 +9,7 @@ use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, Subscr
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 32;
+pub const TEST_COUNT: usize = 37;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -47,6 +47,11 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             payload_format_utf8_validated(addr, recv_timeout, pb).await,
             user_properties_order(addr, recv_timeout, pb).await,
             retained_qos0_stored(addr, recv_timeout, pb).await,
+            qos2_no_duplicate_delivery(addr, recv_timeout, pb).await,
+            qos2_continues_after_message_expiry(addr, recv_timeout, pb).await,
+            qos1_initial_delivery_dup_zero(addr, recv_timeout, pb).await,
+            control_packets_when_quota_zero(addr, recv_timeout, pb).await,
+            retain_zero_preserves_existing(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1567,6 +1572,349 @@ async fn retained_qos0_stored(addr: &str, recv_timeout: Duration, pb: &ProgressB
         if let Ok((mut c, _)) = client::connect(addr, &cleanup_conn, recv_timeout).await {
             let clear = PublishParams::retained(topic, Vec::new());
             let _ = c.send_publish(&clear).await;
+        }
+
+        Ok(result)
+    })
+    .await
+}
+
+// ── QoS 2 no duplicate delivery ─────────────────────────────────────────
+
+const QOS2_NO_DUP_DELIVERY: TestContext = TestContext {
+    id: "MQTT-4.3.3-10",
+    description: "Duplicate QoS 2 PUBLISH before PUBREL MUST NOT cause duplicate delivery",
+    compliance: Compliance::Must,
+};
+
+/// When the server receives a duplicate QoS 2 PUBLISH (before PUBREL), it MUST
+/// re-ACK with PUBREC but MUST NOT deliver the message again to subscribers
+/// [MQTT-4.3.3-10].
+async fn qos2_no_duplicate_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = QOS2_NO_DUP_DELIVERY;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/qos2_nodup";
+
+        // Subscriber at QoS 0 to make counting simple (no ack flow to manage)
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-q2nodup-sub", topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        // Publisher
+        let pub_conn = ConnectParams::new("mqtt-test-q2nodup-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        // Send QoS 2 PUBLISH
+        pub_client.send_publish(&PublishParams::qos2(topic, b"once-only".to_vec(), 20)).await?;
+
+        // Wait for PUBREC
+        for _ in 0..5 {
+            match pub_client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 20 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(20)", &other)),
+            }
+        }
+
+        // Send duplicate PUBLISH (DUP=1) before PUBREL
+        let dup_params = PublishParams {
+            topic: topic.to_string(),
+            payload: b"once-only".to_vec(),
+            qos: QoS::ExactlyOnce,
+            retain: false,
+            dup: true,
+            packet_id: Some(20),
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&dup_params).await?;
+
+        // Should get PUBREC again
+        for _ in 0..5 {
+            match pub_client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 20 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(20) dup", &other)),
+            }
+        }
+
+        // Complete the flow
+        pub_client.send_pubrel(20, 0x00).await?;
+        for _ in 0..5 {
+            match pub_client.recv(recv_timeout).await? {
+                Packet::PubComp(comp) if comp.packet_id == 20 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(20)", &other)),
+            }
+        }
+
+        // Count messages received by subscriber — should be exactly 1
+        let mut count = 0;
+        loop {
+            match sub_client.recv(Duration::from_secs(1)).await {
+                Ok(Packet::Publish(p)) if p.topic == topic => count += 1,
+                _ => break,
+            }
+        }
+
+        if count == 1 {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(&ctx, format!(
+                "Subscriber received {count} messages (expected exactly 1, duplicate PUBLISH must not cause duplicate delivery)"
+            )))
+        }
+    })
+    .await
+}
+
+// ── QoS 2 continues after message expiry ─────────────────────────────────
+
+const QOS2_EXPIRY_CONTINUES: TestContext = TestContext {
+    id: "MQTT-4.3.3-13",
+    description: "Server MUST continue QoS 2 ack sequence even after message expiry",
+    compliance: Compliance::Must,
+};
+
+/// The server MUST continue the QoS 2 acknowledgement sequence even if
+/// the message has expired [MQTT-4.3.3-13]. Publish with a short
+/// Message Expiry Interval, wait for expiry, then complete the flow.
+async fn qos2_continues_after_message_expiry(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = QOS2_EXPIRY_CONTINUES;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-q2expiry");
+        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+
+        // Publish QoS 2 with 1-second expiry
+        let pub_params = PublishParams {
+            topic: "mqtt/test/pub/qos2_expiry".to_string(),
+            payload: b"expires-fast".to_vec(),
+            qos: QoS::ExactlyOnce,
+            retain: false,
+            dup: false,
+            packet_id: Some(30),
+            properties: Properties {
+                message_expiry_interval: Some(1),
+                ..Properties::default()
+            },
+        };
+        client.send_publish(&pub_params).await?;
+
+        // Wait for PUBREC
+        for _ in 0..5 {
+            match client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 30 => break,
+                Packet::Publish(_) => continue,
+                other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(30)", &other)),
+            }
+        }
+
+        // Wait for message to expire
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Send PUBREL — server MUST still respond with PUBCOMP
+        client.send_pubrel(30, 0x00).await?;
+
+        match client.recv(recv_timeout).await {
+            Ok(Packet::PubComp(comp)) if comp.packet_id == 30 => {
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(other) => {
+                Ok(TestResult::fail_packet(&ctx, "PUBCOMP(30) after message expiry", &other))
+            }
+            Err(_) => {
+                Ok(TestResult::fail(&ctx, "No PUBCOMP after message expiry — server must continue QoS 2 flow"))
+            }
+        }
+    })
+    .await
+}
+
+// ── QoS 1 initial delivery DUP=0 ─────────────────────────────────────────
+
+const QOS1_DUP_ZERO: TestContext = TestContext {
+    id: "MQTT-4.3.2-2b",
+    description: "Server MUST forward QoS 1 PUBLISH with DUP=0 on initial delivery",
+    compliance: Compliance::Must,
+};
+
+/// When the server forwards a QoS 1 message to a subscriber for the first time,
+/// the DUP flag MUST be 0 [MQTT-4.3.2-2].
+async fn qos1_initial_delivery_dup_zero(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = QOS1_DUP_ZERO;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/qos1_dup0";
+
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-q1dup0-sub", topic, QoS::AtLeastOnce, recv_timeout,
+        ).await?;
+
+        // Publish QoS 1 from another client
+        let pub_conn = ConnectParams::new("mqtt-test-q1dup0-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        pub_client.send_publish(&PublishParams::qos1(topic, b"dup-check".to_vec(), 1)).await?;
+        // Drain PUBACK
+        let _ = pub_client.recv(recv_timeout).await;
+
+        // Receive forwarded message on subscriber
+        match sub_client.recv(recv_timeout).await? {
+            Packet::Publish(p) if p.topic == topic => {
+                if let Some(pid) = p.packet_id {
+                    sub_client.send_puback(pid, 0x00).await?;
+                }
+                if p.dup {
+                    Ok(TestResult::fail(&ctx, "Server forwarded QoS 1 message with DUP=1 on initial delivery"))
+                } else {
+                    Ok(TestResult::pass(&ctx))
+                }
+            }
+            other => Ok(TestResult::fail_packet(&ctx, "PUBLISH on subscriber", &other)),
+        }
+    })
+    .await
+}
+
+// ── Control packets when quota is zero ────────────────────────────────────
+
+const QUOTA_ZERO_CONTROL: TestContext = TestContext {
+    id: "MQTT-4.9.0-3",
+    description: "Server MUST process control packets even when send quota is zero",
+    compliance: Compliance::Must,
+};
+
+/// Even when the receive quota is exhausted (all slots occupied by unacked
+/// QoS 1/2 messages), the server MUST continue to process and respond to
+/// other MQTT control packets like PINGREQ [MQTT-4.9.0-3].
+async fn control_packets_when_quota_zero(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = QUOTA_ZERO_CONTROL;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/quota_zero";
+
+        // Subscriber with receive_maximum=2
+        let mut sub_params = ConnectParams::new("mqtt-test-quota0-sub");
+        sub_params.properties.receive_maximum = Some(2);
+        let (mut sub_client, _) = client::connect(addr, &sub_params, recv_timeout).await?;
+
+        let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // Publish 3 QoS 1 messages from another client
+        let pub_conn = ConnectParams::new("mqtt-test-quota0-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        for i in 1u16..=3 {
+            pub_client.send_publish(&PublishParams::qos1(topic, format!("q-{i}").into_bytes(), i)).await?;
+        }
+        // Drain PUBACKs
+        for _ in 0..5 {
+            match pub_client.recv(Duration::from_secs(1)).await {
+                Ok(Packet::PubAck(_)) => {}
+                _ => break,
+            }
+        }
+
+        // Receive up to 2 messages but do NOT ACK them (fill quota)
+        for _ in 0..2 {
+            match sub_client.recv(Duration::from_secs(2)).await {
+                Ok(Packet::Publish(_)) => {}
+                _ => break,
+            }
+        }
+
+        // Quota should now be zero. Send PINGREQ — server MUST still respond.
+        sub_client.send_pingreq().await?;
+
+        match sub_client.recv(recv_timeout).await {
+            Ok(Packet::PingResp) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Publish(_)) => {
+                // Might receive another publish before pingresp — try once more
+                sub_client.send_pingreq().await?;
+                match sub_client.recv(recv_timeout).await {
+                    Ok(Packet::PingResp) => Ok(TestResult::pass(&ctx)),
+                    Ok(other) => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
+                    Err(_) => Ok(TestResult::fail(&ctx, "No PINGRESP when quota is zero")),
+                }
+            }
+            Ok(other) => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
+            Err(_) => Ok(TestResult::fail(&ctx, "No PINGRESP when quota is zero")),
+        }
+    })
+    .await
+}
+
+// ── Retain=0 must not replace existing retained ──────────────────────────
+
+const RETAIN_ZERO_PRESERVES: TestContext = TestContext {
+    id: "MQTT-3.3.1-8",
+    description: "PUBLISH with Retain=0 MUST NOT store or replace existing retained messages",
+    compliance: Compliance::Must,
+};
+
+/// If the RETAIN flag is 0 in a PUBLISH, the server MUST NOT store the message
+/// as a retained message and MUST NOT remove or replace any existing retained
+/// message [MQTT-3.3.1-8].
+async fn retain_zero_preserves_existing(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = RETAIN_ZERO_PRESERVES;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/pub/retain0_preserve";
+
+        // 1. Store a retained message
+        let pub_conn = ConnectParams::new("mqtt-test-r0p-pub1");
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+
+        let retained = PublishParams {
+            topic:      topic.to_string(),
+            payload:    b"original-retained".to_vec(),
+            qos:        QoS::AtMostOnce,
+            retain:     true,
+            dup:        false,
+            packet_id:  None,
+            properties: Properties::default(),
+        };
+        pub_client.send_publish(&retained).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 2. Publish a non-retained message on the same topic
+        let non_retained = PublishParams::qos0(topic, b"non-retained-update".to_vec());
+        pub_client.send_publish(&non_retained).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 3. New subscriber should still receive the ORIGINAL retained message
+        let mut sub_client = client::connect_and_subscribe(
+            addr, "mqtt-test-r0p-sub", topic, QoS::AtMostOnce, recv_timeout,
+        ).await?;
+
+        let result = match sub_client.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic && p.retain => {
+                if p.payload == b"original-retained" {
+                    TestResult::pass(&ctx)
+                } else if p.payload == b"non-retained-update" {
+                    TestResult::fail(
+                        &ctx,
+                        "Retained message was replaced by PUBLISH with Retain=0",
+                    )
+                } else {
+                    TestResult::fail(
+                        &ctx,
+                        format!("Unexpected retained payload: {:?}", String::from_utf8_lossy(&p.payload)),
+                    )
+                }
+            }
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                // Got a non-retained message — original retained was lost
+                TestResult::fail(
+                    &ctx,
+                    format!("Received non-retained message (payload: {:?}) instead of retained",
+                        String::from_utf8_lossy(&p.payload)),
+                )
+            }
+            Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH", &other),
+            Err(_) => TestResult::fail(&ctx, "No retained message delivered to new subscriber"),
+        };
+
+        // Clean up: remove retained message
+        let cleanup = ConnectParams::new("mqtt-test-r0p-cleanup");
+        if let Ok((mut c, _)) = client::connect(addr, &cleanup, recv_timeout).await {
+            let _ = c.send_publish(&PublishParams::retained(topic, Vec::new())).await;
         }
 
         Ok(result)

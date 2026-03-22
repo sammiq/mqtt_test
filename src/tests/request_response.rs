@@ -31,7 +31,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
 // ── SHOULD ──────────────────────────────────────────────────────────────────
 
 const RESPONSE_TOPIC: TestContext = TestContext {
-    id: "MQTT-4.10.0-1",
+    refs: &["MQTT-4.10.0-1"],
     description: "Response Topic property SHOULD be forwarded unchanged by the broker",
     compliance: Compliance::Should,
 };
@@ -76,7 +76,7 @@ async fn response_topic_forwarded(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const CORRELATION_DATA: TestContext = TestContext {
-    id: "MQTT-4.10.0-2",
+    refs: &["MQTT-4.10.0-2"],
     description: "Correlation Data property SHOULD be forwarded unchanged by the broker",
     compliance: Compliance::Should,
 };
@@ -123,7 +123,7 @@ async fn correlation_data_forwarded(addr: &str, recv_timeout: Duration, pb: &Pro
 // ── MUST ────────────────────────────────────────────────────────────────────
 
 const FULL_RR: TestContext = TestContext {
-    id: "MQTT-4.10.0-3",
+    refs: &["MQTT-4.10.0-3"],
     description: "Full request/response: requester receives response on Response Topic",
     compliance: Compliance::Must,
 };
@@ -210,7 +210,7 @@ async fn full_request_response(addr: &str, recv_timeout: Duration, pb: &Progress
 }
 
 const RESPONSE_TOPIC_WITH_CORR: TestContext = TestContext {
-    id: "MQTT-3.3.2-9",
+    refs: &["MQTT-3.3.2-9"],
     description: "Response Topic and Correlation Data MUST both be forwarded together",
     compliance: Compliance::Must,
 };
@@ -264,7 +264,7 @@ async fn response_topic_with_correlation(addr: &str, recv_timeout: Duration, pb:
 }
 
 const MULTI_CORRELATION: TestContext = TestContext {
-    id: "MQTT-4.10.0-4",
+    refs: &["MQTT-4.10.0-4"],
     description: "Different Correlation Data values MUST be independently preserved",
     compliance: Compliance::Must,
 };

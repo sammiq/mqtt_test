@@ -13,11 +13,19 @@ pub enum Compliance {
 }
 
 /// Identifies a single compliance test — defined once per test function.
+/// A test may cover one or more MQTT spec requirements (`refs`).
 #[derive(Debug, Clone, Copy)]
 pub struct TestContext {
-    pub id: &'static str,
+    pub refs: &'static [&'static str],
     pub description: &'static str,
     pub compliance: Compliance,
+}
+
+impl TestContext {
+    /// The first (primary) spec reference, used for sorting and display.
+    pub fn primary_ref(&self) -> &'static str {
+        self.refs.first().unwrap_or(&"UNKNOWN")
+    }
 }
 
 /// The result of running a single test.
@@ -80,7 +88,7 @@ mod tests {
     use crate::codec::{Properties, ConnAck};
 
     const CTX: TestContext = TestContext {
-        id:          "TEST-1",
+        refs:        &["TEST-1"],
         description: "test description",
         compliance:  Compliance::Must,
     };
@@ -88,7 +96,7 @@ mod tests {
     #[test]
     fn pass_preserves_context() {
         let r = TestResult::pass(&CTX);
-        assert_eq!(r.ctx.id, "TEST-1");
+        assert_eq!(r.ctx.primary_ref(), "TEST-1");
         assert_eq!(r.ctx.description, "test description");
         assert!(matches!(r.ctx.compliance, Compliance::Must));
         assert!(matches!(r.outcome, Outcome::Pass));
@@ -152,15 +160,15 @@ mod tests {
     #[test]
     fn context_copy_semantics() {
         let ctx = TestContext {
-            id:          "COPY-1",
+            refs:        &["COPY-1"],
             description: "copy test",
             compliance:  Compliance::Should,
         };
         let copied = ctx;
-        assert_eq!(copied.id, "COPY-1");
+        assert_eq!(copied.primary_ref(), "COPY-1");
         assert!(matches!(copied.compliance, Compliance::Should));
         // Original still usable (Copy trait)
-        assert_eq!(ctx.id, "COPY-1");
+        assert_eq!(ctx.primary_ref(), "COPY-1");
     }
 
     #[test]

@@ -35,7 +35,7 @@ pub async fn run_tls(addr: &str, tls: &TlsConfig, recv_timeout: Duration, pb: &P
 }
 
 const TCP_TRANSPORT: TestContext = TestContext {
-    id: "MQTT-4.2-1",
+    refs: &["MQTT-4.2-1"],
     description: "TCP transport MUST provide ordered, lossless byte stream (CONNECT/CONNACK)",
     compliance: Compliance::Must,
 };
@@ -60,7 +60,7 @@ async fn tcp_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Te
 }
 
 const TLS_TRANSPORT: TestContext = TestContext {
-    id: "MQTT-4.2-1",
+    refs: &["MQTT-4.2-1"],
     description: "TLS transport MUST provide ordered, lossless byte stream (CONNECT/CONNACK)",
     compliance: Compliance::Must,
 };

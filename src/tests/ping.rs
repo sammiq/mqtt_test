@@ -22,7 +22,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
 }
 
 const PINGRESP: TestContext = TestContext {
-    id: "MQTT-3.12.4-1",
+    refs: &["MQTT-3.12.4-1"],
     description: "Server MUST send PINGRESP in response to PINGREQ",
     compliance: Compliance::Must,
 };
@@ -45,7 +45,7 @@ async fn pingreq_gets_pingresp(addr: &str, recv_timeout: Duration, pb: &Progress
 }
 
 const MULTI_PING: TestContext = TestContext {
-    id: "MQTT-3.12.4-1b",
+    refs: &["MQTT-3.12.4-1b"],
     description: "Server MUST respond to each successive PINGREQ",
     compliance: Compliance::Must,
 };

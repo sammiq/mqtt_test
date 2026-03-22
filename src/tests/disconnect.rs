@@ -29,7 +29,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
 }
 
 const DISCONNECT_CLOSE: TestContext = TestContext {
-    id: "MQTT-3.14.4-1",
+    refs: &["MQTT-3.14.4-1"],
     description: "After receiving DISCONNECT, server MUST close the network connection",
     compliance: Compliance::Must,
 };
@@ -59,7 +59,7 @@ async fn server_closes_after_disconnect(addr: &str, recv_timeout: Duration, pb: 
 }
 
 const DISCONNECT_WITH_WILL: TestContext = TestContext {
-    id: "MQTT-3.14.1-1",
+    refs: &["MQTT-3.14.1-1"],
     description: "DISCONNECT with reason 0x04 MUST trigger will message publication",
     compliance: Compliance::Must,
 };
@@ -101,7 +101,7 @@ async fn disconnect_with_will(addr: &str, recv_timeout: Duration, pb: &ProgressB
 }
 
 const NORMAL_DISCONNECT_DISCARDS_WILL: TestContext = TestContext {
-    id: "MQTT-3.14.4-3",
+    refs: &["MQTT-3.14.4-3", "MQTT-3.14.4-2"],
     description: "Normal DISCONNECT (0x00) MUST discard the will message",
     compliance: Compliance::Must,
 };
@@ -144,7 +144,7 @@ async fn normal_disconnect_discards_will(addr: &str, recv_timeout: Duration, pb:
 }
 
 const SESSION_EXPIRY_INCREASE: TestContext = TestContext {
-    id: "MQTT-3.14.2-2",
+    refs: &["MQTT-3.14.2-2"],
     description: "Session Expiry MUST NOT increase from 0 to non-zero on DISCONNECT",
     compliance: Compliance::Must,
 };
@@ -195,7 +195,7 @@ async fn session_expiry_increase_rejected(addr: &str, recv_timeout: Duration, pb
 }
 
 const WILL_DELAY: TestContext = TestContext {
-    id: "MQTT-3.1.3.2-2",
+    refs: &["MQTT-3.1.3.2-2"],
     description: "Will Delay Interval MUST delay will message publication after disconnect",
     compliance: Compliance::Must,
 };
@@ -251,7 +251,7 @@ async fn will_delay_interval(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 // ── Server-initiated DISCONNECT ─────────────────────────────────────────────
 
 const DISCONNECT_SESSION_TAKEOVER: TestContext = TestContext {
-    id: "MQTT-3.14.2-1",
+    refs: &["MQTT-3.14.2-1"],
     description: "Server SHOULD send DISCONNECT with reason 0x8E on session takeover",
     compliance: Compliance::Should,
 };
@@ -299,7 +299,7 @@ async fn disconnect_reason_session_takeover(addr: &str, recv_timeout: Duration, 
 }
 
 const DISCONNECT_PACKET_TOO_LARGE: TestContext = TestContext {
-    id: "MQTT-3.2.2-17a",
+    refs: &["MQTT-3.2.2-17a"],
     description: "Server MUST disconnect if client sends packet exceeding Maximum Packet Size",
     compliance: Compliance::Must,
 };
@@ -357,7 +357,7 @@ async fn disconnect_on_packet_too_large(addr: &str, recv_timeout: Duration, pb: 
 }
 
 const DISCONNECT_REASON_STRING: TestContext = TestContext {
-    id: "MQTT-3.14.2-3",
+    refs: &["MQTT-3.14.2-3"],
     description: "Server-sent DISCONNECT MAY include a Reason String property",
     compliance: Compliance::May,
 };
@@ -403,7 +403,7 @@ async fn disconnect_reason_string(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const DISCONNECT_PROTOCOL_ERROR: TestContext = TestContext {
-    id: "MQTT-4.13.1-1",
+    refs: &["MQTT-4.13.1-1"],
     description: "Server SHOULD send DISCONNECT with Reason Code before closing on protocol error",
     compliance: Compliance::Should,
 };

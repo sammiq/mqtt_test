@@ -57,7 +57,7 @@ async fn expect_disconnect(client: &mut RawClient, recv_timeout: Duration, ctx: 
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const RESERVED_FLAGS: TestContext = TestContext {
-    id: "MQTT-3.1.4-1",
+    refs: &["MQTT-3.1.4-1"],
     description: "Server MUST validate CONNECT reserved flag is zero",
     compliance: Compliance::Must,
 };
@@ -90,7 +90,7 @@ async fn reserved_connect_flags(addr: &str, recv_timeout: Duration, pb: &Progres
 }
 
 const BAD_REMAINING_LEN: TestContext = TestContext {
-    id: "MQTT-2.1.4-1",
+    refs: &["MQTT-2.1.4-1"],
     description: "Server MUST close connection on malformed remaining length",
     compliance: Compliance::Must,
 };
@@ -117,7 +117,7 @@ async fn malformed_remaining_length(addr: &str, recv_timeout: Duration, pb: &Pro
 }
 
 const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
-    id: "MQTT-3.3.2-1",
+    refs: &["MQTT-3.3.2-1"],
     description: "PUBLISH with empty topic and no Topic Alias MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -147,7 +147,7 @@ async fn publish_empty_topic_no_alias(addr: &str, recv_timeout: Duration, pb: &P
 }
 
 const TOPIC_ALIAS_ZERO: TestContext = TestContext {
-    id: "MQTT-3.3.2-2",
+    refs: &["MQTT-3.3.2-2"],
     description: "PUBLISH with Topic Alias of 0 MUST be a protocol error",
     compliance: Compliance::Must,
 };
@@ -177,7 +177,7 @@ async fn publish_topic_alias_zero(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const SUB_NO_FILTERS: TestContext = TestContext {
-    id: "MQTT-3.8.3-1",
+    refs: &["MQTT-3.8.3-1"],
     description: "SUBSCRIBE with no topic filters MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -207,7 +207,7 @@ async fn subscribe_no_filters(addr: &str, recv_timeout: Duration, pb: &ProgressB
 }
 
 const SUB_INVALID_QOS: TestContext = TestContext {
-    id: "MQTT-3.8.3-2",
+    refs: &["MQTT-3.8.3-2"],
     description: "SUBSCRIBE with reserved QoS bits set MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -238,7 +238,7 @@ async fn subscribe_invalid_qos(addr: &str, recv_timeout: Duration, pb: &Progress
 }
 
 const INVALID_WILDCARD: TestContext = TestContext {
-    id: "MQTT-4.7.1-1",
+    refs: &["MQTT-4.7.1-1"],
     description: "'#' wildcard MUST only be the last character in a topic filter",
     compliance: Compliance::Must,
 };
@@ -284,7 +284,7 @@ async fn subscribe_invalid_wildcard(addr: &str, recv_timeout: Duration, pb: &Pro
 }
 
 const UNSUB_NO_FILTERS: TestContext = TestContext {
-    id: "MQTT-3.10.3-1",
+    refs: &["MQTT-3.10.3-1"],
     description: "UNSUBSCRIBE with no topic filters MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -313,7 +313,7 @@ async fn unsubscribe_no_filters(addr: &str, recv_timeout: Duration, pb: &Progres
 }
 
 const UNSUB_RESERVED_BITS: TestContext = TestContext {
-    id: "MQTT-3.10.1-1",
+    refs: &["MQTT-3.10.1-1"],
     description: "UNSUBSCRIBE fixed header reserved bits MUST be 0010",
     compliance: Compliance::Must,
 };
@@ -344,7 +344,7 @@ async fn unsubscribe_reserved_bits(addr: &str, recv_timeout: Duration, pb: &Prog
 }
 
 const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
-    id: "MQTT-3.3.2-4",
+    refs: &["MQTT-3.3.2-4"],
     description: "Topic Alias exceeding server's maximum MUST be a protocol error",
     compliance: Compliance::Must,
 };
@@ -381,7 +381,7 @@ async fn topic_alias_exceeds_maximum(addr: &str, recv_timeout: Duration, pb: &Pr
 }
 
 const INVALID_PLUS_WILDCARD: TestContext = TestContext {
-    id: "MQTT-4.7.1-4",
+    refs: &["MQTT-4.7.1-4"],
     description: "'+' wildcard MUST occupy an entire level of a topic filter",
     compliance: Compliance::Must,
 };
@@ -427,7 +427,7 @@ async fn subscribe_invalid_plus_wildcard(addr: &str, recv_timeout: Duration, pb:
 }
 
 const NULL_IN_TOPIC: TestContext = TestContext {
-    id: "MQTT-1.5.4-2",
+    refs: &["MQTT-1.5.4-2"],
     description: "PUBLISH with null character in topic name MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -459,7 +459,7 @@ async fn publish_topic_with_null_char(addr: &str, recv_timeout: Duration, pb: &P
 }
 
 const SUB_WRONG_FIXED: TestContext = TestContext {
-    id: "MQTT-3.8.1-1",
+    refs: &["MQTT-3.8.1-1"],
     description: "SUBSCRIBE fixed header reserved bits MUST be 0010",
     compliance: Compliance::Must,
 };
@@ -492,7 +492,7 @@ async fn subscribe_wrong_fixed_header_bits(addr: &str, recv_timeout: Duration, p
 // ── Username / Password ─────────────────────────────────────────────────────
 
 const USERNAME_TRUNCATED: TestContext = TestContext {
-    id: "MQTT-3.1.3-3",
+    refs: &["MQTT-3.1.3-3"],
     description: "CONNECT with Username flag set but truncated payload MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -525,7 +525,7 @@ async fn username_flag_truncated_payload(addr: &str, recv_timeout: Duration, pb:
 }
 
 const UTF8_SURROGATE: TestContext = TestContext {
-    id: "MQTT-1.5.4-1",
+    refs: &["MQTT-1.5.4-1"],
     description: "Server MUST reject ill-formed UTF-8 (surrogate pairs D800-DFFF) in strings",
     compliance: Compliance::Must,
 };
@@ -559,7 +559,7 @@ async fn utf8_surrogate_pair_in_topic(addr: &str, recv_timeout: Duration, pb: &P
 }
 
 const PUBACK_BAD_FLAGS: TestContext = TestContext {
-    id: "MQTT-2.1.3-1",
+    refs: &["MQTT-2.1.3-1"],
     description: "Server MUST reject PUBACK with non-zero reserved fixed header flags",
     compliance: Compliance::Must,
 };
@@ -588,7 +588,7 @@ async fn puback_invalid_fixed_header_flags(addr: &str, recv_timeout: Duration, p
 }
 
 const WILL_QOS_THREE: TestContext = TestContext {
-    id: "MQTT-3.1.2-12",
+    refs: &["MQTT-3.1.2-12"],
     description: "CONNECT with Will QoS=3 MUST be rejected as malformed",
     compliance: Compliance::Must,
 };
@@ -625,7 +625,7 @@ async fn will_qos_three(addr: &str, recv_timeout: Duration, pb: &ProgressBar) ->
 }
 
 const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
-    id: "MQTT-3.14.0-1",
+    refs: &["MQTT-3.14.0-1"],
     description: "DISCONNECT reserved bits MUST be zero; non-zero is malformed",
     compliance: Compliance::Must,
 };
@@ -652,7 +652,7 @@ async fn disconnect_reserved_bits(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const PASSWORD_TRUNCATED: TestContext = TestContext {
-    id: "MQTT-3.1.3-5a",
+    refs: &["MQTT-3.1.3-5a"],
     description: "CONNECT with Password flag set but truncated payload MUST be rejected",
     compliance: Compliance::Must,
 };

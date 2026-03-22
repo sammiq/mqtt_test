@@ -54,7 +54,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const BASIC_SUB: TestContext = TestContext {
-    id: "MQTT-3.8.4-1",
+    refs: &["MQTT-3.8.4-1"],
     description: "Server MUST send SUBACK in response to SUBSCRIBE",
     compliance: Compliance::Must,
 };
@@ -89,7 +89,7 @@ async fn basic_subscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -
 }
 
 const WILDCARD_PLUS: TestContext = TestContext {
-    id: "MQTT-4.7.1-2",
+    refs: &["MQTT-4.7.1-2"],
     description: "'+' wildcard MUST match exactly one topic level",
     compliance: Compliance::Must,
 };
@@ -127,7 +127,7 @@ async fn wildcard_plus(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 }
 
 const WILDCARD_HASH: TestContext = TestContext {
-    id: "MQTT-4.7.1-3",
+    refs: &["MQTT-4.7.1-3"],
     description: "'#' wildcard MUST match all sub-levels",
     compliance: Compliance::Must,
 };
@@ -168,7 +168,7 @@ async fn wildcard_hash(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 }
 
 const UNSUB: TestContext = TestContext {
-    id: "MQTT-3.10.4-4",
+    refs: &["MQTT-3.10.4-4"],
     description: "Server MUST send UNSUBACK in response to UNSUBSCRIBE",
     compliance: Compliance::Must,
 };
@@ -195,7 +195,7 @@ async fn unsubscribe(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Te
 }
 
 const DOLLAR_TOPIC: TestContext = TestContext {
-    id: "MQTT-4.7.2-1",
+    refs: &["MQTT-4.7.2-1"],
     description: "Topics starting with $ MUST NOT match wildcard subscriptions (#, +/...)",
     compliance: Compliance::Must,
 };
@@ -269,7 +269,7 @@ async fn dollar_topic_no_wildcard_match(addr: &str, recv_timeout: Duration, pb: 
 }
 
 const SUBACK_REASON_COUNT: TestContext = TestContext {
-    id: "MQTT-3.8.4-6",
+    refs: &["MQTT-3.8.4-6"],
     description: "SUBACK MUST contain one reason code for each topic filter",
     compliance: Compliance::Must,
 };
@@ -324,7 +324,7 @@ async fn suback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const UNSUBACK_REASON_COUNT: TestContext = TestContext {
-    id: "MQTT-3.10.4-5",
+    refs: &["MQTT-3.10.4-5"],
     description: "UNSUBACK MUST contain one reason code for each topic filter",
     compliance: Compliance::Must,
 };
@@ -395,7 +395,7 @@ async fn unsuback_reason_code_count(addr: &str, recv_timeout: Duration, pb: &Pro
 // ── MAY ──────────────────────────────────────────────────────────────────────
 
 const SHARED_SUB: TestContext = TestContext {
-    id: "MQTT-4.8.2-1",
+    refs: &["MQTT-4.8.2-1"],
     description: "Shared subscriptions ($share/...) are supported",
     compliance: Compliance::May,
 };
@@ -439,7 +439,7 @@ async fn shared_subscription(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 // ── Subscribe options ───────────────────────────────────────────────────────
 
 const SUB_ID: TestContext = TestContext {
-    id: "MQTT-3.8.2-2",
+    refs: &["MQTT-3.8.2-2"],
     description: "Subscription Identifier MUST be returned in matching PUBLISH",
     compliance: Compliance::Must,
 };
@@ -496,7 +496,7 @@ async fn subscription_identifier(addr: &str, recv_timeout: Duration, pb: &Progre
 }
 
 const NO_LOCAL: TestContext = TestContext {
-    id: "MQTT-3.8.3-3",
+    refs: &["MQTT-3.8.3-3"],
     description: "no_local=true: server MUST NOT deliver messages from the same client",
     compliance: Compliance::Must,
 };
@@ -548,7 +548,7 @@ async fn no_local_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 }
 
 const RETAIN_AS_PUB: TestContext = TestContext {
-    id: "MQTT-3.8.3-4",
+    refs: &["MQTT-3.8.3-4"],
     description: "retain_as_published=true: retain flag MUST be preserved on delivery",
     compliance: Compliance::Must,
 };
@@ -618,7 +618,7 @@ async fn retain_as_published(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 }
 
 const RETAIN_HANDLING_1: TestContext = TestContext {
-    id: "MQTT-3.8.3-5a",
+    refs: &["MQTT-3.8.3-5a"],
     description: "retain_handling=1: retained messages only on new subscription",
     compliance: Compliance::Must,
 };
@@ -707,7 +707,7 @@ async fn retain_handling_1(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 }
 
 const RETAIN_HANDLING_2: TestContext = TestContext {
-    id: "MQTT-3.8.3-5b",
+    refs: &["MQTT-3.8.3-5b"],
     description: "retain_handling=2: retained messages MUST NOT be sent on subscribe",
     compliance: Compliance::Must,
 };
@@ -771,7 +771,7 @@ async fn retain_handling_2(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 // ── Unsubscribe behaviour ──────────────────────────────────────────────────
 
 const UNSUB_STOPS: TestContext = TestContext {
-    id: "MQTT-3.10.4-6",
+    refs: &["MQTT-3.10.4-6"],
     description: "After UNSUBSCRIBE, server MUST stop delivering messages on that topic",
     compliance: Compliance::Must,
 };
@@ -816,7 +816,7 @@ async fn unsubscribe_stops_delivery(addr: &str, recv_timeout: Duration, pb: &Pro
 // ── Overlapping subscriptions ──────────────────────────────────────────────
 
 const OVERLAP_QOS: TestContext = TestContext {
-    id: "MQTT-3.3.4-2",
+    refs: &["MQTT-3.3.4-2"],
     description: "Overlapping subscriptions MUST deliver at maximum granted QoS",
     compliance: Compliance::Must,
 };
@@ -871,7 +871,7 @@ async fn overlapping_subscriptions_max_qos(addr: &str, recv_timeout: Duration, p
 // ── Subscription Identifier with overlapping subscriptions ─────────────────
 
 const SUB_ID_OVERLAP: TestContext = TestContext {
-    id: "MQTT-3.3.4-3",
+    refs: &["MQTT-3.3.4-3"],
     description: "Overlapping subscriptions with Subscription IDs MUST include all IDs",
     compliance: Compliance::Must,
 };
@@ -938,7 +938,7 @@ async fn subscription_id_overlapping(addr: &str, recv_timeout: Duration, pb: &Pr
 // ── Topic edge cases ────────────────────────────────────────────────────────
 
 const MULTI_LEVEL_TOPIC: TestContext = TestContext {
-    id: "MQTT-4.7.1-6",
+    refs: &["MQTT-4.7.1-6"],
     description: "Multi-level topic filter MUST match deep topic hierarchies",
     compliance: Compliance::Must,
 };
@@ -969,7 +969,7 @@ async fn multi_level_topic(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 }
 
 const WILDCARD_MIDDLE: TestContext = TestContext {
-    id: "MQTT-4.7.1-7",
+    refs: &["MQTT-4.7.1-7"],
     description: "'+' wildcard in middle position MUST match exactly one level",
     compliance: Compliance::Must,
 };
@@ -1012,7 +1012,7 @@ async fn wildcard_middle_level(addr: &str, recv_timeout: Duration, pb: &Progress
 }
 
 const MULTI_FILTERS: TestContext = TestContext {
-    id: "MQTT-3.8.4-5",
+    refs: &["MQTT-3.8.4-5"],
     description: "Multiple topic filters in single SUBSCRIBE MUST each get a reason code",
     compliance: Compliance::Must,
 };
@@ -1054,7 +1054,7 @@ async fn multiple_filters_single_subscribe(addr: &str, recv_timeout: Duration, p
 }
 
 const SUB_UPGRADE_QOS: TestContext = TestContext {
-    id: "MQTT-3.8.4-3",
+    refs: &["MQTT-3.8.4-3"],
     description: "Re-subscribing at higher QoS MUST upgrade the subscription",
     compliance: Compliance::Must,
 };
@@ -1100,7 +1100,7 @@ async fn subscription_upgrade_qos(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const EMPTY_TOPIC_LEVEL: TestContext = TestContext {
-    id: "MQTT-4.7.3-1",
+    refs: &["MQTT-4.7.3-1"],
     description: "Empty topic level (e.g. a//b) is valid and MUST match exactly",
     compliance: Compliance::Must,
 };
@@ -1132,7 +1132,7 @@ async fn empty_topic_level(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 }
 
 const CASE_SENSITIVE: TestContext = TestContext {
-    id: "MQTT-4.7.3-3",
+    refs: &["MQTT-4.7.3-3"],
     description: "Server MUST NOT normalize topic names — matching is case-sensitive",
     compliance: Compliance::Must,
 };
@@ -1182,7 +1182,7 @@ async fn case_sensitive_topic(addr: &str, recv_timeout: Duration, pb: &ProgressB
 }
 
 const EXACT_CHAR: TestContext = TestContext {
-    id: "MQTT-4.7.3-4",
+    refs: &["MQTT-4.7.3-4"],
     description: "Non-wildcard topic levels MUST match character-for-character",
     compliance: Compliance::Must,
 };
@@ -1232,7 +1232,7 @@ async fn exact_char_match(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
 }
 
 const LEVEL_SEPARATOR_DISTINCT: TestContext = TestContext {
-    id: "MQTT-4.7.0-1",
+    refs: &["MQTT-4.7.0-1"],
     description: "Topic level separator creates distinct levels — empty level is a separate level",
     compliance: Compliance::Must,
 };
@@ -1301,7 +1301,7 @@ async fn topic_level_separator_distinct(addr: &str, recv_timeout: Duration, pb: 
 // ── Unsubscribe completeness ────────────────────────────────────────────────
 
 const UNSUB_STOPS_NEW: TestContext = TestContext {
-    id: "MQTT-3.10.4-1",
+    refs: &["MQTT-3.10.4-1"],
     description: "After UNSUBSCRIBE, server MUST stop adding new messages for that topic",
     compliance: Compliance::Must,
 };
@@ -1362,7 +1362,7 @@ async fn unsubscribe_stops_new_messages(addr: &str, recv_timeout: Duration, pb: 
 }
 
 const UNSUB_BUFFERED: TestContext = TestContext {
-    id: "MQTT-3.10.4-3",
+    refs: &["MQTT-3.10.4-3"],
     description: "Server MAY continue delivering already-buffered messages after UNSUBSCRIBE",
     compliance: Compliance::May,
 };
@@ -1455,7 +1455,7 @@ async fn unsubscribe_buffered_messages(addr: &str, recv_timeout: Duration, pb: &
 }
 
 const RETAIN_HANDLING_0: TestContext = TestContext {
-    id: "MQTT-3.8.4-4",
+    refs: &["MQTT-3.8.4-4"],
     description: "retain_handling=0: existing retained messages MUST be re-sent on subscribe",
     compliance: Compliance::Must,
 };
@@ -1542,7 +1542,7 @@ async fn retain_handling_0_sends_retained(addr: &str, recv_timeout: Duration, pb
 }
 
 const QOS_DOWNGRADE_1_TO_0: TestContext = TestContext {
-    id: "MQTT-3.8.4-8",
+    refs: &["MQTT-3.8.4-8"],
     description: "Delivered QoS MUST be min(published QoS, granted QoS): QoS 1 → QoS 0",
     compliance: Compliance::Must,
 };
@@ -1588,7 +1588,7 @@ async fn qos_downgrade_qos1_to_qos0(addr: &str, recv_timeout: Duration, pb: &Pro
 }
 
 const UNSUB_INFLIGHT_QOS1: TestContext = TestContext {
-    id: "MQTT-3.10.4-2",
+    refs: &["MQTT-3.10.4-2"],
     description: "Server MUST complete in-flight QoS 1 delivery after UNSUBSCRIBE",
     compliance: Compliance::Must,
 };

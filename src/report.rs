@@ -54,11 +54,11 @@ impl Report {
         let mut all_results: Vec<&TestResult> = self.suites.iter()
             .flat_map(|s| &s.results)
             .collect();
-        all_results.sort_by(|a, b| parse_requirement_key(a.ctx.id).cmp(&parse_requirement_key(b.ctx.id)));
+        all_results.sort_by(|a, b| parse_requirement_key(a.ctx.primary_ref()).cmp(&parse_requirement_key(b.ctx.primary_ref())));
 
         let mut last_section = String::new();
         for r in &all_results {
-            let section = requirement_section(r.ctx.id);
+            let section = requirement_section(r.ctx.primary_ref());
             if section != last_section {
                 println!("\nMQTT {section}");
                 println!("{}", "-".repeat(6 + section.len()));
@@ -132,7 +132,8 @@ fn format_result(r: &TestResult, verbose: bool) -> String {
         }
         Outcome::Skip(msg) => ("SKIP", format!(" — {msg}")),
     };
-    format!("[{status}] {level} [{:<14}] {}{detail}", r.ctx.id, r.ctx.description)
+    let refs_str = r.ctx.refs.join(", ");
+    format!("[{status}] {level} [{refs_str:<14}] {}{detail}", r.ctx.description)
 }
 
 /// Parse "MQTT-3.1.2-4" into a sortable tuple of numeric parts.
@@ -165,13 +166,13 @@ pub async fn run_test(
     pb: &ProgressBar,
     fut: impl std::future::Future<Output = anyhow::Result<TestResult>>,
 ) -> TestResult {
-    tracing::debug!(id = ctx.id, ctx.description, "running test");
-    pb.set_message(ctx.id);
+    tracing::debug!(id = ctx.primary_ref(), ctx.description, "running test");
+    pb.set_message(ctx.primary_ref());
     let result = match fut.await {
         Ok(r)  => r,
         Err(e) => TestResult::fail(&ctx, format!("test error: {e:#}")),
     };
-    tracing::debug!(id = ctx.id, outcome = ?result.outcome, "test complete");
+    tracing::debug!(id = ctx.primary_ref(), outcome = ?result.outcome, "test complete");
 
     let is_may = ctx.compliance == Compliance::May;
     let symbol = match (&result.outcome, is_may) {
@@ -239,7 +240,7 @@ mod tests {
 
     #[test]
     fn format_result_must_pass() {
-        let ctx = TestContext { id: "MQTT-3.1.2-4", description: "Test desc", compliance: Compliance::Must };
+        let ctx = TestContext { refs: &["MQTT-3.1.2-4"], description: "Test desc", compliance: Compliance::Must };
         let r = TestResult::pass(&ctx);
         let s = format_result(&r, false);
         assert!(s.contains("PASS"));
@@ -250,7 +251,7 @@ mod tests {
 
     #[test]
     fn format_result_must_fail() {
-        let ctx = TestContext { id: "MQTT-3.1.2-4", description: "Test desc", compliance: Compliance::Must };
+        let ctx = TestContext { refs: &["MQTT-3.1.2-4"], description: "Test desc", compliance: Compliance::Must };
         let r = TestResult::fail(&ctx, "bad thing");
         let s = format_result(&r, false);
         assert!(s.contains("FAIL"));
@@ -259,7 +260,7 @@ mod tests {
 
     #[test]
     fn format_result_may_pass_shows_yes() {
-        let ctx = TestContext { id: "MQTT-3.1.3-8", description: "Optional feature", compliance: Compliance::May };
+        let ctx = TestContext { refs: &["MQTT-3.1.3-8"], description: "Optional feature", compliance: Compliance::May };
         let r = TestResult::pass(&ctx);
         let s = format_result(&r, false);
         assert!(s.contains("YES"));
@@ -268,7 +269,7 @@ mod tests {
 
     #[test]
     fn format_result_may_fail_shows_no() {
-        let ctx = TestContext { id: "MQTT-3.1.3-8", description: "Optional feature", compliance: Compliance::May };
+        let ctx = TestContext { refs: &["MQTT-3.1.3-8"], description: "Optional feature", compliance: Compliance::May };
         let r = TestResult::fail(&ctx, "not supported");
         let s = format_result(&r, false);
         assert!(s.contains("NO"));
@@ -276,7 +277,7 @@ mod tests {
 
     #[test]
     fn format_result_skip() {
-        let ctx = TestContext { id: "MQTT-3.1.3-8", description: "Test", compliance: Compliance::Must };
+        let ctx = TestContext { refs: &["MQTT-3.1.3-8"], description: "Test", compliance: Compliance::Must };
         let r = TestResult::skip(&ctx, "prereq not met");
         let s = format_result(&r, false);
         assert!(s.contains("SKIP"));
@@ -285,7 +286,7 @@ mod tests {
 
     #[test]
     fn format_result_verbose_uses_verbose_detail() {
-        let ctx = TestContext { id: "MQTT-3.1.2-4", description: "Test", compliance: Compliance::Must };
+        let ctx = TestContext { refs: &["MQTT-3.1.2-4"], description: "Test", compliance: Compliance::Must };
         let r = TestResult::fail_verbose(&ctx, "short", "long detailed message");
         let short = format_result(&r, false);
         let long = format_result(&r, true);

@@ -61,7 +61,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const QOS0: TestContext = TestContext {
-    id: "MQTT-3.3.1-1",
+    refs: &["MQTT-3.3.1-1"],
     description: "QoS 0 PUBLISH MUST be delivered without acknowledgement",
     compliance: Compliance::Must,
 };
@@ -88,7 +88,7 @@ async fn qos0_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 }
 
 const QOS1: TestContext = TestContext {
-    id: "MQTT-4.3.2-1",
+    refs: &["MQTT-4.3.2-1"],
     description: "QoS 1 PUBLISH MUST be acknowledged with PUBACK",
     compliance: Compliance::Must,
 };
@@ -121,7 +121,7 @@ async fn qos1_gets_puback(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
 }
 
 const QOS1_DELIVERY: TestContext = TestContext {
-    id: "MQTT-4.3.2-2",
+    refs: &["MQTT-4.3.2-2"],
     description: "QoS 1 PUBLISH SHOULD be delivered at QoS 1 to matching QoS 1 subscriber",
     compliance: Compliance::Should,
 };
@@ -178,7 +178,7 @@ async fn qos1_delivery(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 }
 
 const QOS2: TestContext = TestContext {
-    id: "MQTT-4.3.3-1",
+    refs: &["MQTT-4.3.3-1"],
     description: "QoS 2 PUBLISH MUST complete PUBREC / PUBREL / PUBCOMP flow",
     compliance: Compliance::Must,
 };
@@ -220,7 +220,7 @@ async fn qos2_full_flow(addr: &str, recv_timeout: Duration, pb: &ProgressBar) ->
 }
 
 const INVALID_QOS3: TestContext = TestContext {
-    id: "MQTT-3.3.1-4",
+    refs: &["MQTT-3.3.1-4"],
     description: "Server MUST treat QoS value of 3 as a malformed packet",
     compliance: Compliance::Must,
 };
@@ -254,7 +254,7 @@ async fn invalid_qos3(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> T
 }
 
 const DUP_QOS0: TestContext = TestContext {
-    id: "MQTT-3.3.1-2",
+    refs: &["MQTT-3.3.1-2"],
     description: "DUP flag MUST be 0 for QoS 0 messages",
     compliance: Compliance::Must,
 };
@@ -294,7 +294,7 @@ async fn dup_on_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Te
 }
 
 const QOS_DOWNGRADE: TestContext = TestContext {
-    id: "MQTT-4.3.1-1",
+    refs: &["MQTT-4.3.1-1", "MQTT-3.8.4-7"],
     description: "Delivered QoS MUST NOT exceed the subscription's maximum QoS",
     compliance: Compliance::Must,
 };
@@ -357,7 +357,7 @@ async fn qos_downgrade_on_delivery(addr: &str, recv_timeout: Duration, pb: &Prog
 // ── MAY ──────────────────────────────────────────────────────────────────────
 
 const RETAIN: TestContext = TestContext {
-    id: "MQTT-3.3.1-5",
+    refs: &["MQTT-3.3.1-5"],
     description: "Retain flag: broker stores and delivers retained message to new subscribers",
     compliance: Compliance::May,
 };
@@ -393,7 +393,7 @@ async fn retain_flag_accepted(addr: &str, recv_timeout: Duration, pb: &ProgressB
 }
 
 const TOPIC_ALIAS: TestContext = TestContext {
-    id: "MQTT-3.3.2-11",
+    refs: &["MQTT-3.3.2-11"],
     description: "Topic Alias in PUBLISH is accepted",
     compliance: Compliance::May,
 };
@@ -493,7 +493,7 @@ async fn property_forwarding_test(
 }
 
 const PFI: TestContext = TestContext {
-    id: "MQTT-3.3.2-7",
+    refs: &["MQTT-3.3.2-7"],
     description: "Payload Format Indicator SHOULD be forwarded unchanged",
     compliance: Compliance::Should,
 };
@@ -506,7 +506,7 @@ async fn payload_format_indicator_preserved(addr: &str, recv_timeout: Duration, 
 }
 
 const MEI: TestContext = TestContext {
-    id: "MQTT-3.3.2-8",
+    refs: &["MQTT-3.3.2-8"],
     description: "Message Expiry Interval MUST be present in forwarded PUBLISH",
     compliance: Compliance::Must,
 };
@@ -519,7 +519,7 @@ async fn message_expiry_interval_present(addr: &str, recv_timeout: Duration, pb:
 }
 
 const CONTENT_TYPE: TestContext = TestContext {
-    id: "MQTT-3.3.2-12",
+    refs: &["MQTT-3.3.2-12"],
     description: "Content Type SHOULD be forwarded unchanged",
     compliance: Compliance::Should,
 };
@@ -532,7 +532,7 @@ async fn content_type_preserved(addr: &str, recv_timeout: Duration, pb: &Progres
 }
 
 const RESPONSE_TOPIC: TestContext = TestContext {
-    id: "MQTT-3.3.2-13",
+    refs: &["MQTT-3.3.2-13"],
     description: "Response Topic SHOULD be forwarded unchanged",
     compliance: Compliance::Should,
 };
@@ -545,7 +545,7 @@ async fn response_topic_preserved(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const CORRELATION_DATA: TestContext = TestContext {
-    id: "MQTT-3.3.2-14",
+    refs: &["MQTT-3.3.2-14"],
     description: "Correlation Data SHOULD be forwarded unchanged",
     compliance: Compliance::Should,
 };
@@ -558,7 +558,7 @@ async fn correlation_data_preserved(addr: &str, recv_timeout: Duration, pb: &Pro
 }
 
 const USER_PROPS: TestContext = TestContext {
-    id: "MQTT-3.3.2-18",
+    refs: &["MQTT-3.3.2-18"],
     description: "User Properties SHOULD be forwarded unchanged",
     compliance: Compliance::Should,
 };
@@ -572,7 +572,7 @@ async fn user_properties_preserved(addr: &str, recv_timeout: Duration, pb: &Prog
 }
 
 const MSG_ORDERING: TestContext = TestContext {
-    id: "MQTT-4.6.0-1",
+    refs: &["MQTT-4.6.0-1"],
     description: "Message ordering MUST be maintained for same-topic QoS 1 messages",
     compliance: Compliance::Must,
 };
@@ -641,7 +641,7 @@ async fn message_ordering(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
 // ── SHOULD ──────────────────────────────────────────────────────────────────
 
 const RETAIN_DELIVERY_FLAG: TestContext = TestContext {
-    id: "MQTT-3.3.1-6",
+    refs: &["MQTT-3.3.1-6"],
     description: "Server SHOULD deliver retained messages with Retain=1 to new subscribers",
     compliance: Compliance::Should,
 };
@@ -700,7 +700,7 @@ async fn retained_delivered_with_retain_flag(addr: &str, recv_timeout: Duration,
 // ── Retained message lifecycle ──────────────────────────────────────────────
 
 const RETAIN_DELETE: TestContext = TestContext {
-    id: "MQTT-3.3.1-7",
+    refs: &["MQTT-3.3.1-7"],
     description: "Retained message MUST be deleted when empty payload with RETAIN is published",
     compliance: Compliance::Must,
 };
@@ -744,7 +744,7 @@ async fn retained_deletion(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 }
 
 const RETAIN_REPLACE: TestContext = TestContext {
-    id: "MQTT-3.3.1-5b",
+    refs: &["MQTT-3.3.1-5b"],
     description: "New retained message MUST replace existing retained message for same topic",
     compliance: Compliance::Must,
 };
@@ -796,7 +796,7 @@ async fn retained_replacement(addr: &str, recv_timeout: Duration, pb: &ProgressB
 // ── PUBACK reason codes ─────────────────────────────────────────────────────
 
 const PUBACK_NO_SUB: TestContext = TestContext {
-    id: "MQTT-3.4.2-1",
+    refs: &["MQTT-3.4.2-1"],
     description: "Server MAY return PUBACK reason 0x10 when no subscribers match",
     compliance: Compliance::May,
 };
@@ -836,7 +836,7 @@ async fn puback_no_matching_subscribers(addr: &str, recv_timeout: Duration, pb: 
 // ── Message Expiry Interval countdown ───────────────────────────────────────
 
 const MEI_COUNTDOWN: TestContext = TestContext {
-    id: "MQTT-3.3.2-6",
+    refs: &["MQTT-3.3.2-6"],
     description: "Message Expiry Interval MUST be decremented by time spent in server",
     compliance: Compliance::Must,
 };
@@ -908,7 +908,7 @@ async fn message_expiry_countdown(addr: &str, recv_timeout: Duration, pb: &Progr
 // ── Maximum Packet Size enforcement ─────────────────────────────────────────
 
 const MAX_PKT_SIZE: TestContext = TestContext {
-    id: "MQTT-3.1.2-24",
+    refs: &["MQTT-3.1.2-24"],
     description: "Server MUST NOT send packets exceeding client's Maximum Packet Size",
     compliance: Compliance::Must,
 };
@@ -955,7 +955,7 @@ async fn max_packet_size_enforcement(addr: &str, recv_timeout: Duration, pb: &Pr
 // ── Topic Alias lifecycle ───────────────────────────────────────────────────
 
 const TOPIC_ALIAS_REUSE: TestContext = TestContext {
-    id: "MQTT-3.3.2-10",
+    refs: &["MQTT-3.3.2-10"],
     description: "Topic Alias MUST allow subsequent PUBLISH with empty topic using the alias",
     compliance: Compliance::Must,
 };
@@ -1020,7 +1020,7 @@ async fn topic_alias_reuse(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 }
 
 const TOPIC_ALIAS_RESET: TestContext = TestContext {
-    id: "MQTT-3.3.2-7",
+    refs: &["MQTT-3.3.2-7"],
     description: "Topic Alias mappings MUST NOT persist across network connections",
     compliance: Compliance::Must,
 };
@@ -1083,7 +1083,7 @@ async fn topic_alias_reset_on_reconnect(addr: &str, recv_timeout: Duration, pb: 
 // ── Receive Maximum flow control ────────────────────────────────────────────
 
 const RECV_MAX_FLOW: TestContext = TestContext {
-    id: "MQTT-3.3.4-7",
+    refs: &["MQTT-3.3.4-7"],
     description: "Server MUST NOT send more than Receive Maximum unacknowledged QoS>0 messages",
     compliance: Compliance::Must,
 };
@@ -1167,7 +1167,7 @@ async fn receive_maximum_flow_control(addr: &str, recv_timeout: Duration, pb: &P
 // ── QoS 2 duplicate handling ────────────────────────────────────────────────
 
 const QOS2_DUP: TestContext = TestContext {
-    id: "MQTT-4.3.3-2",
+    refs: &["MQTT-4.3.3-2"],
     description: "Server MUST respond with PUBREC to duplicate QoS 2 PUBLISH (DUP=1)",
     compliance: Compliance::Must,
 };
@@ -1231,7 +1231,7 @@ async fn qos2_duplicate_publish(addr: &str, recv_timeout: Duration, pb: &Progres
 // ── Packet ID reuse ─────────────────────────────────────────────────────────
 
 const PID_REUSE_QOS1: TestContext = TestContext {
-    id: "MQTT-2.2.1-3",
+    refs: &["MQTT-2.2.1-3"],
     description: "Packet ID MUST be available for reuse after PUBACK completes (QoS 1)",
     compliance: Compliance::Must,
 };
@@ -1285,7 +1285,7 @@ async fn packet_id_reuse_after_puback(addr: &str, recv_timeout: Duration, pb: &P
 }
 
 const PID_REUSE_QOS2: TestContext = TestContext {
-    id: "MQTT-2.2.1-4",
+    refs: &["MQTT-2.2.1-4"],
     description: "Packet ID MUST be available for reuse after PUBCOMP completes (QoS 2)",
     compliance: Compliance::Must,
 };
@@ -1341,7 +1341,7 @@ async fn packet_id_reuse_after_pubcomp(addr: &str, recv_timeout: Duration, pb: &
 }
 
 const QOS2_DUP_PUBREL: TestContext = TestContext {
-    id: "MQTT-4.3.3-3",
+    refs: &["MQTT-4.3.3-3", "MQTT-4.3.3-10"],
     description: "Server MUST respond with PUBCOMP to duplicate PUBREL",
     compliance: Compliance::Must,
 };
@@ -1390,7 +1390,7 @@ async fn qos2_duplicate_pubrel(addr: &str, recv_timeout: Duration, pb: &Progress
 }
 
 const PAYLOAD_FORMAT_UTF8: TestContext = TestContext {
-    id: "MQTT-3.3.2-3",
+    refs: &["MQTT-3.3.2-3"],
     description: "Server MAY validate UTF-8 payload when Payload Format Indicator is 1",
     compliance: Compliance::May,
 };
@@ -1445,7 +1445,7 @@ async fn payload_format_utf8_validated(addr: &str, recv_timeout: Duration, pb: &
 // ── User Properties ordering ─────────────────────────────────────────────
 
 const USER_PROPS_ORDER: TestContext = TestContext {
-    id: "MQTT-3.3.2-17",
+    refs: &["MQTT-3.3.2-17"],
     description: "User Properties order MUST be maintained when forwarding",
     compliance: Compliance::Must,
 };
@@ -1513,7 +1513,7 @@ async fn user_properties_order(addr: &str, recv_timeout: Duration, pb: &Progress
 // ── QoS 0 retained storage ──────────────────────────────────────────────
 
 const RETAINED_QOS0: TestContext = TestContext {
-    id: "MQTT-3.3.1-11",
+    refs: &["MQTT-3.3.1-11"],
     description: "Server SHOULD store QoS 0 retained message",
     compliance: Compliance::Should,
 };
@@ -1584,7 +1584,7 @@ async fn retained_qos0_stored(addr: &str, recv_timeout: Duration, pb: &ProgressB
 // ── QoS 2 no duplicate delivery ─────────────────────────────────────────
 
 const QOS2_NO_DUP_DELIVERY: TestContext = TestContext {
-    id: "MQTT-4.3.3-10",
+    refs: &["MQTT-4.3.3-10"],
     description: "Duplicate QoS 2 PUBLISH before PUBREL MUST NOT cause duplicate delivery",
     compliance: Compliance::Must,
 };
@@ -1672,7 +1672,7 @@ async fn qos2_no_duplicate_delivery(addr: &str, recv_timeout: Duration, pb: &Pro
 // ── QoS 2 continues after message expiry ─────────────────────────────────
 
 const QOS2_EXPIRY_CONTINUES: TestContext = TestContext {
-    id: "MQTT-4.3.3-13",
+    refs: &["MQTT-4.3.3-13"],
     description: "Server MUST continue QoS 2 ack sequence even after message expiry",
     compliance: Compliance::Must,
 };
@@ -1734,7 +1734,7 @@ async fn qos2_continues_after_message_expiry(addr: &str, recv_timeout: Duration,
 // ── QoS 1 initial delivery DUP=0 ─────────────────────────────────────────
 
 const QOS1_DUP_ZERO: TestContext = TestContext {
-    id: "MQTT-4.3.2-2b",
+    refs: &["MQTT-4.3.2-2b"],
     description: "Server MUST forward QoS 1 PUBLISH with DUP=0 on initial delivery",
     compliance: Compliance::Must,
 };
@@ -1778,7 +1778,7 @@ async fn qos1_initial_delivery_dup_zero(addr: &str, recv_timeout: Duration, pb: 
 // ── Control packets when quota is zero ────────────────────────────────────
 
 const QUOTA_ZERO_CONTROL: TestContext = TestContext {
-    id: "MQTT-4.9.0-3",
+    refs: &["MQTT-4.9.0-3"],
     description: "Server MUST process control packets even when send quota is zero",
     compliance: Compliance::Must,
 };
@@ -1846,7 +1846,7 @@ async fn control_packets_when_quota_zero(addr: &str, recv_timeout: Duration, pb:
 // ── Retain=0 must not replace existing retained ──────────────────────────
 
 const RETAIN_ZERO_PRESERVES: TestContext = TestContext {
-    id: "MQTT-3.3.1-8",
+    refs: &["MQTT-3.3.1-8"],
     description: "PUBLISH with Retain=0 MUST NOT store or replace existing retained messages",
     compliance: Compliance::Must,
 };
@@ -1925,7 +1925,7 @@ async fn retain_zero_preserves_existing(addr: &str, recv_timeout: Duration, pb: 
 }
 
 const ORDERED_TOPIC_QOS0: TestContext = TestContext {
-    id: "MQTT-4.6.0-5",
+    refs: &["MQTT-4.6.0-5"],
     description: "Server MUST deliver QoS 0 messages in order for an Ordered Topic",
     compliance: Compliance::Must,
 };
@@ -2003,7 +2003,7 @@ async fn ordered_topic_qos0(addr: &str, recv_timeout: Duration, pb: &ProgressBar
 }
 
 const CONTENT_TYPE_FORWARDED: TestContext = TestContext {
-    id: "MQTT-3.3.2-19",
+    refs: &["MQTT-3.3.2-19"],
     description: "Content Type MUST be forwarded unaltered by the server",
     compliance: Compliance::Must,
 };

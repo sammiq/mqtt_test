@@ -39,7 +39,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const SESSION_PRESENT: TestContext = TestContext {
-    id: "MQTT-3.1.2-5",
+    refs: &["MQTT-3.1.2-5"],
     description: "Clean Start=0 with prior session: session_present MUST be 1",
     compliance: Compliance::Must,
 };
@@ -82,7 +82,7 @@ async fn session_present_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
 }
 
 const QOS1_REDELIVER: TestContext = TestContext {
-    id: "MQTT-4.4.0-1",
+    refs: &["MQTT-4.4.0-1", "MQTT-4.5.0-1"],
     description: "Unacknowledged QoS 1 messages MUST be redelivered on session resume",
     compliance: Compliance::Must,
 };
@@ -160,7 +160,7 @@ async fn qos1_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
 }
 
 const QOS2_REDELIVER: TestContext = TestContext {
-    id: "MQTT-4.4.0-2",
+    refs: &["MQTT-4.4.0-2"],
     description: "Incomplete QoS 2 flows MUST be resumed on session reconnect",
     compliance: Compliance::Must,
 };
@@ -253,7 +253,7 @@ async fn qos2_redelivery_on_resume(addr: &str, recv_timeout: Duration, pb: &Prog
 }
 
 const SUB_PERSISTS: TestContext = TestContext {
-    id: "MQTT-3.1.2-6",
+    refs: &["MQTT-3.1.2-6"],
     description: "Subscriptions MUST persist across session reconnects",
     compliance: Compliance::Must,
 };
@@ -324,7 +324,7 @@ async fn subscription_persists_across_sessions(addr: &str, recv_timeout: Duratio
 }
 
 const SESSION_EXPIRY_ZERO: TestContext = TestContext {
-    id: "MQTT-3.1.2-10",
+    refs: &["MQTT-3.1.2-10"],
     description: "Session Expiry Interval of 0 means session ends on disconnect",
     compliance: Compliance::Must,
 };
@@ -363,7 +363,7 @@ async fn session_expiry_zero(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 }
 
 const SESSION_EXPIRY_MAX: TestContext = TestContext {
-    id: "MQTT-3.1.2-11a",
+    refs: &["MQTT-3.1.2-11a"],
     description: "Session Expiry Interval of 0xFFFFFFFF means session never expires",
     compliance: Compliance::Must,
 };
@@ -403,7 +403,7 @@ async fn session_expiry_max(addr: &str, recv_timeout: Duration, pb: &ProgressBar
 }
 
 const SESSION_TAKEOVER: TestContext = TestContext {
-    id: "MQTT-3.1.4-3",
+    refs: &["MQTT-3.1.4-3"],
     description: "Server MUST disconnect existing client when new client uses same Client ID",
     compliance: Compliance::Must,
 };
@@ -441,7 +441,7 @@ async fn session_takeover(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
 }
 
 const SESSION_EXPIRY_DISCARD: TestContext = TestContext {
-    id: "MQTT-4.1.0-1",
+    refs: &["MQTT-4.1.0-1"],
     description: "Server MUST discard session state when Session Expiry Interval has passed",
     compliance: Compliance::Must,
 };
@@ -505,7 +505,7 @@ async fn session_expiry_discard(addr: &str, recv_timeout: Duration, pb: &Progres
 }
 
 const SESSION_PRESENT_PERSISTENCE: TestContext = TestContext {
-    id: "MQTT-3.2.2-2",
+    refs: &["MQTT-3.2.2-2"],
     description: "Session Present=1 when Clean Start=0 and session exists, verifying subscription persistence",
     compliance: Compliance::Must,
 };

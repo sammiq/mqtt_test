@@ -65,7 +65,7 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const BASIC_CONNECT: TestContext = TestContext {
-    id: "MQTT-3.2.0-1",
+    refs: &["MQTT-3.2.0-1", "MQTT-3.1.4-4"],
     description: "Server MUST send CONNACK in response to CONNECT",
     compliance: Compliance::Must,
 };
@@ -90,7 +90,7 @@ async fn basic_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 }
 
 const CLEAN_START_TRUE: TestContext = TestContext {
-    id: "MQTT-3.1.2-4",
+    refs: &["MQTT-3.1.2-4", "MQTT-3.2.2-2"],
     description: "Clean Start=1: server MUST start a new session (session_present=0)",
     compliance: Compliance::Must,
 };
@@ -112,7 +112,7 @@ async fn clean_start_true(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
 }
 
 const CLEAN_START_FALSE: TestContext = TestContext {
-    id: "MQTT-3.2.2-4",
+    refs: &["MQTT-3.2.2-4"],
     description: "Clean Start=0 with no prior session: session_present MUST be 0",
     compliance: Compliance::Must,
 };
@@ -141,7 +141,7 @@ async fn clean_start_false_no_session(addr: &str, recv_timeout: Duration, pb: &P
 }
 
 const ZERO_LEN_CLIENT_ID: TestContext = TestContext {
-    id: "MQTT-3.1.3-7",
+    refs: &["MQTT-3.1.3-7"],
     description: "Zero-length client ID with Clean Start=1 MUST be accepted",
     compliance: Compliance::Must,
 };
@@ -165,7 +165,7 @@ async fn zero_length_client_id(addr: &str, recv_timeout: Duration, pb: &Progress
 }
 
 const ZERO_LEN_NO_CLEAN: TestContext = TestContext {
-    id: "MQTT-3.1.3-8",
+    refs: &["MQTT-3.1.3-8"],
     description: "Zero-length client ID with Clean Start=0 MAY be rejected with 0x85",
     compliance: Compliance::May,
 };
@@ -208,7 +208,7 @@ async fn zero_length_client_id_no_clean_start(addr: &str, recv_timeout: Duration
 }
 
 const ASSIGNED_CLIENT_ID: TestContext = TestContext {
-    id: "MQTT-3.2.2-16",
+    refs: &["MQTT-3.2.2-16"],
     description: "Server SHOULD return Assigned Client Identifier when accepting empty client ID",
     compliance: Compliance::Should,
 };
@@ -241,7 +241,7 @@ async fn assigned_client_id(addr: &str, recv_timeout: Duration, pb: &ProgressBar
 }
 
 const FIRST_CONNECT: TestContext = TestContext {
-    id: "MQTT-3.1.0-1",
+    refs: &["MQTT-3.1.0-1"],
     description: "Server MUST close connection if first packet is not CONNECT",
     compliance: Compliance::Must,
 };
@@ -270,7 +270,7 @@ async fn first_packet_must_be_connect(addr: &str, recv_timeout: Duration, pb: &P
 // ── MAY ──────────────────────────────────────────────────────────────────────
 
 const SESSION_EXPIRY: TestContext = TestContext {
-    id: "MQTT-3.1.2-11",
+    refs: &["MQTT-3.1.2-11"],
     description: "Session Expiry Interval property is accepted",
     compliance: Compliance::May,
 };
@@ -294,7 +294,7 @@ async fn session_expiry_interval_accepted(addr: &str, recv_timeout: Duration, pb
 }
 
 const RECEIVE_MAX: TestContext = TestContext {
-    id: "MQTT-3.2.2-14",
+    refs: &["MQTT-3.2.2-14"],
     description: "Receive Maximum property in CONNECT is accepted",
     compliance: Compliance::May,
 };
@@ -318,7 +318,7 @@ async fn receive_maximum_accepted(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const MAX_PACKET_SIZE: TestContext = TestContext {
-    id: "MQTT-3.2.2-17",
+    refs: &["MQTT-3.2.2-17"],
     description: "Maximum Packet Size property in CONNECT is accepted",
     compliance: Compliance::May,
 };
@@ -342,7 +342,7 @@ async fn maximum_packet_size_accepted(addr: &str, recv_timeout: Duration, pb: &P
 }
 
 const SERVER_KEEP_ALIVE: TestContext = TestContext {
-    id: "MQTT-3.2.2-21",
+    refs: &["MQTT-3.2.2-21"],
     description: "Server Keep Alive: server MAY override client's keep-alive value",
     compliance: Compliance::May,
 };
@@ -368,7 +368,7 @@ async fn server_keep_alive(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 }
 
 const TOPIC_ALIAS_MAX: TestContext = TestContext {
-    id: "MQTT-3.2.2-9",
+    refs: &["MQTT-3.2.2-9"],
     description: "Topic Alias Maximum: server reports maximum supported topic aliases",
     compliance: Compliance::May,
 };
@@ -400,7 +400,7 @@ async fn topic_alias_maximum(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 }
 
 const WILDCARD_SUB_AVAIL: TestContext = TestContext {
-    id: "MQTT-3.2.2-12",
+    refs: &["MQTT-3.2.2-12"],
     description: "Wildcard Subscription Available: server reports wildcard subscription support",
     compliance: Compliance::May,
 };
@@ -432,7 +432,7 @@ async fn wildcard_subscription_available(addr: &str, recv_timeout: Duration, pb:
 // ── Protocol violations ─────────────────────────────────────────────────────
 
 const DUP_CONNECT: TestContext = TestContext {
-    id: "MQTT-3.1.0-2",
+    refs: &["MQTT-3.1.0-2"],
     description: "Server MUST disconnect a client that sends a second CONNECT",
     compliance: Compliance::Must,
 };
@@ -460,7 +460,7 @@ async fn duplicate_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 }
 
 const INVALID_PROTO_NAME: TestContext = TestContext {
-    id: "MQTT-3.1.2-1",
+    refs: &["MQTT-3.1.2-1"],
     description: "Server MUST close connection if protocol name is not 'MQTT'",
     compliance: Compliance::Must,
 };
@@ -494,7 +494,7 @@ async fn invalid_protocol_name(addr: &str, recv_timeout: Duration, pb: &Progress
 }
 
 const INVALID_PROTO_VER: TestContext = TestContext {
-    id: "MQTT-3.1.2-2",
+    refs: &["MQTT-3.1.2-2"],
     description: "Server MAY respond with reason 0x84 for unsupported protocol version",
     compliance: Compliance::May,
 };
@@ -539,7 +539,7 @@ async fn invalid_protocol_version(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const SESSION_PRESENT_ZERO_ON_REJECT: TestContext = TestContext {
-    id: "MQTT-3.2.2-3",
+    refs: &["MQTT-3.2.2-3"],
     description: "Session Present MUST be 0 when CONNACK reason code is non-zero",
     compliance: Compliance::Must,
 };
@@ -599,7 +599,7 @@ async fn session_present_zero_on_reject(addr: &str, recv_timeout: Duration, pb: 
 }
 
 const KEEP_ALIVE: TestContext = TestContext {
-    id: "MQTT-3.1.2-22",
+    refs: &["MQTT-3.1.2-22"],
     description: "Server MUST disconnect client exceeding 1.5x keep-alive without activity",
     compliance: Compliance::Must,
 };
@@ -627,7 +627,7 @@ async fn keep_alive_timeout(addr: &str, _recv_timeout: Duration, pb: &ProgressBa
 // ── Will message tests ──────────────────────────────────────────────────────
 
 const WILL_ON_CLOSE: TestContext = TestContext {
-    id: "MQTT-3.1.2-8",
+    refs: &["MQTT-3.1.2-8"],
     description: "Will message MUST be published when connection closes unexpectedly",
     compliance: Compliance::Must,
 };
@@ -673,7 +673,7 @@ async fn will_message_on_unexpected_close(addr: &str, recv_timeout: Duration, pb
 }
 
 const WILL_REMOVED_ON_DISCONNECT: TestContext = TestContext {
-    id: "MQTT-3.1.2-10",
+    refs: &["MQTT-3.1.2-10"],
     description: "Will message MUST be removed on normal DISCONNECT",
     compliance: Compliance::Must,
 };
@@ -715,7 +715,7 @@ async fn will_message_removed_on_disconnect(addr: &str, recv_timeout: Duration, 
 }
 
 const WILL_RETAIN: TestContext = TestContext {
-    id: "MQTT-3.1.2-13",
+    refs: &["MQTT-3.1.2-13"],
     description: "Will Retain flag MUST be respected when will message is published",
     compliance: Compliance::Must,
 };
@@ -786,7 +786,7 @@ async fn will_retain_flag(addr: &str, recv_timeout: Duration, pb: &ProgressBar) 
 // ── CONNACK server property enforcement ─────────────────────────────────────
 
 const SERVER_MAX_QOS: TestContext = TestContext {
-    id: "MQTT-3.2.2-19",
+    refs: &["MQTT-3.2.2-19"],
     description: "Client MUST NOT send QoS exceeding server's Maximum QoS",
     compliance: Compliance::Must,
 };
@@ -868,7 +868,7 @@ async fn server_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBar
 }
 
 const SERVER_RECV_MAX: TestContext = TestContext {
-    id: "MQTT-3.2.2-14",
+    refs: &["MQTT-3.2.2-14"],
     description: "Server MUST NOT send more concurrent QoS>0 messages than Receive Maximum",
     compliance: Compliance::Must,
 };
@@ -930,7 +930,7 @@ async fn server_receive_maximum(addr: &str, recv_timeout: Duration, pb: &Progres
 // ── Will Delay Interval ─────────────────────────────────────────────────────
 
 const WILL_DELAY: TestContext = TestContext {
-    id: "MQTT-3.1.3-9",
+    refs: &["MQTT-3.1.3-9"],
     description: "Will Delay Interval: will message publication MAY be delayed",
     compliance: Compliance::May,
 };
@@ -998,7 +998,7 @@ async fn will_delay_interval(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 // ── Request/Response Information ────────────────────────────────────────────
 
 const REQ_RESP_INFO: TestContext = TestContext {
-    id: "MQTT-3.1.2-28",
+    refs: &["MQTT-3.1.2-28"],
     description: "Request Response Information: server MAY return Response Information",
     compliance: Compliance::May,
 };
@@ -1028,7 +1028,7 @@ async fn request_response_information(addr: &str, recv_timeout: Duration, pb: &P
 // ── Enhanced authentication ─────────────────────────────────────────────────
 
 const ENHANCED_AUTH: TestContext = TestContext {
-    id: "MQTT-3.15",
+    refs: &["MQTT-3.15"],
     description: "Enhanced authentication via AUTH packets is supported",
     compliance: Compliance::May,
 };
@@ -1088,7 +1088,7 @@ async fn enhanced_auth_method(addr: &str, recv_timeout: Duration, pb: &ProgressB
 // ── Reason String ───────────────────────────────────────────────────────────
 
 const REASON_STRING: TestContext = TestContext {
-    id: "MQTT-3.2.2-20",
+    refs: &["MQTT-3.2.2-20"],
     description: "Reason String: server MAY include a human-readable diagnostic in CONNACK",
     compliance: Compliance::May,
 };
@@ -1145,7 +1145,7 @@ async fn reason_string_in_connack(addr: &str, recv_timeout: Duration, pb: &Progr
 // ── SHOULD ──────────────────────────────────────────────────────────────────
 
 const ACCEPTABLE_CLIENT_ID: TestContext = TestContext {
-    id: "MQTT-3.1.3-5",
+    refs: &["MQTT-3.1.3-5"],
     description: "Server SHOULD accept client IDs of [0-9a-zA-Z] with 1-23 bytes",
     compliance: Compliance::Should,
 };
@@ -1176,7 +1176,7 @@ async fn acceptable_client_id_chars(addr: &str, recv_timeout: Duration, pb: &Pro
 }
 
 const FLOW_CONTROL: TestContext = TestContext {
-    id: "MQTT-4.9.0-1",
+    refs: &["MQTT-4.9.0-1"],
     description: "Server SHOULD use Receive Maximum to limit concurrent inflight messages",
     compliance: Compliance::Should,
 };
@@ -1244,7 +1244,7 @@ async fn flow_control_receive_maximum(addr: &str, recv_timeout: Duration, pb: &P
 // ── MAY (CONNACK properties) ────────────────────────────────────────────────
 
 const CONNACK_MAX_QOS: TestContext = TestContext {
-    id: "MQTT-3.2.2-7",
+    refs: &["MQTT-3.2.2-7"],
     description: "Maximum QoS property in CONNACK reports server's QoS capability",
     compliance: Compliance::May,
 };
@@ -1273,7 +1273,7 @@ async fn connack_maximum_qos(addr: &str, recv_timeout: Duration, pb: &ProgressBa
 }
 
 const CONNACK_RETAIN_AVAIL: TestContext = TestContext {
-    id: "MQTT-3.2.2-10",
+    refs: &["MQTT-3.2.2-10"],
     description: "Retain Available property in CONNACK reports retain support",
     compliance: Compliance::May,
 };
@@ -1297,7 +1297,7 @@ async fn connack_retain_available(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const CONNACK_SUB_IDS: TestContext = TestContext {
-    id: "MQTT-3.2.2-13",
+    refs: &["MQTT-3.2.2-13"],
     description: "Subscription Identifiers Available property in CONNACK",
     compliance: Compliance::May,
 };
@@ -1321,7 +1321,7 @@ async fn connack_subscription_ids_available(addr: &str, recv_timeout: Duration, 
 }
 
 const CONNACK_SHARED_SUB: TestContext = TestContext {
-    id: "MQTT-3.2.2-15",
+    refs: &["MQTT-3.2.2-15"],
     description: "Shared Subscription Available property in CONNACK",
     compliance: Compliance::May,
 };
@@ -1345,7 +1345,7 @@ async fn connack_shared_subscription_available(addr: &str, recv_timeout: Duratio
 }
 
 const CONNACK_SERVER_REF: TestContext = TestContext {
-    id: "MQTT-3.2.2-18",
+    refs: &["MQTT-3.2.2-18"],
     description: "Server Reference in rejected CONNACK for server redirection",
     compliance: Compliance::May,
 };
@@ -1400,7 +1400,7 @@ async fn connack_server_reference(addr: &str, recv_timeout: Duration, pb: &Progr
 }
 
 const SERVER_REDIRECT: TestContext = TestContext {
-    id: "MQTT-4.11.0-1",
+    refs: &["MQTT-4.11.0-1"],
     description: "Server redirection: CONNACK with reason 0x9C or 0x9D indicates redirect",
     compliance: Compliance::May,
 };
@@ -1443,7 +1443,7 @@ async fn server_redirection(addr: &str, recv_timeout: Duration, pb: &ProgressBar
 // ── Username / Password ─────────────────────────────────────────────────────
 
 const USERNAME_PASSWORD: TestContext = TestContext {
-    id: "MQTT-3.1.3-4",
+    refs: &["MQTT-3.1.3-4"],
     description: "Server MUST accept CONNECT with Username and Password flags set",
     compliance: Compliance::Must,
 };
@@ -1471,7 +1471,7 @@ async fn username_password_accepted(addr: &str, recv_timeout: Duration, pb: &Pro
 }
 
 const PASSWORD_NO_USERNAME: TestContext = TestContext {
-    id: "MQTT-3.1.2-19",
+    refs: &["MQTT-3.1.2-19"],
     description: "MQTT v5 allows Password without Username (v5 change from v3.1.1)",
     compliance: Compliance::May,
 };
@@ -1498,7 +1498,7 @@ async fn password_without_username(addr: &str, recv_timeout: Duration, pb: &Prog
 }
 
 const EMPTY_USERNAME: TestContext = TestContext {
-    id: "MQTT-3.1.3-10",
+    refs: &["MQTT-3.1.3-10"],
     description: "Server MUST accept zero-length username when Username flag is set",
     compliance: Compliance::Must,
 };
@@ -1525,7 +1525,7 @@ async fn empty_username(addr: &str, recv_timeout: Duration, pb: &ProgressBar) ->
 }
 
 const USERNAME_ONLY: TestContext = TestContext {
-    id: "MQTT-3.1.2-15",
+    refs: &["MQTT-3.1.2-15"],
     description: "Server MUST accept CONNECT with Username flag set and no Password",
     compliance: Compliance::Must,
 };
@@ -1553,7 +1553,7 @@ async fn username_only(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> 
 // ── Will Retain=0 → non-retained ────────────────────────────────────────
 
 const WILL_NON_RETAINED: TestContext = TestContext {
-    id: "MQTT-3.1.2-14",
+    refs: &["MQTT-3.1.2-14"],
     description: "Will Retain=0: will message MUST be published as non-retained",
     compliance: Compliance::Must,
 };
@@ -1631,7 +1631,7 @@ async fn will_non_retained(addr: &str, recv_timeout: Duration, pb: &ProgressBar)
 // ── Topic Alias Maximum=0 ───────────────────────────────────────────────
 
 const TOPIC_ALIAS_MAX_ZERO: TestContext = TestContext {
-    id: "MQTT-3.1.2-26",
+    refs: &["MQTT-3.1.2-26"],
     description: "Topic Alias Maximum=0: server MUST NOT send Topic Aliases to client",
     compliance: Compliance::Must,
 };
@@ -1689,7 +1689,7 @@ async fn topic_alias_maximum_zero(addr: &str, recv_timeout: Duration, pb: &Progr
 // ── CONNACK before close on error ───────────────────────────────────────
 
 const CONNACK_BEFORE_CLOSE: TestContext = TestContext {
-    id: "MQTT-3.1.4-2",
+    refs: &["MQTT-3.1.4-2"],
     description: "Server MAY send CONNACK with reason >= 0x80 before closing on error",
     compliance: Compliance::May,
 };

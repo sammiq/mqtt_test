@@ -8,8 +8,8 @@ use std::io::IsTerminal;
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
-use report::ReportOrder;
 use indicatif::{MultiProgress, ProgressDrawTarget};
+use report::ReportOrder;
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -29,16 +29,16 @@ pub enum SuiteName {
 impl std::fmt::Display for SuiteName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Transport  => write!(f, "transport"),
-            Self::Connect    => write!(f, "connect"),
-            Self::Ping       => write!(f, "ping"),
-            Self::Publish    => write!(f, "publish"),
-            Self::Subscribe  => write!(f, "subscribe"),
-            Self::Session    => write!(f, "session"),
-            Self::Malformed  => write!(f, "malformed"),
-            Self::Disconnect       => write!(f, "disconnect"),
-            Self::RequestResponse  => write!(f, "request-response"),
-            Self::Auth             => write!(f, "auth"),
+            Self::Transport => write!(f, "transport"),
+            Self::Connect => write!(f, "connect"),
+            Self::Ping => write!(f, "ping"),
+            Self::Publish => write!(f, "publish"),
+            Self::Subscribe => write!(f, "subscribe"),
+            Self::Session => write!(f, "session"),
+            Self::Malformed => write!(f, "malformed"),
+            Self::Disconnect => write!(f, "disconnect"),
+            Self::RequestResponse => write!(f, "request-response"),
+            Self::Auth => write!(f, "auth"),
         }
     }
 }
@@ -122,7 +122,8 @@ async fn main() {
             tokio::time::timeout(
                 Duration::from_secs(2),
                 tokio::net::TcpStream::connect(&addr),
-            ).await,
+            )
+            .await,
             Ok(Ok(_))
         );
 
@@ -136,32 +137,44 @@ async fn main() {
         } else {
             // No --ca-cert means insecure mode
             let insecure = args.ca_cert.is_none();
-            let config = client::TlsConfig::build(
-                args.ca_cert.as_deref(),
-                insecure,
-                &args.host,
-            )
-            .expect("failed to build TLS configuration");
+            let config = client::TlsConfig::build(args.ca_cert.as_deref(), insecure, &args.host)
+                .expect("failed to build TLS configuration");
             (Some(addr), Some(config))
         }
     };
 
     // Resolve which suites to run
     let all_suites = vec![
-        SuiteName::Transport, SuiteName::Connect, SuiteName::Ping,
-        SuiteName::Publish, SuiteName::Subscribe, SuiteName::Session,
-        SuiteName::Malformed, SuiteName::Disconnect, SuiteName::RequestResponse,
+        SuiteName::Transport,
+        SuiteName::Connect,
+        SuiteName::Ping,
+        SuiteName::Publish,
+        SuiteName::Subscribe,
+        SuiteName::Session,
+        SuiteName::Malformed,
+        SuiteName::Disconnect,
+        SuiteName::RequestResponse,
         SuiteName::Auth,
     ];
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 
-    println!("Testing broker at {tcp_addr} (timeout: {}ms)", args.timeout_ms);
+    println!(
+        "Testing broker at {tcp_addr} (timeout: {}ms)",
+        args.timeout_ms
+    );
     if let Some(ref addr) = tls_addr {
         println!("TLS endpoint at {addr}");
     } else if !args.no_tls {
         println!("TLS endpoint not reachable, skipping TLS transport test");
     }
-    println!("Suites: {}\n", suites_to_run.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
+    println!(
+        "Suites: {}\n",
+        suites_to_run
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     // Set up progress bars — hide when debug logging is active or stdout is not a TTY.
     let mp = MultiProgress::new();

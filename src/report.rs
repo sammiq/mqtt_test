@@ -51,10 +51,12 @@ impl Report {
     }
 
     fn print_by_requirement(&self, verbose: bool) {
-        let mut all_results: Vec<&TestResult> = self.suites.iter()
-            .flat_map(|s| &s.results)
-            .collect();
-        all_results.sort_by(|a, b| parse_requirement_key(a.ctx.primary_ref()).cmp(&parse_requirement_key(b.ctx.primary_ref())));
+        let mut all_results: Vec<&TestResult> =
+            self.suites.iter().flat_map(|s| &s.results).collect();
+        all_results.sort_by(|a, b| {
+            parse_requirement_key(a.ctx.primary_ref())
+                .cmp(&parse_requirement_key(b.ctx.primary_ref()))
+        });
 
         let mut last_section = String::new();
         for r in &all_results {
@@ -85,15 +87,21 @@ impl Report {
                 match r.ctx.compliance {
                     Compliance::Must => {
                         must_total += 1;
-                        if passed { must_pass += 1; }
+                        if passed {
+                            must_pass += 1;
+                        }
                     }
                     Compliance::Should => {
                         should_total += 1;
-                        if passed { should_pass += 1; }
+                        if passed {
+                            should_pass += 1;
+                        }
                     }
                     Compliance::May => {
                         may_total += 1;
-                        if passed { may_pass += 1; }
+                        if passed {
+                            may_pass += 1;
+                        }
                     }
                 }
             }
@@ -108,21 +116,27 @@ impl Report {
         if must_total > 0 && must_pass == must_total {
             println!("\n  Broker satisfies all required MQTT v5 behaviours.");
         } else if must_total > 0 {
-            println!("\n  Broker has {} required compliance failure(s).", must_total - must_pass);
+            println!(
+                "\n  Broker has {} required compliance failure(s).",
+                must_total - must_pass
+            );
         }
     }
 }
 
 fn format_result(r: &TestResult, verbose: bool) -> String {
     let level = match r.ctx.compliance {
-        Compliance::Must   => "MUST  ",
+        Compliance::Must => "MUST  ",
         Compliance::Should => "SHOULD",
-        Compliance::May    => "MAY   ",
+        Compliance::May => "MAY   ",
     };
     let is_may = r.ctx.compliance == Compliance::May;
     let (status, detail) = match &r.outcome {
         Outcome::Pass => (if is_may { " YES" } else { "PASS" }, String::new()),
-        Outcome::Fail { message, verbose: verbose_detail } => {
+        Outcome::Fail {
+            message,
+            verbose: verbose_detail,
+        } => {
             let msg = if verbose {
                 verbose_detail.as_deref().unwrap_or(message)
             } else {
@@ -133,7 +147,10 @@ fn format_result(r: &TestResult, verbose: bool) -> String {
         Outcome::Skip(msg) => ("SKIP", format!(" — {msg}")),
     };
     let refs_str = r.ctx.refs.join(", ");
-    format!("[{status}] {level} [{refs_str:<14}] {}{detail}", r.ctx.description)
+    format!(
+        "[{status}] {level} [{refs_str:<14}] {}{detail}",
+        r.ctx.description
+    )
 }
 
 /// Parse "MQTT-3.1.2-4" into a sortable tuple of numeric parts.
@@ -169,18 +186,18 @@ pub async fn run_test(
     tracing::debug!(id = ctx.primary_ref(), ctx.description, "running test");
     pb.set_message(ctx.primary_ref());
     let result = match fut.await {
-        Ok(r)  => r,
+        Ok(r) => r,
         Err(e) => TestResult::fail(&ctx, format!("test error: {e:#}")),
     };
     tracing::debug!(id = ctx.primary_ref(), outcome = ?result.outcome, "test complete");
 
     let is_may = ctx.compliance == Compliance::May;
     let symbol = match (&result.outcome, is_may) {
-        (Outcome::Pass,      false) => "\x1b[32m✓\x1b[0m",  // green check
-        (Outcome::Pass,      true)  => "\x1b[36m●\x1b[0m",  // cyan dot (supported)
-        (Outcome::Fail {..}, false) => "\x1b[31m✗\x1b[0m",  // red cross
-        (Outcome::Fail {..}, true)  => "\x1b[90m·\x1b[0m",  // dim dot (not supported)
-        (Outcome::Skip(_),   _)     => "\x1b[90m○\x1b[0m",  // dim circle (skipped)
+        (Outcome::Pass, false) => "\x1b[32m✓\x1b[0m", // green check
+        (Outcome::Pass, true) => "\x1b[36m●\x1b[0m",  // cyan dot (supported)
+        (Outcome::Fail { .. }, false) => "\x1b[31m✗\x1b[0m", // red cross
+        (Outcome::Fail { .. }, true) => "\x1b[90m·\x1b[0m", // dim dot (not supported)
+        (Outcome::Skip(_), _) => "\x1b[90m○\x1b[0m",  // dim circle (skipped)
     };
     pb.println(format!("  {symbol} {}", ctx.description));
     pb.inc(1);
@@ -240,7 +257,11 @@ mod tests {
 
     #[test]
     fn format_result_must_pass() {
-        let ctx = TestContext { refs: &["MQTT-3.1.2-4"], description: "Test desc", compliance: Compliance::Must };
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.2-4"],
+            description: "Test desc",
+            compliance: Compliance::Must,
+        };
         let r = TestResult::pass(&ctx);
         let s = format_result(&r, false);
         assert!(s.contains("PASS"));
@@ -251,7 +272,11 @@ mod tests {
 
     #[test]
     fn format_result_must_fail() {
-        let ctx = TestContext { refs: &["MQTT-3.1.2-4"], description: "Test desc", compliance: Compliance::Must };
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.2-4"],
+            description: "Test desc",
+            compliance: Compliance::Must,
+        };
         let r = TestResult::fail(&ctx, "bad thing");
         let s = format_result(&r, false);
         assert!(s.contains("FAIL"));
@@ -260,7 +285,11 @@ mod tests {
 
     #[test]
     fn format_result_may_pass_shows_yes() {
-        let ctx = TestContext { refs: &["MQTT-3.1.3-8"], description: "Optional feature", compliance: Compliance::May };
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.3-8"],
+            description: "Optional feature",
+            compliance: Compliance::May,
+        };
         let r = TestResult::pass(&ctx);
         let s = format_result(&r, false);
         assert!(s.contains("YES"));
@@ -269,7 +298,11 @@ mod tests {
 
     #[test]
     fn format_result_may_fail_shows_no() {
-        let ctx = TestContext { refs: &["MQTT-3.1.3-8"], description: "Optional feature", compliance: Compliance::May };
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.3-8"],
+            description: "Optional feature",
+            compliance: Compliance::May,
+        };
         let r = TestResult::fail(&ctx, "not supported");
         let s = format_result(&r, false);
         assert!(s.contains("NO"));
@@ -277,7 +310,11 @@ mod tests {
 
     #[test]
     fn format_result_skip() {
-        let ctx = TestContext { refs: &["MQTT-3.1.3-8"], description: "Test", compliance: Compliance::Must };
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.3-8"],
+            description: "Test",
+            compliance: Compliance::Must,
+        };
         let r = TestResult::skip(&ctx, "prereq not met");
         let s = format_result(&r, false);
         assert!(s.contains("SKIP"));
@@ -286,7 +323,11 @@ mod tests {
 
     #[test]
     fn format_result_verbose_uses_verbose_detail() {
-        let ctx = TestContext { refs: &["MQTT-3.1.2-4"], description: "Test", compliance: Compliance::Must };
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.2-4"],
+            description: "Test",
+            compliance: Compliance::Must,
+        };
         let r = TestResult::fail_verbose(&ctx, "short", "long detailed message");
         let short = format_result(&r, false);
         let long = format_result(&r, true);

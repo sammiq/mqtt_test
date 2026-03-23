@@ -1,7 +1,7 @@
 [package]
 name = "mqtt_test"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "MQTT v5 broker compliance testing tool"
 
 [dependencies]

@@ -11,9 +11,9 @@ pub mod transport;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
+use crate::SuiteName;
 use crate::report::Report;
 use crate::types::TestConfig;
-use crate::SuiteName;
 
 fn make_progress_bar(mp: &MultiProgress, name: &str, count: usize) -> ProgressBar {
     let pb = mp.add(ProgressBar::new(count as u64));

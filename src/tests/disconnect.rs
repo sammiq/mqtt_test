@@ -2,24 +2,37 @@
 
 use std::time::Duration;
 
-
 use crate::client;
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillParams};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
-
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("DISCONNECT");
 
     suite.add(DISCONNECT_CLOSE, server_closes_after_disconnect(config));
     suite.add(DISCONNECT_WITH_WILL, disconnect_with_will(config));
-    suite.add(NORMAL_DISCONNECT_DISCARDS_WILL, normal_disconnect_discards_will(config));
-    suite.add(SESSION_EXPIRY_INCREASE, session_expiry_increase_rejected(config));
+    suite.add(
+        NORMAL_DISCONNECT_DISCARDS_WILL,
+        normal_disconnect_discards_will(config),
+    );
+    suite.add(
+        SESSION_EXPIRY_INCREASE,
+        session_expiry_increase_rejected(config),
+    );
     suite.add(WILL_DELAY, will_delay_interval(config));
-    suite.add(DISCONNECT_SESSION_TAKEOVER, disconnect_reason_session_takeover(config));
-    suite.add(DISCONNECT_PACKET_TOO_LARGE, disconnect_on_packet_too_large(config));
+    suite.add(
+        DISCONNECT_SESSION_TAKEOVER,
+        disconnect_reason_session_takeover(config),
+    );
+    suite.add(
+        DISCONNECT_PACKET_TOO_LARGE,
+        disconnect_on_packet_too_large(config),
+    );
     suite.add(DISCONNECT_REASON_STRING, disconnect_reason_string(config));
-    suite.add(DISCONNECT_PROTOCOL_ERROR, disconnect_on_protocol_error(config));
+    suite.add(
+        DISCONNECT_PROTOCOL_ERROR,
+        disconnect_on_protocol_error(config),
+    );
 
     suite
 }
@@ -50,7 +63,6 @@ async fn server_closes_after_disconnect(config: TestConfig<'_>) -> anyhow::Resul
             &other,
         )),
     }
-    
 }
 
 const DISCONNECT_WITH_WILL: TestContext = TestContext {
@@ -67,31 +79,36 @@ async fn disconnect_with_will(config: TestConfig<'_>) -> anyhow::Result<TestResu
     let will_topic = "mqtt/test/disconnect/will04";
 
     // Set up a subscriber
-    let mut sub_client = client::connect_and_subscribe(config.addr, "mqtt-test-dc-will-sub", will_topic, QoS::AtMostOnce, config.recv_timeout).await?;
+    let mut sub_client = client::connect_and_subscribe(
+        config.addr,
+        "mqtt-test-dc-will-sub",
+        will_topic,
+        QoS::AtMostOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     // Connect with a will message
     let mut will_params = ConnectParams::new("mqtt-test-dc-will-pub");
     will_params.will = Some(WillParams::new(will_topic, b"will-on-0x04"));
-    let (mut will_client, _) = client::connect(config.addr, &will_params, config.recv_timeout).await?;
+    let (mut will_client, _) =
+        client::connect(config.addr, &will_params, config.recv_timeout).await?;
 
     // Disconnect with reason 0x04 — will message should still be published
     will_client.send_disconnect(0x04).await?;
 
     match sub_client.recv(Duration::from_secs(5)).await {
-        Ok(Packet::Publish(p)) if p.topic == will_topic => {
-            Ok(TestResult::pass(&ctx))
-        }
-        Ok(other) => {
-            Ok(TestResult::fail_packet(&ctx, "PUBLISH (will message)", &other))
-        }
-        Err(_) => {
-            Ok(TestResult::fail(
-                &ctx,
-                "Will message not received after DISCONNECT with reason 0x04",
-            ))
-        }
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::pass(&ctx)),
+        Ok(other) => Ok(TestResult::fail_packet(
+            &ctx,
+            "PUBLISH (will message)",
+            &other,
+        )),
+        Err(_) => Ok(TestResult::fail(
+            &ctx,
+            "Will message not received after DISCONNECT with reason 0x04",
+        )),
     }
-    
 }
 
 const NORMAL_DISCONNECT_DISCARDS_WILL: TestContext = TestContext {
@@ -108,7 +125,14 @@ async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> anyhow::Resu
     let will_topic = "mqtt/test/disconnect/will_discard";
 
     // Set up a subscriber
-    let mut sub_client = client::connect_and_subscribe(config.addr, "mqtt-test-dc-discard-sub", will_topic, QoS::AtMostOnce, config.recv_timeout).await?;
+    let mut sub_client = client::connect_and_subscribe(
+        config.addr,
+        "mqtt-test-dc-discard-sub",
+        will_topic,
+        QoS::AtMostOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     // Connect with a will message
     let mut will_params = ConnectParams::new("mqtt-test-dc-discard-pub");
@@ -120,20 +144,13 @@ async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> anyhow::Resu
 
     // Wait briefly — should NOT receive the will message
     match sub_client.recv(Duration::from_secs(2)).await {
-        Err(_) => {
-            Ok(TestResult::pass(&ctx))
-        }
-        Ok(Packet::Publish(p)) if p.topic == will_topic => {
-            Ok(TestResult::fail(
-                &ctx,
-                "Will message was published despite normal DISCONNECT (0x00)",
-            ))
-        }
-        Ok(_) => {
-            Ok(TestResult::pass(&ctx))
-        }
+        Err(_) => Ok(TestResult::pass(&ctx)),
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::fail(
+            &ctx,
+            "Will message was published despite normal DISCONNECT (0x00)",
+        )),
+        Ok(_) => Ok(TestResult::pass(&ctx)),
     }
-    
 }
 
 const SESSION_EXPIRY_INCREASE: TestContext = TestContext {
@@ -169,9 +186,7 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Res
             // server at minimum didn't honor the invalid session expiry.
             Ok(TestResult::pass(&ctx))
         }
-        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => {
-            Ok(TestResult::pass(&ctx))
-        }
+        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Disconnect(d)) if d.reason_code == 0x00 => {
             // Normal disconnect response — server may have just ignored the invalid
             // property. We can't verify the session wasn't extended, so pass cautiously.
@@ -183,7 +198,6 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Res
             &other,
         )),
     }
-    
 }
 
 const WILL_DELAY: TestContext = TestContext {
@@ -201,8 +215,13 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
 
     // Set up a subscriber for the will topic
     let mut sub_client = client::connect_and_subscribe(
-        config.addr, "mqtt-test-willdelay-sub", will_topic, QoS::AtMostOnce, config.recv_timeout,
-    ).await?;
+        config.addr,
+        "mqtt-test-willdelay-sub",
+        will_topic,
+        QoS::AtMostOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     // Connect with a will message + will_delay_interval = 3 seconds
     let mut will_params = ConnectParams::new("mqtt-test-willdelay-pub");
@@ -227,16 +246,17 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
 
     // Will SHOULD arrive within 5 seconds total
     match sub_client.recv(Duration::from_secs(5)).await {
-        Ok(Packet::Publish(p)) if p.topic == will_topic => {
-            Ok(TestResult::pass(&ctx))
-        }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "delayed will PUBLISH", &other)),
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::pass(&ctx)),
+        Ok(other) => Ok(TestResult::fail_packet(
+            &ctx,
+            "delayed will PUBLISH",
+            &other,
+        )),
         Err(_) => Ok(TestResult::fail(
             &ctx,
             "Will message not received within 5 seconds (delay was 3s)",
         )),
     }
-    
 }
 
 // ── Server-initiated DISCONNECT ─────────────────────────────────────────────
@@ -267,15 +287,14 @@ async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> anyhow::R
 
     // c1 should receive DISCONNECT with reason 0x8E
     match c1.recv(config.recv_timeout).await {
-        Ok(Packet::Disconnect(d)) if d.reason_code == 0x8E => {
-            Ok(TestResult::pass(&ctx))
-        }
-        Ok(Packet::Disconnect(d)) => {
-            Ok(TestResult::fail(
-                &ctx,
-                format!("DISCONNECT received but reason was {:#04x} (expected 0x8E)", d.reason_code),
-            ))
-        }
+        Ok(Packet::Disconnect(d)) if d.reason_code == 0x8E => Ok(TestResult::pass(&ctx)),
+        Ok(Packet::Disconnect(d)) => Ok(TestResult::fail(
+            &ctx,
+            format!(
+                "DISCONNECT received but reason was {:#04x} (expected 0x8E)",
+                d.reason_code
+            ),
+        )),
         Err(_) => {
             // Connection closed without DISCONNECT — still acceptable
             Ok(TestResult::fail(
@@ -285,7 +304,6 @@ async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> anyhow::R
         }
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
     }
-    
 }
 
 const DISCONNECT_PACKET_TOO_LARGE: TestContext = TestContext {
@@ -323,7 +341,10 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
             }
             Ok(_) => {
                 // Broker accepted it — it has no practical limit
-                Ok(TestResult::skip(&ctx, "Broker accepted 1MB payload — no Maximum Packet Size enforced"))
+                Ok(TestResult::skip(
+                    &ctx,
+                    "Broker accepted 1MB payload — no Maximum Packet Size enforced",
+                ))
             }
         }
     } else {
@@ -333,16 +354,11 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
         c.send_publish(&publish).await?;
 
         match c.recv(config.recv_timeout).await {
-            Ok(Packet::Disconnect(d)) if d.reason_code == 0x95 => {
-                Ok(TestResult::pass(&ctx))
-            }
-            Ok(Packet::Disconnect(_)) | Err(_) => {
-                Ok(TestResult::pass(&ctx))
-            }
+            Ok(Packet::Disconnect(d)) if d.reason_code == 0x95 => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Disconnect(_)) | Err(_) => Ok(TestResult::pass(&ctx)),
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
         }
     }
-    
 }
 
 const DISCONNECT_REASON_STRING: TestContext = TestContext {
@@ -380,14 +396,11 @@ async fn disconnect_reason_string(config: TestConfig<'_>) -> anyhow::Result<Test
                 ))
             }
         }
-        _ => {
-            Ok(TestResult::fail(
-                &ctx,
-                "No DISCONNECT received (connection closed without reason)",
-            ))
-        }
+        _ => Ok(TestResult::fail(
+            &ctx,
+            "No DISCONNECT received (connection closed without reason)",
+        )),
     }
-    
 }
 
 const DISCONNECT_PROTOCOL_ERROR: TestContext = TestContext {
@@ -415,18 +428,14 @@ async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> anyhow::Result<
 
     // Server SHOULD send DISCONNECT with a reason code before closing
     match client.recv(config.recv_timeout).await {
-        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => {
-            Ok(TestResult::pass(&ctx))
-        }
-        Ok(Packet::Disconnect(d)) => {
-            Ok(TestResult::fail(
-                &ctx,
-                format!(
-                    "DISCONNECT received but reason code {:#04x} does not indicate error (expected >= 0x80)",
-                    d.reason_code
-                ),
-            ))
-        }
+        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
+        Ok(Packet::Disconnect(d)) => Ok(TestResult::fail(
+            &ctx,
+            format!(
+                "DISCONNECT received but reason code {:#04x} does not indicate error (expected >= 0x80)",
+                d.reason_code
+            ),
+        )),
         Err(_) => {
             // Connection closed without DISCONNECT — server did not send one
             Ok(TestResult::fail(
@@ -440,5 +449,4 @@ async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> anyhow::Result<
             &other,
         )),
     }
-    
 }

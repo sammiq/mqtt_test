@@ -4,11 +4,9 @@
 //! and Correlation Data properties. These tests verify the broker correctly
 //! forwards these properties.
 
-
 use crate::client::{self, connect_and_subscribe};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
-
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("REQUEST / RESPONSE");
@@ -16,7 +14,10 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(RESPONSE_TOPIC, response_topic_forwarded(config));
     suite.add(CORRELATION_DATA, correlation_data_forwarded(config));
     suite.add(FULL_RR, full_request_response(config));
-    suite.add(RESPONSE_TOPIC_WITH_CORR, response_topic_with_correlation(config));
+    suite.add(
+        RESPONSE_TOPIC_WITH_CORR,
+        response_topic_with_correlation(config),
+    );
     suite.add(MULTI_CORRELATION, multiple_correlation_data(config));
 
     suite
@@ -35,7 +36,14 @@ const RESPONSE_TOPIC: TestContext = TestContext {
 async fn response_topic_forwarded(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = RESPONSE_TOPIC;
 
-    let mut sub = connect_and_subscribe(config.addr, "mqtt-test-resp-topic-sub", "test/rr/topic", QoS::AtLeastOnce, config.recv_timeout).await?;
+    let mut sub = connect_and_subscribe(
+        config.addr,
+        "mqtt-test-resp-topic-sub",
+        "test/rr/topic",
+        QoS::AtLeastOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     let params = ConnectParams::new("mqtt-test-resp-topic-pub");
     let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -47,7 +55,10 @@ async fn response_topic_forwarded(config: TestConfig<'_>) -> anyhow::Result<Test
         retain: false,
         dup: false,
         packet_id: Some(1),
-        properties: Properties { response_topic: Some("reply/to/me".into()), ..Default::default() },
+        properties: Properties {
+            response_topic: Some("reply/to/me".into()),
+            ..Default::default()
+        },
     };
     pub_client.send_publish(&publish).await?;
     pub_client.recv(config.recv_timeout).await?; // PUBACK
@@ -59,13 +70,19 @@ async fn response_topic_forwarded(config: TestConfig<'_>) -> anyhow::Result<Test
             } else {
                 Ok(TestResult::fail(
                     &ctx,
-                    format!("Response Topic not preserved: got {:?}", msg.properties.response_topic),
+                    format!(
+                        "Response Topic not preserved: got {:?}",
+                        msg.properties.response_topic
+                    ),
                 ))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "PUBLISH with Response Topic", &other)),
+        other => Ok(TestResult::fail_packet(
+            &ctx,
+            "PUBLISH with Response Topic",
+            &other,
+        )),
     }
-    
 }
 
 const CORRELATION_DATA: TestContext = TestContext {
@@ -79,7 +96,14 @@ const CORRELATION_DATA: TestContext = TestContext {
 async fn correlation_data_forwarded(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = CORRELATION_DATA;
 
-    let mut sub = connect_and_subscribe(config.addr, "mqtt-test-corr-data-sub", "test/rr/corr", QoS::AtLeastOnce, config.recv_timeout).await?;
+    let mut sub = connect_and_subscribe(
+        config.addr,
+        "mqtt-test-corr-data-sub",
+        "test/rr/corr",
+        QoS::AtLeastOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     let params = ConnectParams::new("mqtt-test-corr-data-pub");
     let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -91,7 +115,10 @@ async fn correlation_data_forwarded(config: TestConfig<'_>) -> anyhow::Result<Te
         retain: false,
         dup: false,
         packet_id: Some(1),
-        properties: Properties { correlation_data: Some(b"\x01\x02\x03\xAB\xCD".to_vec()), ..Default::default() },
+        properties: Properties {
+            correlation_data: Some(b"\x01\x02\x03\xAB\xCD".to_vec()),
+            ..Default::default()
+        },
     };
     pub_client.send_publish(&publish).await?;
     pub_client.recv(config.recv_timeout).await?; // PUBACK
@@ -103,13 +130,19 @@ async fn correlation_data_forwarded(config: TestConfig<'_>) -> anyhow::Result<Te
             } else {
                 Ok(TestResult::fail(
                     &ctx,
-                    format!("Correlation Data not preserved: got {:?}", msg.properties.correlation_data),
+                    format!(
+                        "Correlation Data not preserved: got {:?}",
+                        msg.properties.correlation_data
+                    ),
                 ))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "PUBLISH with Correlation Data", &other)),
+        other => Ok(TestResult::fail_packet(
+            &ctx,
+            "PUBLISH with Correlation Data",
+            &other,
+        )),
     }
-    
 }
 
 // ── MUST ────────────────────────────────────────────────────────────────────
@@ -130,12 +163,22 @@ async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<TestRes
     let ctx = FULL_RR;
 
     let mut client_a = connect_and_subscribe(
-        config.addr, "mqtt-test-rr-requester", "test/rr/reply", QoS::AtLeastOnce, config.recv_timeout,
-    ).await?;
+        config.addr,
+        "mqtt-test-rr-requester",
+        "test/rr/reply",
+        QoS::AtLeastOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     let mut client_b = connect_and_subscribe(
-        config.addr, "mqtt-test-rr-responder", "test/rr/request", QoS::AtLeastOnce, config.recv_timeout,
-    ).await?;
+        config.addr,
+        "mqtt-test-rr-responder",
+        "test/rr/request",
+        QoS::AtLeastOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     // Client A publishes a request with Response Topic
     let request = PublishParams {
@@ -197,7 +240,6 @@ async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<TestRes
         }
         other => Ok(TestResult::fail_packet(&ctx, "PUBLISH (response)", &other)),
     }
-    
 }
 
 const RESPONSE_TOPIC_WITH_CORR: TestContext = TestContext {
@@ -211,7 +253,14 @@ const RESPONSE_TOPIC_WITH_CORR: TestContext = TestContext {
 async fn response_topic_with_correlation(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = RESPONSE_TOPIC_WITH_CORR;
 
-    let mut sub = connect_and_subscribe(config.addr, "mqtt-test-rr-both-sub", "test/rr/both", QoS::AtLeastOnce, config.recv_timeout).await?;
+    let mut sub = connect_and_subscribe(
+        config.addr,
+        "mqtt-test-rr-both-sub",
+        "test/rr/both",
+        QoS::AtLeastOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     let params = ConnectParams::new("mqtt-test-rr-both-pub");
     let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -248,9 +297,12 @@ async fn response_topic_with_correlation(config: TestConfig<'_>) -> anyhow::Resu
                 ))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "PUBLISH with both properties", &other)),
+        other => Ok(TestResult::fail_packet(
+            &ctx,
+            "PUBLISH with both properties",
+            &other,
+        )),
     }
-    
 }
 
 const MULTI_CORRELATION: TestContext = TestContext {
@@ -264,7 +316,14 @@ const MULTI_CORRELATION: TestContext = TestContext {
 async fn multiple_correlation_data(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = MULTI_CORRELATION;
 
-    let mut sub = connect_and_subscribe(config.addr, "mqtt-test-multi-corr-sub", "test/rr/multi", QoS::AtLeastOnce, config.recv_timeout).await?;
+    let mut sub = connect_and_subscribe(
+        config.addr,
+        "mqtt-test-multi-corr-sub",
+        "test/rr/multi",
+        QoS::AtLeastOnce,
+        config.recv_timeout,
+    )
+    .await?;
 
     let params = ConnectParams::new("mqtt-test-multi-corr-pub");
     let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -278,7 +337,10 @@ async fn multiple_correlation_data(config: TestConfig<'_>) -> anyhow::Result<Tes
             retain: false,
             dup: false,
             packet_id: Some(id),
-            properties: Properties { correlation_data: Some(corr.to_vec()), ..Default::default() },
+            properties: Properties {
+                correlation_data: Some(corr.to_vec()),
+                ..Default::default()
+            },
         };
         pub_client.send_publish(&publish).await?;
         pub_client.recv(config.recv_timeout).await?; // PUBACK
@@ -304,5 +366,4 @@ async fn multiple_correlation_data(config: TestConfig<'_>) -> anyhow::Result<Tes
             format!("Correlation data not preserved: got {:?}", received_corrs),
         ))
     }
-    
 }

@@ -2,11 +2,9 @@
 
 use std::time::Duration;
 
-
 use crate::client;
 use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
-
 
 /// Clean up a persistent session by reconnecting with clean_start=true.
 async fn cleanup_session(addr: &str, client_id: &str, recv_timeout: Duration) {
@@ -27,7 +25,10 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(SESSION_EXPIRY_MAX, session_expiry_max(config));
     suite.add(SESSION_TAKEOVER, session_takeover(config));
     suite.add(SESSION_EXPIRY_DISCARD, session_expiry_discard(config));
-    suite.add(SESSION_PRESENT_PERSISTENCE, session_present_verify_persistence(config));
+    suite.add(
+        SESSION_PRESENT_PERSISTENCE,
+        session_present_verify_persistence(config),
+    );
 
     suite
 }
@@ -73,7 +74,6 @@ async fn session_present_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
             "session_present=0 on reconnect with Clean Start=0 (expected 1)",
         ))
     }
-    
 }
 
 const QOS1_REDELIVER: TestContext = TestContext {
@@ -94,7 +94,8 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     // 1. Connect subscriber with persistent session and subscribe at QoS 1.
     let mut sub_params = ConnectParams::new(sub_id);
     sub_params.properties.session_expiry_interval = Some(60);
-    let (mut sub_client, _) = client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+    let (mut sub_client, _) =
+        client::connect(config.addr, &sub_params, config.recv_timeout).await?;
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
@@ -106,12 +107,15 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     // 3. Publish a QoS 1 message while subscriber is offline.
     let pub_params_conn = ConnectParams::new(pub_id);
-    let (mut pub_client, _) = client::connect(config.addr, &pub_params_conn, config.recv_timeout).await?;
+    let (mut pub_client, _) =
+        client::connect(config.addr, &pub_params_conn, config.recv_timeout).await?;
     let pub_msg = PublishParams::qos1(topic, b"queued-qos1".to_vec(), 1);
     pub_client.send_publish(&pub_msg).await?;
     // Wait for PUBACK.
     for _ in 0..5 {
-        if let Packet::PubAck(_) = pub_client.recv(config.recv_timeout).await? { break }
+        if let Packet::PubAck(_) = pub_client.recv(config.recv_timeout).await? {
+            break;
+        }
     }
     drop(pub_client); // AutoDisconnect sends DISCONNECT on drop.
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -120,7 +124,8 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     let mut sub_params2 = ConnectParams::new(sub_id);
     sub_params2.clean_start = false;
     sub_params2.properties.session_expiry_interval = Some(60);
-    let (mut sub_client2, connack) = client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
+    let (mut sub_client2, connack) =
+        client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
 
     if !connack.session_present {
         cleanup_session(config.addr, sub_id, config.recv_timeout).await;
@@ -132,25 +137,18 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     // 5. Check for the redelivered message.
     let result = match sub_client2.recv(config.recv_timeout).await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            TestResult::pass(&ctx)
-        }
-        Ok(other) => {
-            TestResult::fail_packet(&ctx, "redelivered PUBLISH on session resume", &other)
-        }
-        Err(_) => {
-            TestResult::fail(
-                &ctx,
-                "No queued QoS 1 message redelivered after session resume",
-            )
-        }
+        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
+        Ok(other) => TestResult::fail_packet(&ctx, "redelivered PUBLISH on session resume", &other),
+        Err(_) => TestResult::fail(
+            &ctx,
+            "No queued QoS 1 message redelivered after session resume",
+        ),
     };
     // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
     cleanup_session(config.addr, sub_id, config.recv_timeout).await;
 
     Ok(result)
-    
 }
 
 const QOS2_REDELIVER: TestContext = TestContext {
@@ -171,7 +169,8 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     // 1. Connect subscriber with persistent session and subscribe at QoS 2.
     let mut sub_params = ConnectParams::new(sub_id);
     sub_params.properties.session_expiry_interval = Some(60);
-    let (mut sub_client, _) = client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+    let (mut sub_client, _) =
+        client::connect(config.addr, &sub_params, config.recv_timeout).await?;
 
     let sub = SubscribeParams::simple(1, topic, QoS::ExactlyOnce);
     sub_client.send_subscribe(&sub).await?;
@@ -183,7 +182,8 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     // 3. Publish a QoS 2 message while subscriber is offline.
     let pub_params_conn = ConnectParams::new(pub_id);
-    let (mut pub_client, _) = client::connect(config.addr, &pub_params_conn, config.recv_timeout).await?;
+    let (mut pub_client, _) =
+        client::connect(config.addr, &pub_params_conn, config.recv_timeout).await?;
     let pub_msg = PublishParams::qos2(topic, b"queued-qos2".to_vec(), 1);
     pub_client.send_publish(&pub_msg).await?;
 
@@ -194,7 +194,9 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
                 pub_client.send_pubrel(1, 0x00).await?;
                 // Wait for PUBCOMP.
                 for _ in 0..5 {
-                    if let Packet::PubComp(_) = pub_client.recv(config.recv_timeout).await? { break }
+                    if let Packet::PubComp(_) = pub_client.recv(config.recv_timeout).await? {
+                        break;
+                    }
                 }
                 break;
             }
@@ -208,7 +210,8 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     let mut sub_params2 = ConnectParams::new(sub_id);
     sub_params2.clean_start = false;
     sub_params2.properties.session_expiry_interval = Some(60);
-    let (mut sub_client2, connack) = client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
+    let (mut sub_client2, connack) =
+        client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
 
     if !connack.session_present {
         cleanup_session(config.addr, sub_id, config.recv_timeout).await;
@@ -220,29 +223,26 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     // 5. Should receive the queued QoS 2 message (as PUBLISH or PUBREL depending on state).
     let result = match sub_client2.recv(config.recv_timeout).await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            TestResult::pass(&ctx)
-        }
+        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(Packet::PubRel(_)) => {
             // The broker may resume at the PUBREL stage — this is also valid.
             TestResult::pass(&ctx)
         }
-        Ok(other) => {
-            TestResult::fail_packet(&ctx, "redelivered PUBLISH or PUBREL on session resume", &other)
-        }
-        Err(_) => {
-            TestResult::fail(
-                &ctx,
-                "No queued QoS 2 message redelivered after session resume",
-            )
-        }
+        Ok(other) => TestResult::fail_packet(
+            &ctx,
+            "redelivered PUBLISH or PUBREL on session resume",
+            &other,
+        ),
+        Err(_) => TestResult::fail(
+            &ctx,
+            "No queued QoS 2 message redelivered after session resume",
+        ),
     };
     // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
     cleanup_session(config.addr, sub_id, config.recv_timeout).await;
 
     Ok(result)
-    
 }
 
 const SUB_PERSISTS: TestContext = TestContext {
@@ -253,7 +253,9 @@ const SUB_PERSISTS: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, its subscriptions from
 /// the previous session MUST still be active [MQTT-3.1.2-6].
-async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+async fn subscription_persists_across_sessions(
+    config: TestConfig<'_>,
+) -> anyhow::Result<TestResult> {
     let ctx = SUB_PERSISTS;
 
     let sub_id = "mqtt-test-sub-persist";
@@ -287,32 +289,26 @@ async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> anyhow
 
     // 3. Publish a message from a different client.
     let pub_params_conn = ConnectParams::new(pub_id);
-    let (mut pub_client, _) = client::connect(config.addr, &pub_params_conn, config.recv_timeout).await?;
+    let (mut pub_client, _) =
+        client::connect(config.addr, &pub_params_conn, config.recv_timeout).await?;
     let pub_msg = PublishParams::qos0(topic, b"persist-test".to_vec());
     pub_client.send_publish(&pub_msg).await?;
     // AutoDisconnect on pub_client sends DISCONNECT on drop.
 
     // 4. The reconnected subscriber should receive it without re-subscribing.
     let result = match c2.recv(config.recv_timeout).await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            TestResult::pass(&ctx)
-        }
-        Ok(other) => {
-            TestResult::fail_packet(&ctx, "PUBLISH from persisted subscription", &other)
-        }
-        Err(_) => {
-            TestResult::fail(
-                &ctx,
-                "No message received — subscription did not persist across reconnect",
-            )
-        }
+        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
+        Ok(other) => TestResult::fail_packet(&ctx, "PUBLISH from persisted subscription", &other),
+        Err(_) => TestResult::fail(
+            &ctx,
+            "No message received — subscription did not persist across reconnect",
+        ),
     };
     // AutoDisconnect on c2 sends DISCONNECT on drop.
 
     cleanup_session(config.addr, sub_id, config.recv_timeout).await;
 
     Ok(result)
-    
 }
 
 const SESSION_EXPIRY_ZERO: TestContext = TestContext {
@@ -350,7 +346,6 @@ async fn session_expiry_zero(config: TestConfig<'_>) -> anyhow::Result<TestResul
             "session_present=1 despite Session Expiry Interval=0",
         ))
     }
-    
 }
 
 const SESSION_EXPIRY_MAX: TestContext = TestContext {
@@ -389,7 +384,6 @@ async fn session_expiry_max(config: TestConfig<'_>) -> anyhow::Result<TestResult
             "session_present=0 despite Session Expiry Interval=0xFFFFFFFF",
         ))
     }
-    
 }
 
 const SESSION_TAKEOVER: TestContext = TestContext {
@@ -426,7 +420,6 @@ async fn session_takeover(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
 
     Ok(result)
-    
 }
 
 const SESSION_EXPIRY_DISCARD: TestContext = TestContext {
@@ -489,7 +482,6 @@ async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<TestRe
             "Session still present after Session Expiry Interval passed (expected session_present=0)",
         ))
     }
-    
 }
 
 const SESSION_PRESENT_PERSISTENCE: TestContext = TestContext {
@@ -525,9 +517,13 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
     // 2. Publish a QoS 1 message while subscriber is offline.
     let pub_conn = ConnectParams::new(pub_id);
     let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
-    pub_client.send_publish(&PublishParams::qos1(topic, b"persist-verify".to_vec(), 1)).await?;
+    pub_client
+        .send_publish(&PublishParams::qos1(topic, b"persist-verify".to_vec(), 1))
+        .await?;
     for _ in 0..5 {
-        if let Ok(Packet::PubAck(_)) = pub_client.recv(config.recv_timeout).await { break }
+        if let Ok(Packet::PubAck(_)) = pub_client.recv(config.recv_timeout).await {
+            break;
+        }
     }
     drop(pub_client);
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -548,23 +544,15 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
 
     // 4. Verify queued message is delivered — proves session state was preserved.
     let result = match c2.recv(config.recv_timeout).await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            TestResult::pass(&ctx)
-        }
-        Ok(other) => {
-            TestResult::fail_packet(&ctx, "queued PUBLISH from persisted session", &other)
-        }
-        Err(_) => {
-            TestResult::fail(
-                &ctx,
-                "Session Present=1 but queued message not delivered — session state incomplete",
-            )
-        }
+        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
+        Ok(other) => TestResult::fail_packet(&ctx, "queued PUBLISH from persisted session", &other),
+        Err(_) => TestResult::fail(
+            &ctx,
+            "Session Present=1 but queued message not delivered — session state incomplete",
+        ),
     };
 
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
 
     Ok(result)
-    
 }
-

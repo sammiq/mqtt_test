@@ -128,65 +128,65 @@ fn read_bytes(data: &[u8], pos: &mut usize) -> Result<Vec<u8>, DecodeError> {
 
 /// Property identifiers [MQTT-2.2.2].
 mod prop {
-    pub const PAYLOAD_FORMAT_INDICATOR:        u8 = 0x01;
-    pub const MESSAGE_EXPIRY_INTERVAL:         u8 = 0x02;
-    pub const CONTENT_TYPE:                    u8 = 0x03;
-    pub const RESPONSE_TOPIC:                  u8 = 0x08;
-    pub const CORRELATION_DATA:                u8 = 0x09;
-    pub const SUBSCRIPTION_IDENTIFIER:        u8 = 0x0B;
-    pub const SESSION_EXPIRY_INTERVAL:         u8 = 0x11;
-    pub const ASSIGNED_CLIENT_ID:              u8 = 0x12;
-    pub const SERVER_KEEP_ALIVE:               u8 = 0x13;
-    pub const AUTHENTICATION_METHOD:           u8 = 0x15;
-    pub const AUTHENTICATION_DATA:             u8 = 0x16;
-    pub const REQUEST_PROBLEM_INFORMATION:     u8 = 0x17;
-    pub const WILL_DELAY_INTERVAL:             u8 = 0x18;
-    pub const REQUEST_RESPONSE_INFORMATION:    u8 = 0x19;
-    pub const RESPONSE_INFORMATION:            u8 = 0x1A;
-    pub const SERVER_REFERENCE:                u8 = 0x1C;
-    pub const REASON_STRING:                   u8 = 0x1F;
-    pub const RECEIVE_MAXIMUM:                 u8 = 0x21;
-    pub const TOPIC_ALIAS_MAXIMUM:             u8 = 0x22;
-    pub const TOPIC_ALIAS:                     u8 = 0x23;
-    pub const MAXIMUM_QOS:                     u8 = 0x24;
-    pub const RETAIN_AVAILABLE:                u8 = 0x25;
-    pub const USER_PROPERTY:                   u8 = 0x26;
-    pub const MAXIMUM_PACKET_SIZE:             u8 = 0x27;
+    pub const PAYLOAD_FORMAT_INDICATOR: u8 = 0x01;
+    pub const MESSAGE_EXPIRY_INTERVAL: u8 = 0x02;
+    pub const CONTENT_TYPE: u8 = 0x03;
+    pub const RESPONSE_TOPIC: u8 = 0x08;
+    pub const CORRELATION_DATA: u8 = 0x09;
+    pub const SUBSCRIPTION_IDENTIFIER: u8 = 0x0B;
+    pub const SESSION_EXPIRY_INTERVAL: u8 = 0x11;
+    pub const ASSIGNED_CLIENT_ID: u8 = 0x12;
+    pub const SERVER_KEEP_ALIVE: u8 = 0x13;
+    pub const AUTHENTICATION_METHOD: u8 = 0x15;
+    pub const AUTHENTICATION_DATA: u8 = 0x16;
+    pub const REQUEST_PROBLEM_INFORMATION: u8 = 0x17;
+    pub const WILL_DELAY_INTERVAL: u8 = 0x18;
+    pub const REQUEST_RESPONSE_INFORMATION: u8 = 0x19;
+    pub const RESPONSE_INFORMATION: u8 = 0x1A;
+    pub const SERVER_REFERENCE: u8 = 0x1C;
+    pub const REASON_STRING: u8 = 0x1F;
+    pub const RECEIVE_MAXIMUM: u8 = 0x21;
+    pub const TOPIC_ALIAS_MAXIMUM: u8 = 0x22;
+    pub const TOPIC_ALIAS: u8 = 0x23;
+    pub const MAXIMUM_QOS: u8 = 0x24;
+    pub const RETAIN_AVAILABLE: u8 = 0x25;
+    pub const USER_PROPERTY: u8 = 0x26;
+    pub const MAXIMUM_PACKET_SIZE: u8 = 0x27;
     pub const WILDCARD_SUBSCRIPTION_AVAILABLE: u8 = 0x28;
-    pub const SUBSCRIPTION_IDS_AVAILABLE:      u8 = 0x29;
-    pub const SHARED_SUBSCRIPTION_AVAILABLE:   u8 = 0x2A;
+    pub const SUBSCRIPTION_IDS_AVAILABLE: u8 = 0x29;
+    pub const SHARED_SUBSCRIPTION_AVAILABLE: u8 = 0x2A;
 }
 
 /// All MQTT v5 properties in one flat struct. Each packet type uses a subset.
 #[derive(Debug, Default, Clone)]
 pub struct Properties {
-    pub payload_format_indicator:        Option<u8>,
-    pub message_expiry_interval:         Option<u32>,
-    pub content_type:                    Option<String>,
-    pub response_topic:                  Option<String>,
-    pub correlation_data:                Option<Vec<u8>>,
-    pub subscription_identifier:         Option<u32>,
-    pub session_expiry_interval:         Option<u32>,
-    pub assigned_client_id:              Option<String>,
-    pub server_keep_alive:               Option<u16>,
-    pub authentication_method:           Option<String>,
-    pub authentication_data:             Option<Vec<u8>>,
-    pub request_problem_information:     Option<bool>,
-    pub will_delay_interval:             Option<u32>,
-    pub request_response_information:    Option<bool>,
-    pub response_information:            Option<String>,
-    pub server_reference:                Option<String>,
-    pub reason_string:                   Option<String>,
-    pub receive_maximum:                 Option<u16>,
-    pub topic_alias_maximum:             Option<u16>,
-    pub topic_alias:                     Option<u16>,
-    pub maximum_qos:                     Option<u8>,
-    pub retain_available:                Option<bool>,
-    pub user_properties:                 Vec<(String, String)>,
-    pub maximum_packet_size:             Option<u32>,
+    pub payload_format_indicator: Option<u8>,
+    pub message_expiry_interval: Option<u32>,
+    pub content_type: Option<String>,
+    pub response_topic: Option<String>,
+    pub correlation_data: Option<Vec<u8>>,
+    pub subscription_identifier: Option<u32>,
+    pub session_expiry_interval: Option<u32>,
+    pub assigned_client_id: Option<String>,
+    pub server_keep_alive: Option<u16>,
+    pub authentication_method: Option<String>,
+    pub authentication_data: Option<Vec<u8>>,
+    pub request_problem_information: Option<bool>,
+    pub will_delay_interval: Option<u32>,
+    pub request_response_information: Option<bool>,
+    pub response_information: Option<String>,
+    pub server_reference: Option<String>,
+    pub reason_string: Option<String>,
+    pub receive_maximum: Option<u16>,
+    pub topic_alias_maximum: Option<u16>,
+    pub topic_alias: Option<u16>,
+    pub maximum_qos: Option<u8>,
+    pub retain_available: Option<bool>,
+    pub user_properties: Vec<(String, String)>,
+    pub maximum_packet_size: Option<u32>,
     pub wildcard_subscription_available: Option<bool>,
-    pub subscription_ids_available:      Option<bool>,
-    pub shared_subscription_available:   Option<bool>,
+    pub subscription_ids_available: Option<bool>,
+    pub shared_subscription_available: Option<bool>,
 }
 
 impl Properties {
@@ -235,45 +235,61 @@ impl Properties {
             };
         }
 
-        one_byte!(prop::PAYLOAD_FORMAT_INDICATOR,     self.payload_format_indicator);
-        four_byte!(prop::MESSAGE_EXPIRY_INTERVAL,     self.message_expiry_interval);
-        utf8!(prop::CONTENT_TYPE,                     self.content_type);
-        utf8!(prop::RESPONSE_TOPIC,                   self.response_topic);
-        binary!(prop::CORRELATION_DATA,               self.correlation_data);
+        one_byte!(
+            prop::PAYLOAD_FORMAT_INDICATOR,
+            self.payload_format_indicator
+        );
+        four_byte!(prop::MESSAGE_EXPIRY_INTERVAL, self.message_expiry_interval);
+        utf8!(prop::CONTENT_TYPE, self.content_type);
+        utf8!(prop::RESPONSE_TOPIC, self.response_topic);
+        binary!(prop::CORRELATION_DATA, self.correlation_data);
         if let Some(v) = self.subscription_identifier {
             props.push(prop::SUBSCRIPTION_IDENTIFIER);
             encode_vbi(v, &mut props);
         }
-        four_byte!(prop::SESSION_EXPIRY_INTERVAL,     self.session_expiry_interval);
-        utf8!(prop::ASSIGNED_CLIENT_ID,               self.assigned_client_id);
-        two_byte!(prop::SERVER_KEEP_ALIVE,            self.server_keep_alive);
-        utf8!(prop::AUTHENTICATION_METHOD,            self.authentication_method);
-        binary!(prop::AUTHENTICATION_DATA,            self.authentication_data);
-        one_byte!(prop::REQUEST_PROBLEM_INFORMATION,
-            self.request_problem_information.map(|b| b as u8));
-        four_byte!(prop::WILL_DELAY_INTERVAL,         self.will_delay_interval);
-        one_byte!(prop::REQUEST_RESPONSE_INFORMATION,
-            self.request_response_information.map(|b| b as u8));
-        utf8!(prop::RESPONSE_INFORMATION,             self.response_information);
-        utf8!(prop::SERVER_REFERENCE,                 self.server_reference);
-        utf8!(prop::REASON_STRING,                    self.reason_string);
-        two_byte!(prop::RECEIVE_MAXIMUM,              self.receive_maximum);
-        two_byte!(prop::TOPIC_ALIAS_MAXIMUM,          self.topic_alias_maximum);
-        two_byte!(prop::TOPIC_ALIAS,                  self.topic_alias);
-        one_byte!(prop::MAXIMUM_QOS,                  self.maximum_qos);
-        one_byte!(prop::RETAIN_AVAILABLE,             self.retain_available.map(|b| b as u8));
+        four_byte!(prop::SESSION_EXPIRY_INTERVAL, self.session_expiry_interval);
+        utf8!(prop::ASSIGNED_CLIENT_ID, self.assigned_client_id);
+        two_byte!(prop::SERVER_KEEP_ALIVE, self.server_keep_alive);
+        utf8!(prop::AUTHENTICATION_METHOD, self.authentication_method);
+        binary!(prop::AUTHENTICATION_DATA, self.authentication_data);
+        one_byte!(
+            prop::REQUEST_PROBLEM_INFORMATION,
+            self.request_problem_information.map(|b| b as u8)
+        );
+        four_byte!(prop::WILL_DELAY_INTERVAL, self.will_delay_interval);
+        one_byte!(
+            prop::REQUEST_RESPONSE_INFORMATION,
+            self.request_response_information.map(|b| b as u8)
+        );
+        utf8!(prop::RESPONSE_INFORMATION, self.response_information);
+        utf8!(prop::SERVER_REFERENCE, self.server_reference);
+        utf8!(prop::REASON_STRING, self.reason_string);
+        two_byte!(prop::RECEIVE_MAXIMUM, self.receive_maximum);
+        two_byte!(prop::TOPIC_ALIAS_MAXIMUM, self.topic_alias_maximum);
+        two_byte!(prop::TOPIC_ALIAS, self.topic_alias);
+        one_byte!(prop::MAXIMUM_QOS, self.maximum_qos);
+        one_byte!(
+            prop::RETAIN_AVAILABLE,
+            self.retain_available.map(|b| b as u8)
+        );
         for (k, v) in &self.user_properties {
             props.push(prop::USER_PROPERTY);
             push_str(k, &mut props);
             push_str(v, &mut props);
         }
-        four_byte!(prop::MAXIMUM_PACKET_SIZE,         self.maximum_packet_size);
-        one_byte!(prop::WILDCARD_SUBSCRIPTION_AVAILABLE,
-            self.wildcard_subscription_available.map(|b| b as u8));
-        one_byte!(prop::SUBSCRIPTION_IDS_AVAILABLE,
-            self.subscription_ids_available.map(|b| b as u8));
-        one_byte!(prop::SHARED_SUBSCRIPTION_AVAILABLE,
-            self.shared_subscription_available.map(|b| b as u8));
+        four_byte!(prop::MAXIMUM_PACKET_SIZE, self.maximum_packet_size);
+        one_byte!(
+            prop::WILDCARD_SUBSCRIPTION_AVAILABLE,
+            self.wildcard_subscription_available.map(|b| b as u8)
+        );
+        one_byte!(
+            prop::SUBSCRIPTION_IDS_AVAILABLE,
+            self.subscription_ids_available.map(|b| b as u8)
+        );
+        one_byte!(
+            prop::SHARED_SUBSCRIPTION_AVAILABLE,
+            self.shared_subscription_available.map(|b| b as u8)
+        );
 
         encode_vbi(props.len() as u32, buf);
         buf.extend_from_slice(&props);
@@ -386,9 +402,9 @@ impl Properties {
                     *pos += 1;
                 }
                 unknown => {
-                    return Err(DecodeError::Protocol(
-                        format!("unknown property id: {unknown:#04x}"),
-                    ));
+                    return Err(DecodeError::Protocol(format!(
+                        "unknown property id: {unknown:#04x}"
+                    )));
                 }
             }
         }
@@ -404,7 +420,7 @@ impl Properties {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum QoS {
     #[default]
-    AtMostOnce  = 0,
+    AtMostOnce = 0,
     AtLeastOnce = 1,
     ExactlyOnce = 2,
 }
@@ -412,7 +428,7 @@ pub enum QoS {
 impl std::fmt::Display for QoS {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            QoS::AtMostOnce  => write!(f, "QoS0"),
+            QoS::AtMostOnce => write!(f, "QoS0"),
             QoS::AtLeastOnce => write!(f, "QoS1"),
             QoS::ExactlyOnce => write!(f, "QoS2"),
         }
@@ -434,35 +450,35 @@ impl TryFrom<u8> for QoS {
 /// Parameters for building a CONNECT packet.
 #[derive(Debug, Clone)]
 pub struct ConnectParams {
-    pub client_id:   String,
-    pub keep_alive:  u16,
+    pub client_id: String,
+    pub keep_alive: u16,
     pub clean_start: bool,
-    pub properties:  Properties,
+    pub properties: Properties,
     /// Optional will message [MQTT-3.1.2-7].
-    pub will:        Option<WillParams>,
+    pub will: Option<WillParams>,
     /// Optional username [MQTT-3.1.3-4].
-    pub username:    Option<String>,
+    pub username: Option<String>,
     /// Optional password [MQTT-3.1.3-5].
-    pub password:    Option<Vec<u8>>,
+    pub password: Option<Vec<u8>>,
 }
 
 /// Will message parameters sent inside CONNECT [MQTT-3.1.2-8..13].
 #[derive(Debug, Clone)]
 pub struct WillParams {
-    pub topic:      String,
-    pub payload:    Vec<u8>,
-    pub qos:        QoS,
-    pub retain:     bool,
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: QoS,
+    pub retain: bool,
     pub properties: Properties,
 }
 
 impl WillParams {
     pub fn new(topic: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
         Self {
-            topic:      topic.into(),
-            payload:    payload.into(),
-            qos:        QoS::AtMostOnce,
-            retain:     false,
+            topic: topic.into(),
+            payload: payload.into(),
+            qos: QoS::AtMostOnce,
+            retain: false,
             properties: Properties::default(),
         }
     }
@@ -471,13 +487,13 @@ impl WillParams {
 impl ConnectParams {
     pub fn new(client_id: impl Into<String>) -> Self {
         Self {
-            client_id:   client_id.into(),
-            keep_alive:  60,
+            client_id: client_id.into(),
+            keep_alive: 60,
             clean_start: true,
-            properties:  Properties::default(),
-            will:        None,
-            username:    None,
-            password:    None,
+            properties: Properties::default(),
+            will: None,
+            username: None,
+            password: None,
         }
     }
 }
@@ -488,80 +504,80 @@ pub struct ConnAck {
     /// True when the broker restored a previous session [MQTT-3.2.2-1].
     pub session_present: bool,
     /// 0x00 = Success [MQTT-3.2.2-2].
-    pub reason_code:     u8,
-    pub properties:      Properties,
+    pub reason_code: u8,
+    pub properties: Properties,
 }
 
 /// A received PUBLISH packet [MQTT-3.3].
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Publish {
-    pub dup:       bool,
-    pub qos:       QoS,
-    pub retain:    bool,
-    pub topic:     String,
+    pub dup: bool,
+    pub qos: QoS,
+    pub retain: bool,
+    pub topic: String,
     pub packet_id: Option<u16>,
     pub properties: Properties,
-    pub payload:   Vec<u8>,
+    pub payload: Vec<u8>,
 }
 
 /// Parameters for building a PUBLISH packet.
 #[derive(Debug, Clone)]
 pub struct PublishParams {
-    pub topic:      String,
-    pub payload:    Vec<u8>,
-    pub qos:        QoS,
-    pub retain:     bool,
-    pub dup:        bool,
-    pub packet_id:  Option<u16>,
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: QoS,
+    pub retain: bool,
+    pub dup: bool,
+    pub packet_id: Option<u16>,
     pub properties: Properties,
 }
 
 impl PublishParams {
     pub fn qos0(topic: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
         Self {
-            topic:      topic.into(),
-            payload:    payload.into(),
-            qos:        QoS::AtMostOnce,
-            retain:     false,
-            dup:        false,
-            packet_id:  None,
+            topic: topic.into(),
+            payload: payload.into(),
+            qos: QoS::AtMostOnce,
+            retain: false,
+            dup: false,
+            packet_id: None,
             properties: Properties::default(),
         }
     }
 
     pub fn qos1(topic: impl Into<String>, payload: impl Into<Vec<u8>>, packet_id: u16) -> Self {
         Self {
-            topic:      topic.into(),
-            payload:    payload.into(),
-            qos:        QoS::AtLeastOnce,
-            retain:     false,
-            dup:        false,
-            packet_id:  Some(packet_id),
+            topic: topic.into(),
+            payload: payload.into(),
+            qos: QoS::AtLeastOnce,
+            retain: false,
+            dup: false,
+            packet_id: Some(packet_id),
             properties: Properties::default(),
         }
     }
 
     pub fn qos2(topic: impl Into<String>, payload: impl Into<Vec<u8>>, packet_id: u16) -> Self {
         Self {
-            topic:      topic.into(),
-            payload:    payload.into(),
-            qos:        QoS::ExactlyOnce,
-            retain:     false,
-            dup:        false,
-            packet_id:  Some(packet_id),
+            topic: topic.into(),
+            payload: payload.into(),
+            qos: QoS::ExactlyOnce,
+            retain: false,
+            dup: false,
+            packet_id: Some(packet_id),
             properties: Properties::default(),
         }
     }
 
     pub fn retained(topic: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
         Self {
-            topic:      topic.into(),
-            payload:    payload.into(),
-            qos:        QoS::AtMostOnce,
-            retain:     true,
-            dup:        false,
-            packet_id:  None,
+            topic: topic.into(),
+            payload: payload.into(),
+            qos: QoS::AtMostOnce,
+            retain: true,
+            dup: false,
+            packet_id: None,
             properties: Properties::default(),
         }
     }
@@ -571,28 +587,27 @@ impl PublishParams {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct PubAck {
-    pub packet_id:   u16,
+    pub packet_id: u16,
     pub reason_code: u8,
-    pub properties:  Properties,
+    pub properties: Properties,
 }
 
 /// Parameters for a SUBSCRIBE packet.
 #[derive(Debug, Clone)]
 pub struct SubscribeParams {
-    pub packet_id:   u16,
-    pub filters:     Vec<(String, SubscribeOptions)>,
-    pub properties:  Properties,
+    pub packet_id: u16,
+    pub filters: Vec<(String, SubscribeOptions)>,
+    pub properties: Properties,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct SubscribeOptions {
-    pub qos:                   QoS,
-    pub no_local:              bool,
-    pub retain_as_published:   bool,
+    pub qos: QoS,
+    pub no_local: bool,
+    pub retain_as_published: bool,
     /// 0 = send retained on subscribe, 1 = only if new sub, 2 = never send
-    pub retain_handling:       u8,
+    pub retain_handling: u8,
 }
-
 
 impl SubscribeParams {
     /// Convenience: single-topic subscription with default options.
@@ -601,7 +616,10 @@ impl SubscribeParams {
             packet_id,
             filters: vec![(
                 topic.into(),
-                SubscribeOptions { qos, ..Default::default() },
+                SubscribeOptions {
+                    qos,
+                    ..Default::default()
+                },
             )],
             properties: Properties::default(),
         }
@@ -612,16 +630,16 @@ impl SubscribeParams {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SubAck {
-    pub packet_id:    u16,
+    pub packet_id: u16,
     pub reason_codes: Vec<u8>,
-    pub properties:   Properties,
+    pub properties: Properties,
 }
 
 /// Parameters for an UNSUBSCRIBE packet.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeParams {
-    pub packet_id:  u16,
-    pub filters:    Vec<String>,
+    pub packet_id: u16,
+    pub filters: Vec<String>,
     pub properties: Properties,
 }
 
@@ -629,7 +647,7 @@ impl UnsubscribeParams {
     pub fn simple(packet_id: u16, filter: impl Into<String>) -> Self {
         Self {
             packet_id,
-            filters:    vec![filter.into()],
+            filters: vec![filter.into()],
             properties: Properties::default(),
         }
     }
@@ -639,9 +657,9 @@ impl UnsubscribeParams {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct UnsubAck {
-    pub packet_id:    u16,
+    pub packet_id: u16,
     pub reason_codes: Vec<u8>,
-    pub properties:   Properties,
+    pub properties: Properties,
 }
 
 /// A received DISCONNECT packet [MQTT-3.14].
@@ -649,7 +667,7 @@ pub struct UnsubAck {
 #[allow(dead_code)]
 pub struct Disconnect {
     pub reason_code: u8,
-    pub properties:  Properties,
+    pub properties: Properties,
 }
 
 /// All packets that can be received from a broker.
@@ -666,21 +684,34 @@ pub enum Packet {
     UnsubAck(UnsubAck),
     PingResp,
     Disconnect(Disconnect),
-    Auth { reason_code: u8, properties: Properties },
+    Auth {
+        reason_code: u8,
+        properties: Properties,
+    },
 }
 
 // ─── Display (concise human-readable output) ─────────────────────────────────
 
 impl std::fmt::Display for ConnAck {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CONNACK(reason={:#04x}, session_present={})", self.reason_code, self.session_present)
+        write!(
+            f,
+            "CONNACK(reason={:#04x}, session_present={})",
+            self.reason_code, self.session_present
+        )
     }
 }
 
 impl std::fmt::Display for Publish {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PUBLISH(topic=\"{}\", qos={}, retain={}, payload={} bytes)",
-            self.topic, self.qos, self.retain, self.payload.len())
+        write!(
+            f,
+            "PUBLISH(topic=\"{}\", qos={}, retain={}, payload={} bytes)",
+            self.topic,
+            self.qos,
+            self.retain,
+            self.payload.len()
+        )
     }
 }
 
@@ -692,13 +723,21 @@ impl std::fmt::Display for PubAck {
 
 impl std::fmt::Display for SubAck {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SUBACK(id={}, reasons={:?})", self.packet_id, self.reason_codes)
+        write!(
+            f,
+            "SUBACK(id={}, reasons={:?})",
+            self.packet_id, self.reason_codes
+        )
     }
 }
 
 impl std::fmt::Display for UnsubAck {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UNSUBACK(id={}, reasons={:?})", self.packet_id, self.reason_codes)
+        write!(
+            f,
+            "UNSUBACK(id={}, reasons={:?})",
+            self.packet_id, self.reason_codes
+        )
     }
 }
 
@@ -711,15 +750,15 @@ impl std::fmt::Display for Disconnect {
 impl std::fmt::Display for Packet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Packet::ConnAck(c)    => write!(f, "{c}"),
-            Packet::Publish(p)    => write!(f, "{p}"),
-            Packet::PubAck(a)     => write!(f, "PUBACK({a})"),
-            Packet::PubRec(a)     => write!(f, "PUBREC({a})"),
-            Packet::PubRel(a)     => write!(f, "PUBREL({a})"),
-            Packet::PubComp(a)    => write!(f, "PUBCOMP({a})"),
-            Packet::SubAck(s)     => write!(f, "{s}"),
-            Packet::UnsubAck(s)   => write!(f, "{s}"),
-            Packet::PingResp      => write!(f, "PINGRESP"),
+            Packet::ConnAck(c) => write!(f, "{c}"),
+            Packet::Publish(p) => write!(f, "{p}"),
+            Packet::PubAck(a) => write!(f, "PUBACK({a})"),
+            Packet::PubRec(a) => write!(f, "PUBREC({a})"),
+            Packet::PubRel(a) => write!(f, "PUBREL({a})"),
+            Packet::PubComp(a) => write!(f, "PUBCOMP({a})"),
+            Packet::SubAck(s) => write!(f, "{s}"),
+            Packet::UnsubAck(s) => write!(f, "{s}"),
+            Packet::PingResp => write!(f, "PINGRESP"),
             Packet::Disconnect(d) => write!(f, "{d}"),
             Packet::Auth { reason_code, .. } => write!(f, "AUTH(reason={reason_code:#04x})"),
         }
@@ -931,8 +970,8 @@ pub fn decode_packet(buf: &[u8]) -> Result<Option<(Packet, usize)>, DecodeError>
     }
 
     let packet_type = buf[0] >> 4;
-    let flags       = buf[0] & 0x0F;
-    let body        = &buf[pos..total];
+    let flags = buf[0] & 0x0F;
+    let body = &buf[pos..total];
 
     let packet = match packet_type {
         // CONNACK
@@ -957,7 +996,7 @@ pub fn decode_packet(buf: &[u8]) -> Result<Option<(Packet, usize)>, DecodeError>
         14 => Packet::Disconnect(decode_disconnect(body)?),
         // AUTH
         15 => decode_auth(body)?,
-        t  => return Err(DecodeError::UnknownPacketType(t)),
+        t => return Err(DecodeError::UnknownPacketType(t)),
     };
 
     Ok(Some((packet, total)))
@@ -968,23 +1007,27 @@ fn decode_connack(body: &[u8], _flags: u8) -> Result<Packet, DecodeError> {
         return Err(DecodeError::InsufficientData);
     }
     let session_present = body[0] & 0x01 != 0;
-    let reason_code     = body[1];
+    let reason_code = body[1];
     let mut pos = 2;
     let properties = if pos < body.len() {
         Properties::decode(body, &mut pos)?
     } else {
         Properties::default()
     };
-    Ok(Packet::ConnAck(ConnAck { session_present, reason_code, properties }))
+    Ok(Packet::ConnAck(ConnAck {
+        session_present,
+        reason_code,
+        properties,
+    }))
 }
 
 fn decode_publish(body: &[u8], flags: u8) -> Result<Packet, DecodeError> {
-    let dup    = flags & 0x08 != 0;
-    let qos    = QoS::try_from((flags >> 1) & 0x03)?;
+    let dup = flags & 0x08 != 0;
+    let qos = QoS::try_from((flags >> 1) & 0x03)?;
     let retain = flags & 0x01 != 0;
 
     let mut pos = 0;
-    let topic   = read_str(body, &mut pos)?;
+    let topic = read_str(body, &mut pos)?;
 
     let packet_id = if qos != QoS::AtMostOnce {
         Some(read_u16(body, &mut pos)?)
@@ -993,47 +1036,72 @@ fn decode_publish(body: &[u8], flags: u8) -> Result<Packet, DecodeError> {
     };
 
     let properties = Properties::decode(body, &mut pos)?;
-    let payload    = body[pos..].to_vec();
+    let payload = body[pos..].to_vec();
 
-    Ok(Packet::Publish(Publish { dup, qos, retain, topic, packet_id, properties, payload }))
+    Ok(Packet::Publish(Publish {
+        dup,
+        qos,
+        retain,
+        topic,
+        packet_id,
+        properties,
+        payload,
+    }))
 }
 
 fn decode_pub_ack(body: &[u8]) -> Result<PubAck, DecodeError> {
     if body.len() < 2 {
         return Err(DecodeError::InsufficientData);
     }
-    let mut pos     = 0;
-    let packet_id   = read_u16(body, &mut pos)?;
+    let mut pos = 0;
+    let packet_id = read_u16(body, &mut pos)?;
     // Reason code may be absent when remaining_length == 2 (success assumed).
     let reason_code = if body.len() > 2 { body[pos] } else { 0x00 };
-    if body.len() > 2 { pos += 1; }
+    if body.len() > 2 {
+        pos += 1;
+    }
     let properties = if pos < body.len() {
         Properties::decode(body, &mut pos)?
     } else {
         Properties::default()
     };
-    Ok(PubAck { packet_id, reason_code, properties })
+    Ok(PubAck {
+        packet_id,
+        reason_code,
+        properties,
+    })
 }
 
 fn decode_suback(body: &[u8]) -> Result<SubAck, DecodeError> {
-    let mut pos   = 0;
+    let mut pos = 0;
     let packet_id = read_u16(body, &mut pos)?;
     let properties = Properties::decode(body, &mut pos)?;
     let reason_codes = body[pos..].to_vec();
-    Ok(SubAck { packet_id, reason_codes, properties })
+    Ok(SubAck {
+        packet_id,
+        reason_codes,
+        properties,
+    })
 }
 
 fn decode_unsuback(body: &[u8]) -> Result<UnsubAck, DecodeError> {
-    let mut pos   = 0;
+    let mut pos = 0;
     let packet_id = read_u16(body, &mut pos)?;
     let properties = Properties::decode(body, &mut pos)?;
     let reason_codes = body[pos..].to_vec();
-    Ok(UnsubAck { packet_id, reason_codes, properties })
+    Ok(UnsubAck {
+        packet_id,
+        reason_codes,
+        properties,
+    })
 }
 
 fn decode_disconnect(body: &[u8]) -> Result<Disconnect, DecodeError> {
     if body.is_empty() {
-        return Ok(Disconnect { reason_code: 0x00, properties: Properties::default() });
+        return Ok(Disconnect {
+            reason_code: 0x00,
+            properties: Properties::default(),
+        });
     }
     let reason_code = body[0];
     let mut pos = 1;
@@ -1042,12 +1110,18 @@ fn decode_disconnect(body: &[u8]) -> Result<Disconnect, DecodeError> {
     } else {
         Properties::default()
     };
-    Ok(Disconnect { reason_code, properties })
+    Ok(Disconnect {
+        reason_code,
+        properties,
+    })
 }
 
 fn decode_auth(body: &[u8]) -> Result<Packet, DecodeError> {
     if body.is_empty() {
-        return Ok(Packet::Auth { reason_code: 0x00, properties: Properties::default() });
+        return Ok(Packet::Auth {
+            reason_code: 0x00,
+            properties: Properties::default(),
+        });
     }
     let reason_code = body[0];
     let mut pos = 1;
@@ -1056,7 +1130,10 @@ fn decode_auth(body: &[u8]) -> Result<Packet, DecodeError> {
     } else {
         Properties::default()
     };
-    Ok(Packet::Auth { reason_code, properties })
+    Ok(Packet::Auth {
+        reason_code,
+        properties,
+    })
 }
 
 #[cfg(test)]
@@ -1069,54 +1146,93 @@ mod tests {
 
     #[test]
     fn display_qos() {
-        assert_eq!(QoS::AtMostOnce.to_string(),  "QoS0");
+        assert_eq!(QoS::AtMostOnce.to_string(), "QoS0");
         assert_eq!(QoS::AtLeastOnce.to_string(), "QoS1");
         assert_eq!(QoS::ExactlyOnce.to_string(), "QoS2");
     }
 
     #[test]
     fn display_connack() {
-        let c = ConnAck { session_present: false, reason_code: 0x00, properties: default_props() };
+        let c = ConnAck {
+            session_present: false,
+            reason_code: 0x00,
+            properties: default_props(),
+        };
         assert_eq!(c.to_string(), "CONNACK(reason=0x00, session_present=false)");
 
-        let c = ConnAck { session_present: true, reason_code: 0x85, properties: default_props() };
+        let c = ConnAck {
+            session_present: true,
+            reason_code: 0x85,
+            properties: default_props(),
+        };
         assert_eq!(c.to_string(), "CONNACK(reason=0x85, session_present=true)");
     }
 
     #[test]
     fn display_publish() {
         let p = Publish {
-            dup: false, qos: QoS::AtLeastOnce, retain: true,
-            topic: "a/b".into(), packet_id: Some(1),
-            properties: default_props(), payload: vec![0; 42],
+            dup: false,
+            qos: QoS::AtLeastOnce,
+            retain: true,
+            topic: "a/b".into(),
+            packet_id: Some(1),
+            properties: default_props(),
+            payload: vec![0; 42],
         };
-        assert_eq!(p.to_string(), "PUBLISH(topic=\"a/b\", qos=QoS1, retain=true, payload=42 bytes)");
+        assert_eq!(
+            p.to_string(),
+            "PUBLISH(topic=\"a/b\", qos=QoS1, retain=true, payload=42 bytes)"
+        );
     }
 
     #[test]
     fn display_puback_variants() {
-        let a = PubAck { packet_id: 3, reason_code: 0x00, properties: default_props() };
-        assert_eq!(Packet::PubAck(a.clone()).to_string(), "PUBACK(id=3, reason=0x00)");
-        assert_eq!(Packet::PubRec(a.clone()).to_string(), "PUBREC(id=3, reason=0x00)");
-        assert_eq!(Packet::PubRel(a.clone()).to_string(), "PUBREL(id=3, reason=0x00)");
-        assert_eq!(Packet::PubComp(a).to_string(),        "PUBCOMP(id=3, reason=0x00)");
+        let a = PubAck {
+            packet_id: 3,
+            reason_code: 0x00,
+            properties: default_props(),
+        };
+        assert_eq!(
+            Packet::PubAck(a.clone()).to_string(),
+            "PUBACK(id=3, reason=0x00)"
+        );
+        assert_eq!(
+            Packet::PubRec(a.clone()).to_string(),
+            "PUBREC(id=3, reason=0x00)"
+        );
+        assert_eq!(
+            Packet::PubRel(a.clone()).to_string(),
+            "PUBREL(id=3, reason=0x00)"
+        );
+        assert_eq!(Packet::PubComp(a).to_string(), "PUBCOMP(id=3, reason=0x00)");
     }
 
     #[test]
     fn display_suback() {
-        let s = SubAck { packet_id: 1, reason_codes: vec![0, 1], properties: default_props() };
+        let s = SubAck {
+            packet_id: 1,
+            reason_codes: vec![0, 1],
+            properties: default_props(),
+        };
         assert_eq!(s.to_string(), "SUBACK(id=1, reasons=[0, 1])");
     }
 
     #[test]
     fn display_unsuback() {
-        let u = UnsubAck { packet_id: 2, reason_codes: vec![0], properties: default_props() };
+        let u = UnsubAck {
+            packet_id: 2,
+            reason_codes: vec![0],
+            properties: default_props(),
+        };
         assert_eq!(u.to_string(), "UNSUBACK(id=2, reasons=[0])");
     }
 
     #[test]
     fn display_disconnect() {
-        let d = Disconnect { reason_code: 0x8e, properties: default_props() };
+        let d = Disconnect {
+            reason_code: 0x8e,
+            properties: default_props(),
+        };
         assert_eq!(d.to_string(), "DISCONNECT(reason=0x8e)");
     }
 
@@ -1127,7 +1243,10 @@ mod tests {
 
     #[test]
     fn display_auth() {
-        let p = Packet::Auth { reason_code: 0x18, properties: default_props() };
+        let p = Packet::Auth {
+            reason_code: 0x18,
+            properties: default_props(),
+        };
         assert_eq!(p.to_string(), "AUTH(reason=0x18)");
     }
 
@@ -1172,11 +1291,25 @@ mod tests {
 
     #[test]
     fn vbi_roundtrip_various() {
-        for val in [1, 42, 127, 128, 16383, 16384, 2_097_151, 2_097_152, 268_435_455] {
+        for val in [
+            1,
+            42,
+            127,
+            128,
+            16383,
+            16384,
+            2_097_151,
+            2_097_152,
+            268_435_455,
+        ] {
             let mut buf = Vec::new();
             encode_vbi(val, &mut buf);
             let mut pos = 0;
-            assert_eq!(decode_vbi(&buf, &mut pos).unwrap(), val, "roundtrip failed for {val}");
+            assert_eq!(
+                decode_vbi(&buf, &mut pos).unwrap(),
+                val,
+                "roundtrip failed for {val}"
+            );
         }
     }
 
@@ -1197,31 +1330,31 @@ mod tests {
     #[test]
     fn properties_roundtrip_all_types() {
         let props = Properties {
-            payload_format_indicator:     Some(1),
-            message_expiry_interval:      Some(3600),
-            content_type:                 Some("application/json".to_string()),
-            response_topic:               Some("reply/topic".to_string()),
-            correlation_data:             Some(b"corr-id".to_vec()),
-            subscription_identifier:      Some(42),
-            session_expiry_interval:      Some(300),
-            server_keep_alive:            Some(120),
-            receive_maximum:              Some(50),
-            topic_alias_maximum:          Some(10),
-            topic_alias:                  Some(5),
-            maximum_qos:                  Some(1),
-            retain_available:             Some(true),
-            user_properties:              vec![
+            payload_format_indicator: Some(1),
+            message_expiry_interval: Some(3600),
+            content_type: Some("application/json".to_string()),
+            response_topic: Some("reply/topic".to_string()),
+            correlation_data: Some(b"corr-id".to_vec()),
+            subscription_identifier: Some(42),
+            session_expiry_interval: Some(300),
+            server_keep_alive: Some(120),
+            receive_maximum: Some(50),
+            topic_alias_maximum: Some(10),
+            topic_alias: Some(5),
+            maximum_qos: Some(1),
+            retain_available: Some(true),
+            user_properties: vec![
                 ("key1".to_string(), "val1".to_string()),
                 ("key2".to_string(), "val2".to_string()),
             ],
-            maximum_packet_size:          Some(1_048_576),
+            maximum_packet_size: Some(1_048_576),
             wildcard_subscription_available: Some(true),
-            subscription_ids_available:   Some(false),
+            subscription_ids_available: Some(false),
             shared_subscription_available: Some(true),
-            reason_string:                Some("test reason".to_string()),
+            reason_string: Some("test reason".to_string()),
             request_response_information: Some(true),
-            request_problem_information:  Some(false),
-            will_delay_interval:          Some(10),
+            request_problem_information: Some(false),
+            will_delay_interval: Some(10),
             ..Properties::default()
         };
 
@@ -1236,7 +1369,10 @@ mod tests {
         assert_eq!(decoded.message_expiry_interval, Some(3600));
         assert_eq!(decoded.content_type.as_deref(), Some("application/json"));
         assert_eq!(decoded.response_topic.as_deref(), Some("reply/topic"));
-        assert_eq!(decoded.correlation_data.as_deref(), Some(b"corr-id".as_slice()));
+        assert_eq!(
+            decoded.correlation_data.as_deref(),
+            Some(b"corr-id".as_slice())
+        );
         assert_eq!(decoded.subscription_identifier, Some(42));
         assert_eq!(decoded.session_expiry_interval, Some(300));
         assert_eq!(decoded.server_keep_alive, Some(120));
@@ -1246,8 +1382,14 @@ mod tests {
         assert_eq!(decoded.maximum_qos, Some(1));
         assert_eq!(decoded.retain_available, Some(true));
         assert_eq!(decoded.user_properties.len(), 2);
-        assert_eq!(decoded.user_properties[0], ("key1".to_string(), "val1".to_string()));
-        assert_eq!(decoded.user_properties[1], ("key2".to_string(), "val2".to_string()));
+        assert_eq!(
+            decoded.user_properties[0],
+            ("key1".to_string(), "val1".to_string())
+        );
+        assert_eq!(
+            decoded.user_properties[1],
+            ("key2".to_string(), "val2".to_string())
+        );
         assert_eq!(decoded.maximum_packet_size, Some(1_048_576));
         assert_eq!(decoded.wildcard_subscription_available, Some(true));
         assert_eq!(decoded.subscription_ids_available, Some(false));
@@ -1283,10 +1425,10 @@ mod tests {
     fn connect_with_will_encodes() {
         let mut params = ConnectParams::new("will-client");
         params.will = Some(WillParams {
-            topic:      "will/topic".to_string(),
-            payload:    b"will-payload".to_vec(),
-            qos:        QoS::AtLeastOnce,
-            retain:     true,
+            topic: "will/topic".to_string(),
+            payload: b"will-payload".to_vec(),
+            qos: QoS::AtLeastOnce,
+            retain: true,
             properties: Properties::default(),
         });
         let encoded = encode_connect(&params);
@@ -1355,10 +1497,10 @@ mod tests {
     fn publish_with_properties_roundtrip() {
         let props = Properties {
             payload_format_indicator: Some(1),
-            message_expiry_interval:  Some(60),
-            response_topic:           Some("reply/here".to_string()),
-            correlation_data:         Some(b"abc".to_vec()),
-            user_properties:          vec![("k".to_string(), "v".to_string())],
+            message_expiry_interval: Some(60),
+            response_topic: Some("reply/here".to_string()),
+            correlation_data: Some(b"abc".to_vec()),
+            user_properties: vec![("k".to_string(), "v".to_string())],
             ..Properties::default()
         };
         let mut params = PublishParams::qos0("prop/topic", b"with-props".to_vec());
@@ -1370,8 +1512,14 @@ mod tests {
                 assert_eq!(p.properties.payload_format_indicator, Some(1));
                 assert_eq!(p.properties.message_expiry_interval, Some(60));
                 assert_eq!(p.properties.response_topic.as_deref(), Some("reply/here"));
-                assert_eq!(p.properties.correlation_data.as_deref(), Some(b"abc".as_slice()));
-                assert_eq!(p.properties.user_properties, vec![("k".to_string(), "v".to_string())]);
+                assert_eq!(
+                    p.properties.correlation_data.as_deref(),
+                    Some(b"abc".as_slice())
+                );
+                assert_eq!(
+                    p.properties.user_properties,
+                    vec![("k".to_string(), "v".to_string())]
+                );
             }
             other => panic!("expected Publish, got {other}"),
         }
@@ -1696,10 +1844,10 @@ mod tests {
             filters: vec![(
                 "test/topic".to_string(),
                 SubscribeOptions {
-                    qos:                 QoS::ExactlyOnce,
-                    no_local:            true,
+                    qos: QoS::ExactlyOnce,
+                    no_local: true,
                     retain_as_published: true,
-                    retain_handling:     2,
+                    retain_handling: 2,
                 },
             )],
             properties: Properties::default(),
@@ -1717,8 +1865,20 @@ mod tests {
         let params = SubscribeParams {
             packet_id: 10,
             filters: vec![
-                ("a/b".to_string(), SubscribeOptions { qos: QoS::AtMostOnce, ..Default::default() }),
-                ("c/d".to_string(), SubscribeOptions { qos: QoS::AtLeastOnce, ..Default::default() }),
+                (
+                    "a/b".to_string(),
+                    SubscribeOptions {
+                        qos: QoS::AtMostOnce,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "c/d".to_string(),
+                    SubscribeOptions {
+                        qos: QoS::AtLeastOnce,
+                        ..Default::default()
+                    },
+                ),
             ],
             properties: Properties::default(),
         };

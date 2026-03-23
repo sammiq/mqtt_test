@@ -7,11 +7,9 @@
 
 use std::time::Duration;
 
-
 use crate::client::{self, RawClient};
 use crate::codec::{ConnectParams, Packet};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
-
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("MALFORMED PACKETS");
@@ -26,7 +24,10 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(UNSUB_NO_FILTERS, unsubscribe_no_filters(config));
     suite.add(UNSUB_RESERVED_BITS, unsubscribe_reserved_bits(config));
     suite.add(TOPIC_ALIAS_EXCEEDS_MAX, topic_alias_exceeds_maximum(config));
-    suite.add(INVALID_PLUS_WILDCARD, subscribe_invalid_plus_wildcard(config));
+    suite.add(
+        INVALID_PLUS_WILDCARD,
+        subscribe_invalid_plus_wildcard(config),
+    );
     suite.add(NULL_IN_TOPIC, publish_topic_with_null_char(config));
     suite.add(SUB_WRONG_FIXED, subscribe_wrong_fixed_header_bits(config));
     suite.add(USERNAME_TRUNCATED, username_flag_truncated_payload(config));
@@ -42,7 +43,11 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Expect the broker to either send DISCONNECT or close the connection.
-async fn expect_disconnect(client: &mut RawClient, recv_timeout: Duration, ctx: &TestContext) -> TestResult {
+async fn expect_disconnect(
+    client: &mut RawClient,
+    recv_timeout: Duration,
+    ctx: &TestContext,
+) -> TestResult {
     match client.recv(recv_timeout).await {
         Err(_) => TestResult::pass(ctx),
         Ok(Packet::Disconnect(_)) => TestResult::pass(ctx),
@@ -81,7 +86,6 @@ async fn reserved_connect_flags(config: TestConfig<'_>) -> anyhow::Result<TestRe
     client.send_raw(bad_connect).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const BAD_REMAINING_LEN: TestContext = TestContext {
@@ -107,7 +111,6 @@ async fn malformed_remaining_length(config: TestConfig<'_>) -> anyhow::Result<Te
     client.send_raw(bad_packet).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
@@ -136,7 +139,6 @@ async fn publish_empty_topic_no_alias(config: TestConfig<'_>) -> anyhow::Result<
     client.send_raw(bad_publish).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const TOPIC_ALIAS_ZERO: TestContext = TestContext {
@@ -165,7 +167,6 @@ async fn publish_topic_alias_zero(config: TestConfig<'_>) -> anyhow::Result<Test
     client.send_raw(bad_publish).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const SUB_NO_FILTERS: TestContext = TestContext {
@@ -194,7 +195,6 @@ async fn subscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestResu
     client.send_raw(bad_subscribe).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const SUB_INVALID_QOS: TestContext = TestContext {
@@ -224,7 +224,6 @@ async fn subscribe_invalid_qos(config: TestConfig<'_>) -> anyhow::Result<TestRes
     client.send_raw(bad_subscribe).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const INVALID_WILDCARD: TestContext = TestContext {
@@ -263,13 +262,19 @@ async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<Te
             } else {
                 Ok(TestResult::fail(
                     &ctx,
-                    format!("SUBACK accepted invalid wildcard filter: reason codes {:?}", ack.reason_codes),
+                    format!(
+                        "SUBACK accepted invalid wildcard filter: reason codes {:?}",
+                        ack.reason_codes
+                    ),
                 ))
             }
         }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect or error SUBACK", &other)),
+        Ok(other) => Ok(TestResult::fail_packet(
+            &ctx,
+            "disconnect or error SUBACK",
+            &other,
+        )),
     }
-    
 }
 
 const UNSUB_NO_FILTERS: TestContext = TestContext {
@@ -297,7 +302,6 @@ async fn unsubscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestRe
     client.send_raw(bad_unsubscribe).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const UNSUB_RESERVED_BITS: TestContext = TestContext {
@@ -327,7 +331,6 @@ async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Tes
     client.send_raw(bad_unsubscribe).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
@@ -363,7 +366,6 @@ async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> anyhow::Result<T
     client.send_raw(bad_publish).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const INVALID_PLUS_WILDCARD: TestContext = TestContext {
@@ -402,13 +404,19 @@ async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> anyhow::Resu
             } else {
                 Ok(TestResult::fail(
                     &ctx,
-                    format!("SUBACK accepted invalid '+' wildcard filter: reason codes {:?}", ack.reason_codes),
+                    format!(
+                        "SUBACK accepted invalid '+' wildcard filter: reason codes {:?}",
+                        ack.reason_codes
+                    ),
                 ))
             }
         }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect or error SUBACK", &other)),
+        Ok(other) => Ok(TestResult::fail_packet(
+            &ctx,
+            "disconnect or error SUBACK",
+            &other,
+        )),
     }
-    
 }
 
 const NULL_IN_TOPIC: TestContext = TestContext {
@@ -439,7 +447,6 @@ async fn publish_topic_with_null_char(config: TestConfig<'_>) -> anyhow::Result<
     client.send_raw(bad_publish).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const SUB_WRONG_FIXED: TestContext = TestContext {
@@ -469,7 +476,6 @@ async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> anyhow::Re
     client.send_raw(bad_subscribe).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 // ── Username / Password ─────────────────────────────────────────────────────
@@ -503,7 +509,6 @@ async fn username_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     client.send_raw(bad_connect).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const UTF8_SURROGATE: TestContext = TestContext {
@@ -536,7 +541,6 @@ async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> anyhow::Result<
     client.send_raw(bad_publish).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const PUBACK_BAD_FLAGS: TestContext = TestContext {
@@ -564,7 +568,6 @@ async fn puback_invalid_fixed_header_flags(config: TestConfig<'_>) -> anyhow::Re
     client.send_raw(bad_puback).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const WILL_QOS_THREE: TestContext = TestContext {
@@ -600,7 +603,6 @@ async fn will_qos_three(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_raw(bad_connect).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
@@ -626,7 +628,6 @@ async fn disconnect_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Test
     client.send_raw(bad_disconnect).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }
 
 const PASSWORD_TRUNCATED: TestContext = TestContext {
@@ -660,5 +661,4 @@ async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     client.send_raw(bad_connect).await?;
 
     Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
-    
 }

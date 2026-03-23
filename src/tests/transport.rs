@@ -34,7 +34,10 @@ async fn tcp_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     } else {
         Ok(TestResult::fail(
             &ctx,
-            format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
+            format!(
+                "CONNACK reason code {:#04x} (expected 0x00)",
+                connack.reason_code
+            ),
         ))
     }
 }
@@ -52,14 +55,18 @@ async fn tls_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         return Ok(TestResult::skip(&ctx, "TLS not configured"));
     };
     let params = ConnectParams::new("mqtt-test-tls-transport");
-    let (_client, connack) = client::connect_tls(tls_addr, &params, tls, config.recv_timeout).await?;
+    let (_client, connack) =
+        client::connect_tls(tls_addr, &params, tls, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
         Ok(TestResult::pass(&ctx))
     } else {
         Ok(TestResult::fail(
             &ctx,
-            format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
+            format!(
+                "CONNACK reason code {:#04x} (expected 0x00)",
+                connack.reason_code
+            ),
         ))
     }
 }

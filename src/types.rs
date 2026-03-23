@@ -51,7 +51,10 @@ impl TestContext {
 #[derive(Debug, Clone)]
 pub enum Outcome {
     Pass,
-    Fail { message: String, verbose: Option<String> },
+    Fail {
+        message: String,
+        verbose: Option<String>,
+    },
     Skip(String),
 }
 
@@ -64,11 +67,20 @@ pub struct TestResult {
 
 impl TestResult {
     pub fn pass(ctx: &TestContext) -> Self {
-        Self { ctx: *ctx, outcome: Outcome::Pass }
+        Self {
+            ctx: *ctx,
+            outcome: Outcome::Pass,
+        }
     }
 
     pub fn fail(ctx: &TestContext, reason: impl Into<String>) -> Self {
-        Self { ctx: *ctx, outcome: Outcome::Fail { message: reason.into(), verbose: None } }
+        Self {
+            ctx: *ctx,
+            outcome: Outcome::Fail {
+                message: reason.into(),
+                verbose: None,
+            },
+        }
     }
 
     #[allow(dead_code)]
@@ -77,7 +89,13 @@ impl TestResult {
         reason: impl Into<String>,
         verbose: impl Into<String>,
     ) -> Self {
-        Self { ctx: *ctx, outcome: Outcome::Fail { message: reason.into(), verbose: Some(verbose.into()) } }
+        Self {
+            ctx: *ctx,
+            outcome: Outcome::Fail {
+                message: reason.into(),
+                verbose: Some(verbose.into()),
+            },
+        }
     }
 
     pub fn fail_packet(ctx: &TestContext, expected: &str, got: &Packet) -> Self {
@@ -91,7 +109,10 @@ impl TestResult {
     }
 
     pub fn skip(ctx: &TestContext, reason: impl Into<String>) -> Self {
-        Self { ctx: *ctx, outcome: Outcome::Skip(reason.into()) }
+        Self {
+            ctx: *ctx,
+            outcome: Outcome::Skip(reason.into()),
+        }
     }
 }
 
@@ -115,7 +136,10 @@ pub struct SuiteRunner<'a> {
 
 impl<'a> SuiteRunner<'a> {
     pub fn new(name: &'static str) -> Self {
-        Self { name, tests: Vec::new() }
+        Self {
+            name,
+            tests: Vec::new(),
+        }
     }
 
     /// Register a test. The future is created eagerly but not polled until `run()`.
@@ -139,19 +163,22 @@ impl<'a> SuiteRunner<'a> {
         for (ctx, fut) in self.tests {
             results.push(run_test(ctx, pb, fut).await);
         }
-        Suite { name: self.name, results }
+        Suite {
+            name: self.name,
+            results,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codec::{Properties, ConnAck};
+    use crate::codec::{ConnAck, Properties};
 
     const CTX: TestContext = TestContext {
-        refs:        &["TEST-1"],
+        refs: &["TEST-1"],
         description: "test description",
-        compliance:  Compliance::Must,
+        compliance: Compliance::Must,
     };
 
     #[test]
@@ -191,8 +218,8 @@ mod tests {
     fn fail_packet_formats_display_and_debug() {
         let connack = Packet::ConnAck(ConnAck {
             session_present: false,
-            reason_code:     0x85,
-            properties:      Properties::default(),
+            reason_code: 0x85,
+            properties: Properties::default(),
         });
         let r = TestResult::fail_packet(&CTX, "SUBACK(1)", &connack);
         match r.outcome {
@@ -221,9 +248,9 @@ mod tests {
     #[test]
     fn context_copy_semantics() {
         let ctx = TestContext {
-            refs:        &["COPY-1"],
+            refs: &["COPY-1"],
             description: "copy test",
-            compliance:  Compliance::Should,
+            compliance: Compliance::Should,
         };
         let copied = ctx;
         assert_eq!(copied.primary_ref(), "COPY-1");

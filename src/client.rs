@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
@@ -23,7 +23,6 @@ use tokio_rustls::rustls::pki_types as rustls_pki_types;
 use crate::codec::{
     self, ConnectParams, Packet, Properties, PublishParams, SubscribeParams, UnsubscribeParams,
 };
-
 
 // ── Transport ───────────────────────────────────────────────────────────────
 
@@ -122,7 +121,9 @@ impl TlsConfig {
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .context("failed to parse CA certificates")?;
             for cert in certs {
-                root_store.add(cert).context("failed to add CA certificate")?;
+                root_store
+                    .add(cert)
+                    .context("failed to add CA certificate")?;
             }
         }
 
@@ -192,7 +193,7 @@ impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
 // ── RawClient ───────────────────────────────────────────────────────────────
 
 pub struct RawClient {
-    stream:   Transport,
+    stream: Transport,
     read_buf: BytesMut,
 }
 
@@ -214,7 +215,8 @@ impl RawClient {
         let tcp = TcpStream::connect(addr)
             .await
             .with_context(|| format!("TCP connect to {addr} failed"))?;
-        let tls_stream = tls.connector
+        let tls_stream = tls
+            .connector
             .connect(tls.server_name.clone(), tcp)
             .await
             .context("TLS handshake failed")?;
@@ -237,24 +239,28 @@ impl RawClient {
     /// Send PUBACK for a received QoS-1 PUBLISH.
     #[allow(dead_code)]
     pub async fn send_puback(&mut self, packet_id: u16, reason_code: u8) -> Result<()> {
-        self.send_raw(&codec::encode_pub_response(4, packet_id, reason_code)).await
+        self.send_raw(&codec::encode_pub_response(4, packet_id, reason_code))
+            .await
     }
 
     /// Send PUBREC for a received QoS-2 PUBLISH.
     #[allow(dead_code)]
     pub async fn send_pubrec(&mut self, packet_id: u16, reason_code: u8) -> Result<()> {
-        self.send_raw(&codec::encode_pub_response(5, packet_id, reason_code)).await
+        self.send_raw(&codec::encode_pub_response(5, packet_id, reason_code))
+            .await
     }
 
     /// Send PUBREL in response to a PUBREC.
     pub async fn send_pubrel(&mut self, packet_id: u16, reason_code: u8) -> Result<()> {
-        self.send_raw(&codec::encode_pub_response(6, packet_id, reason_code)).await
+        self.send_raw(&codec::encode_pub_response(6, packet_id, reason_code))
+            .await
     }
 
     /// Send PUBCOMP in response to a PUBREL.
     #[allow(dead_code)]
     pub async fn send_pubcomp(&mut self, packet_id: u16, reason_code: u8) -> Result<()> {
-        self.send_raw(&codec::encode_pub_response(7, packet_id, reason_code)).await
+        self.send_raw(&codec::encode_pub_response(7, packet_id, reason_code))
+            .await
     }
 
     pub async fn send_subscribe(&mut self, params: &SubscribeParams) -> Result<()> {
@@ -274,13 +280,22 @@ impl RawClient {
     }
 
     #[allow(dead_code)]
-    pub async fn send_disconnect_with_properties(&mut self, reason_code: u8, properties: &Properties) -> Result<()> {
-        self.send_raw(&codec::encode_disconnect_with_properties(reason_code, properties)).await
+    pub async fn send_disconnect_with_properties(
+        &mut self,
+        reason_code: u8,
+        properties: &Properties,
+    ) -> Result<()> {
+        self.send_raw(&codec::encode_disconnect_with_properties(
+            reason_code,
+            properties,
+        ))
+        .await
     }
 
     #[allow(dead_code)]
     pub async fn send_auth(&mut self, reason_code: u8, properties: &Properties) -> Result<()> {
-        self.send_raw(&codec::encode_auth(reason_code, properties)).await
+        self.send_raw(&codec::encode_auth(reason_code, properties))
+            .await
     }
 
     // ── Raw send (for negative / malformed-packet tests) ─────────────────────
@@ -322,7 +337,11 @@ impl RawClient {
 
             // Need more bytes from the broker.
             let mut tmp = [0u8; 4096];
-            let n = self.stream.read(&mut tmp).await.context("read from broker failed")?;
+            let n = self
+                .stream
+                .read(&mut tmp)
+                .await
+                .context("read from broker failed")?;
             trace!(bytes = n, "read from socket");
             if n == 0 {
                 debug!("broker closed the connection");

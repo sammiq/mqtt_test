@@ -10,7 +10,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 - `src/types.rs` — `Compliance` (Must/Should/May), `Outcome`, `TestResult`, `Suite`, `SuiteRunner`, `TestConfig`
 - `src/report.rs` — Report formatting/printing
 - `src/tests/` — Test suites
-- `spec/mqtt-v5.0-os.html` — Local copy of the MQTT v5.0 OASIS specification for reference
+- `REQUIREMENTS_TABLE` — List of MQTT v5 requirements and their implementation status in the project
 
 ## Architecture
 

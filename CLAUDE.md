@@ -37,6 +37,7 @@ cargo clippy   # should produce zero warnings
 
 ## Conventions
 
+- After making changes to code, run `cargo fmt` before finishing to keep formatting consistent
 - After making changes to code, always run existing tests and look to add tests for missing cases
 - Never commit changes as part of another task, unless you have asked explicitly to do so
 - Ensure any relevant information in CLAUDE.md is correct after making changes

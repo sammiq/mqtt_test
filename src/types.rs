@@ -1,4 +1,23 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
+
+use indicatif::ProgressBar;
+
+use crate::client::TlsConfig;
 use crate::codec::Packet;
+use crate::report::run_test;
+
+/// Shared configuration passed to every test suite and individual test.
+#[derive(Clone, Copy)]
+pub struct TestConfig<'a> {
+    /// TCP broker address (e.g. "127.0.0.1:1883").
+    pub addr: &'a str,
+    /// How long to wait for each broker response.
+    pub recv_timeout: Duration,
+    /// TLS endpoint address and config, if available.
+    pub tls_info: Option<(&'a str, &'a TlsConfig)>,
+}
 
 /// How the MQTT v5 specification describes a behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +99,48 @@ impl TestResult {
 pub struct Suite {
     pub name: &'static str,
     pub results: Vec<TestResult>,
+}
+
+/// A boxed, Send-safe test future.
+type TestFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<TestResult>> + Send + 'a>>;
+
+/// Collects test futures before execution, deriving the count automatically.
+///
+/// Each test module builds a `SuiteRunner` via `add()`, then `mod.rs` creates
+/// a progress bar from `count()` and calls `run()` to execute them all.
+pub struct SuiteRunner<'a> {
+    pub name: &'static str,
+    tests: Vec<(TestContext, TestFuture<'a>)>,
+}
+
+impl<'a> SuiteRunner<'a> {
+    pub fn new(name: &'static str) -> Self {
+        Self { name, tests: Vec::new() }
+    }
+
+    /// Register a test. The future is created eagerly but not polled until `run()`.
+    pub fn add(
+        &mut self,
+        ctx: TestContext,
+        fut: impl Future<Output = anyhow::Result<TestResult>> + Send + 'a,
+    ) {
+        self.tests.push((ctx, Box::pin(fut)));
+    }
+
+    /// Number of registered tests (used for progress bar sizing).
+    pub fn count(&self) -> usize {
+        self.tests.len()
+    }
+
+    /// Execute all tests sequentially, wrapping each with `run_test` for
+    /// error handling and progress reporting.
+    pub async fn run(self, pb: &ProgressBar) -> Suite {
+        let mut results = Vec::with_capacity(self.tests.len());
+        for (ctx, fut) in self.tests {
+            results.push(run_test(ctx, pb, fut).await);
+        }
+        Suite { name: self.name, results }
+    }
 }
 
 #[cfg(test)]

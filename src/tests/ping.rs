@@ -1,24 +1,16 @@
 //! PINGREQ / PINGRESP compliance tests [MQTT-3.12 / MQTT-3.13].
 
-use std::time::Duration;
-
-use indicatif::ProgressBar;
-
 use crate::client;
 use crate::codec::{ConnectParams, Packet};
-use crate::report::run_test;
-use crate::types::{Compliance, Suite, TestContext, TestResult};
+use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 2;
+pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
+    let mut suite = SuiteRunner::new("PINGREQ / PINGRESP");
 
-pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
-    Suite {
-        name: "PINGREQ / PINGRESP",
-        results: vec![
-            pingreq_gets_pingresp(addr, recv_timeout, pb).await,
-            multiple_pings(addr, recv_timeout, pb).await,
-        ],
-    }
+    suite.add(PINGRESP, pingreq_gets_pingresp(config));
+    suite.add(MULTI_PING, multiple_pings(config));
+
+    suite
 }
 
 const PINGRESP: TestContext = TestContext {
@@ -28,20 +20,17 @@ const PINGRESP: TestContext = TestContext {
 };
 
 /// Server MUST send PINGRESP in response to PINGREQ [MQTT-3.12.4-1].
-async fn pingreq_gets_pingresp(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = PINGRESP;
-    run_test(ctx, pb, async {
-        let params = ConnectParams::new("mqtt-test-ping");
-        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+    let params = ConnectParams::new("mqtt-test-ping");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-        client.send_pingreq().await?;
+    client.send_pingreq().await?;
 
-        match client.recv(recv_timeout).await? {
-            Packet::PingResp => Ok(TestResult::pass(&ctx)),
-            other => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
-        }
-    })
-    .await
+    match client.recv(config.recv_timeout).await? {
+        Packet::PingResp => Ok(TestResult::pass(&ctx)),
+        other => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
+    }
 }
 
 const MULTI_PING: TestContext = TestContext {
@@ -51,27 +40,24 @@ const MULTI_PING: TestContext = TestContext {
 };
 
 /// Server MUST respond to each PINGREQ [MQTT-3.12.4-1] (multiple pings).
-async fn multiple_pings(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+async fn multiple_pings(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = MULTI_PING;
-    run_test(ctx, pb, async {
-        let params = ConnectParams::new("mqtt-test-multi-ping");
-        let (mut client, _) = client::connect(addr, &params, recv_timeout).await?;
+    let params = ConnectParams::new("mqtt-test-multi-ping");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-        for i in 0..3u8 {
-            client.send_pingreq().await?;
-            match client.recv(recv_timeout).await? {
-                Packet::PingResp => {}
-                other => {
-                    return Ok(TestResult::fail_packet(
-                        &ctx,
-                        format!("Ping {i}: expected PINGRESP").as_str(),
-                        &other,
-                    ));
-                }
+    for i in 0..3u8 {
+        client.send_pingreq().await?;
+        match client.recv(config.recv_timeout).await? {
+            Packet::PingResp => {}
+            other => {
+                return Ok(TestResult::fail_packet(
+                    &ctx,
+                    format!("Ping {i}: expected PINGRESP").as_str(),
+                    &other,
+                ));
             }
         }
+    }
 
-        Ok(TestResult::pass(&ctx))
-    })
-    .await
+    Ok(TestResult::pass(&ctx))
 }

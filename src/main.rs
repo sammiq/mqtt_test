@@ -168,8 +168,13 @@ async fn main() {
     }
 
     let tls_info = tls_addr.as_deref().zip(tls_config.as_ref());
+    let config = types::TestConfig {
+        addr: &tcp_addr,
+        recv_timeout,
+        tls_info,
+    };
     let start = std::time::Instant::now();
-    let report = tests::run_selected(&tcp_addr, tls_info, recv_timeout, suites_to_run, &mp).await;
+    let report = tests::run_selected(config, suites_to_run, &mp).await;
     let elapsed = start.elapsed();
 
     println!();

@@ -7,7 +7,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 - `src/main.rs` — CLI entry point (clap), runs all test suites and prints report
 - `src/client.rs` — `RawClient` async TCP/TLS wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum
 - `src/codec.rs` — Custom MQTT v5 packet encoder/decoder (no external MQTT library)
-- `src/types.rs` — `Compliance` (Must/Should/May), `Outcome`, `TestResult`, `Suite`
+- `src/types.rs` — `Compliance` (Must/Should/May), `Outcome`, `TestResult`, `Suite`, `SuiteRunner`, `TestConfig`
 - `src/report.rs` — Report formatting/printing
 - `src/tests/` — Test suites
 - `spec/mqtt-v5.0-os.html` — Local copy of the MQTT v5.0 OASIS specification for reference
@@ -15,8 +15,9 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 ## Architecture
 
 - Custom codec by design — full control over packet construction for compliance testing
-- Each test suite in `src/tests/` returns a `Suite` of `TestResult`s
-- `tests::run_all()` aggregates suites and returns a report
+- Each test suite in `src/tests/` exposes a `tests()` function returning a `SuiteRunner` — test count is derived automatically from the number of registered tests
+- `SuiteRunner::run(&pb)` executes tests sequentially, wrapping each with `run_test` for error handling and progress reporting
+- `tests::run_selected()` creates runners, sizes progress bars from `runner.count()`, and collects results into a `Report`
 - `AutoDisconnect` wraps `RawClient` and sends DISCONNECT on drop (via `try_write`). `connect()` and `connect_and_subscribe()` return `AutoDisconnect` by default
 - Use `into_raw()` to escape auto-disconnect when a test intentionally skips DISCONNECT (e.g. abrupt disconnects for session resumption)
 - Use `RawClient` directly when DISCONNECT is the subject of the test and should be explicit in the code
@@ -42,5 +43,7 @@ cargo clippy   # should produce zero warnings
 - Use `#[allow(dead_code)]` for public API surface not yet consumed (codec structs, client methods) rather than removing it
 - QoS enum variants use standard MQTT naming (AtMostOnce, AtLeastOnce, ExactlyOnce)
 - Prefer struct initialization syntax over field reassignment after Default::default()
-- Each test suite has a `TEST_COUNT` constant (transport uses `TCP_TEST_COUNT` + `TLS_TEST_COUNT`) — update when adding/removing tests
+- `TestConfig` is `Copy` — pass `*config` to individual test functions; they receive it by value
+- Test count is derived automatically from `SuiteRunner` — just add tests via `suite.add(CTX, test_fn(*config))` in the module's `tests()` function
+- All test suites receive the same `TestConfig` (including TLS info); tests that don't use TLS simply ignore it, TLS tests return SKIP when `config.tls_info` is `None`
 - `test-broker.sh` runs a single pass with TCP (port 1883) and TLS transport (port 8883)

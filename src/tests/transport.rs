@@ -4,34 +4,17 @@
 //! lossless, stream of bytes [MQTT-4.2-1].  These tests verify that the broker
 //! accepts CONNECT and returns CONNACK over each available transport.
 
-use std::time::Duration;
-
-use indicatif::ProgressBar;
-
-use crate::client::{self, TlsConfig};
+use crate::client;
 use crate::codec::ConnectParams;
-use crate::report::run_test;
-use crate::types::{Compliance, Suite, TestContext, TestResult};
+use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
 
-pub const TCP_TEST_COUNT: usize = 1;
-pub const TLS_TEST_COUNT: usize = 1;
+pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
+    let mut suite = SuiteRunner::new("TRANSPORT");
 
-pub async fn run_tcp(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
-    Suite {
-        name: "TRANSPORT",
-        results: vec![
-            tcp_connect(addr, recv_timeout, pb).await,
-        ],
-    }
-}
+    suite.add(TCP_TRANSPORT, tcp_connect(config));
+    suite.add(TLS_TRANSPORT, tls_connect(config));
 
-pub async fn run_tls(addr: &str, tls: &TlsConfig, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
-    Suite {
-        name: "TRANSPORT (TLS)",
-        results: vec![
-            tls_connect(addr, tls, recv_timeout, pb).await,
-        ],
-    }
+    suite
 }
 
 const TCP_TRANSPORT: TestContext = TestContext {
@@ -41,22 +24,19 @@ const TCP_TRANSPORT: TestContext = TestContext {
 };
 
 /// Verify the broker accepts an MQTT connection over plain TCP.
-async fn tcp_connect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+async fn tcp_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = TCP_TRANSPORT;
-    run_test(ctx, pb, async {
-        let params = ConnectParams::new("mqtt-test-tcp-transport");
-        let (_client, connack) = client::connect(addr, &params, recv_timeout).await?;
+    let params = ConnectParams::new("mqtt-test-tcp-transport");
+    let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-        if connack.reason_code == 0x00 {
-            Ok(TestResult::pass(&ctx))
-        } else {
-            Ok(TestResult::fail(
-                &ctx,
-                format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
-            ))
-        }
-    })
-    .await
+    if connack.reason_code == 0x00 {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
+            &ctx,
+            format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
+        ))
+    }
 }
 
 const TLS_TRANSPORT: TestContext = TestContext {
@@ -66,20 +46,20 @@ const TLS_TRANSPORT: TestContext = TestContext {
 };
 
 /// Verify the broker accepts an MQTT connection over TLS.
-async fn tls_connect(addr: &str, tls: &TlsConfig, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+async fn tls_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = TLS_TRANSPORT;
-    run_test(ctx, pb, async {
-        let params = ConnectParams::new("mqtt-test-tls-transport");
-        let (_client, connack) = client::connect_tls(addr, &params, tls, recv_timeout).await?;
+    let Some((tls_addr, tls)) = config.tls_info else {
+        return Ok(TestResult::skip(&ctx, "TLS not configured"));
+    };
+    let params = ConnectParams::new("mqtt-test-tls-transport");
+    let (_client, connack) = client::connect_tls(tls_addr, &params, tls, config.recv_timeout).await?;
 
-        if connack.reason_code == 0x00 {
-            Ok(TestResult::pass(&ctx))
-        } else {
-            Ok(TestResult::fail(
-                &ctx,
-                format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
-            ))
-        }
-    })
-    .await
+    if connack.reason_code == 0x00 {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
+            &ctx,
+            format!("CONNACK reason code {:#04x} (expected 0x00)", connack.reason_code),
+        ))
+    }
 }

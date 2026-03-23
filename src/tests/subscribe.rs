@@ -12,7 +12,7 @@ use crate::codec::{
 use crate::report::run_test;
 use crate::types::{Compliance, Suite, TestContext, TestResult};
 
-pub const TEST_COUNT: usize = 29;
+pub const TEST_COUNT: usize = 33;
 
 pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite {
     Suite {
@@ -47,6 +47,10 @@ pub async fn run(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> Suite 
             retain_handling_0_sends_retained(addr, recv_timeout, pb).await,
             qos_downgrade_qos1_to_qos0(addr, recv_timeout, pb).await,
             unsubscribe_inflight_qos1_completes(addr, recv_timeout, pb).await,
+            shared_sub_topic_filter_format(addr, recv_timeout, pb).await,
+            shared_sub_qos_respected(addr, recv_timeout, pb).await,
+            shared_sub_qos2_reconnect(addr, recv_timeout, pb).await,
+            shared_sub_negative_ack_discard(addr, recv_timeout, pb).await,
         ],
     }
 }
@@ -1685,4 +1689,346 @@ async fn unsubscribe_inflight_qos1_completes(addr: &str, recv_timeout: Duration,
         }
     })
     .await
+}
+
+// ── Shared subscriptions ────────────────────────────────────────────────────
+
+const SHARED_SUB_FORMAT: TestContext = TestContext {
+    refs: &["MQTT-4.8.2-2"],
+    description: "ShareName MUST NOT contain '/', '+', or '#' and MUST be followed by a Topic Filter",
+    compliance: Compliance::Must,
+};
+
+/// The ShareName in `$share/ShareName/TopicFilter` MUST NOT contain '/', '+',
+/// or '#', and MUST be followed by '/' and a Topic Filter [MQTT-4.8.2-2].
+async fn shared_sub_topic_filter_format(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SHARED_SUB_FORMAT;
+    run_test(ctx, pb, async {
+        let params = ConnectParams::new("mqtt-test-shared-fmt");
+        let (mut client, connack) = client::connect(addr, &params, recv_timeout).await?;
+
+        if connack.properties.shared_subscription_available == Some(false) {
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker does not support shared subscriptions",
+            ));
+        }
+
+        // Helper: subscribe and check if broker rejects (reason >= 0x80 or DISCONNECT).
+        let invalid_topics = [
+            "$share/grp+/mqtt/test/shared/fmt",   // '+' in ShareName
+            "$share/grp#/mqtt/test/shared/fmt",   // '#' in ShareName
+            "$share/grouponly",                    // no '/' + topic filter
+        ];
+
+        let mut rejected = 0;
+        for (i, topic) in invalid_topics.iter().enumerate() {
+            let pid = (i + 1) as u16;
+            let sub = SubscribeParams::simple(pid, *topic, QoS::AtMostOnce);
+            client.send_subscribe(&sub).await?;
+
+            match client.recv(recv_timeout).await {
+                Ok(Packet::SubAck(ack)) if ack.reason_codes.first().map(|&c| c >= 0x80).unwrap_or(false) => {
+                    rejected += 1;
+                }
+                Ok(Packet::Disconnect(_)) | Err(_) => {
+                    // Broker disconnected us — this counts as rejection.
+                    // Reconnect for remaining tests.
+                    rejected += 1;
+                    if i < invalid_topics.len() - 1 {
+                        let (new_client, _) = client::connect(addr, &params, recv_timeout).await?;
+                        client = new_client;
+                    }
+                }
+                Ok(Packet::SubAck(_)) => {
+                    // Broker accepted — not a rejection.
+                }
+                Ok(_) => {}
+            }
+        }
+
+        if rejected == invalid_topics.len() {
+            Ok(TestResult::pass(&ctx))
+        } else {
+            Ok(TestResult::fail(
+                &ctx,
+                format!("Only {rejected}/{} invalid shared subscription formats were rejected", invalid_topics.len()),
+            ))
+        }
+    })
+    .await
+}
+
+const SHARED_SUB_QOS: TestContext = TestContext {
+    refs: &["MQTT-4.8.2-3"],
+    description: "Server MUST respect the granted QoS for shared subscription clients",
+    compliance: Compliance::Must,
+};
+
+/// When delivering to shared subscribers, the server MUST respect each
+/// subscriber's granted QoS level [MQTT-4.8.2-3].
+async fn shared_sub_qos_respected(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SHARED_SUB_QOS;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/shared/qos";
+        let shared_filter = "$share/qosgrp/mqtt/test/shared/qos";
+
+        // Subscriber A at QoS 0.
+        let params_a = ConnectParams::new("mqtt-test-shared-qos-a");
+        let (mut sub_a, connack) = client::connect(addr, &params_a, recv_timeout).await?;
+
+        if connack.properties.shared_subscription_available == Some(false) {
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker does not support shared subscriptions",
+            ));
+        }
+
+        let sub = SubscribeParams::simple(1, shared_filter, QoS::AtMostOnce);
+        sub_a.send_subscribe(&sub).await?;
+        sub_a.recv(recv_timeout).await?; // SUBACK
+
+        // Subscriber B at QoS 1.
+        let params_b = ConnectParams::new("mqtt-test-shared-qos-b");
+        let (mut sub_b, _) = client::connect(addr, &params_b, recv_timeout).await?;
+        let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
+        sub_b.send_subscribe(&sub).await?;
+        sub_b.recv(recv_timeout).await?; // SUBACK
+
+        // Publish 10 QoS 1 messages.
+        let pub_params = ConnectParams::new("mqtt-test-shared-qos-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_params, recv_timeout).await?;
+        for i in 1..=10u16 {
+            let msg = PublishParams::qos1(topic, format!("shared-qos-{i}").into_bytes(), i);
+            pub_client.send_publish(&msg).await?;
+        }
+        // Drain PUBACKs.
+        for _ in 0..10 {
+            let _ = pub_client.recv(recv_timeout).await;
+        }
+
+        // Collect messages from both subscribers.
+        let short_timeout = Duration::from_millis(500);
+        let mut qos_violation = false;
+
+        // Drain subscriber A — should all be QoS 0.
+        while let Ok(Packet::Publish(p)) = sub_a.recv(short_timeout).await {
+            if p.qos != QoS::AtMostOnce {
+                qos_violation = true;
+            }
+        }
+
+        // Drain subscriber B — should be QoS 0 or QoS 1.
+        while let Ok(Packet::Publish(p)) = sub_b.recv(short_timeout).await {
+            if p.qos == QoS::ExactlyOnce {
+                qos_violation = true;
+            }
+            // ACK QoS 1 messages.
+            if let Some(pid) = p.packet_id {
+                if p.qos == QoS::AtLeastOnce {
+                    sub_b.send_puback(pid, 0x00).await?;
+                }
+            }
+        }
+
+        if qos_violation {
+            Ok(TestResult::fail(
+                &ctx,
+                "Server delivered messages exceeding the subscriber's granted QoS",
+            ))
+        } else {
+            Ok(TestResult::pass(&ctx))
+        }
+    })
+    .await
+}
+
+const SHARED_SUB_QOS2_RECONNECT: TestContext = TestContext {
+    refs: &["MQTT-4.8.2-4"],
+    description: "Server MUST complete QoS 2 delivery to chosen subscriber on reconnect",
+    compliance: Compliance::Must,
+};
+
+/// If the connection to the chosen shared subscriber breaks during QoS 2
+/// delivery, the server MUST complete delivery when the client reconnects
+/// [MQTT-4.8.2-4].
+async fn shared_sub_qos2_reconnect(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SHARED_SUB_QOS2_RECONNECT;
+    run_test(ctx, pb, async {
+        let sub_id = "mqtt-test-shared-q2-recon";
+        let pub_id = "mqtt-test-shared-q2-recon-pub";
+        let topic = "mqtt/test/shared/qos2recon";
+        let shared_filter = "$share/q2grp/mqtt/test/shared/qos2recon";
+
+        // 1. Connect subscriber with persistent session.
+        let mut sub_params = ConnectParams::new(sub_id);
+        sub_params.properties.session_expiry_interval = Some(60);
+        let (mut sub_client, connack) = client::connect(addr, &sub_params, recv_timeout).await?;
+
+        if connack.properties.shared_subscription_available == Some(false) {
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker does not support shared subscriptions",
+            ));
+        }
+
+        let sub = SubscribeParams::simple(1, shared_filter, QoS::ExactlyOnce);
+        sub_client.send_subscribe(&sub).await?;
+        sub_client.recv(recv_timeout).await?; // SUBACK
+
+        // 2. Disconnect subscriber abruptly.
+        drop(sub_client.into_raw());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // 3. Publish QoS 2 message while subscriber is offline.
+        let pub_conn = ConnectParams::new(pub_id);
+        let (mut pub_client, _) = client::connect(addr, &pub_conn, recv_timeout).await?;
+        let pub_msg = PublishParams::qos2(topic, b"shared-qos2-recon".to_vec(), 1);
+        pub_client.send_publish(&pub_msg).await?;
+
+        // Complete publisher-side QoS 2 handshake.
+        for _ in 0..5 {
+            match pub_client.recv(recv_timeout).await? {
+                Packet::PubRec(rec) if rec.packet_id == 1 => {
+                    pub_client.send_pubrel(1, 0x00).await?;
+                    for _ in 0..5 {
+                        if let Packet::PubComp(_) = pub_client.recv(recv_timeout).await? {
+                            break;
+                        }
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+        drop(pub_client);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 4. Reconnect subscriber with clean_start=false.
+        let mut sub_params2 = ConnectParams::new(sub_id);
+        sub_params2.clean_start = false;
+        sub_params2.properties.session_expiry_interval = Some(60);
+        let (mut sub_client2, connack2) = client::connect(addr, &sub_params2, recv_timeout).await?;
+
+        if !connack2.session_present {
+            cleanup_session(addr, sub_id, recv_timeout).await;
+            return Ok(TestResult::fail(
+                &ctx,
+                "Broker did not preserve session (session_present=0)",
+            ));
+        }
+
+        // 5. Should receive the queued QoS 2 message.
+        let result = match sub_client2.recv(recv_timeout).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
+            Ok(Packet::PubRel(_)) => TestResult::pass(&ctx),
+            Ok(other) => TestResult::fail_packet(
+                &ctx,
+                "PUBLISH or PUBREL from shared subscription on reconnect",
+                &other,
+            ),
+            Err(_) => TestResult::fail(
+                &ctx,
+                "No QoS 2 message delivered to shared subscriber after reconnect",
+            ),
+        };
+
+        cleanup_session(addr, sub_id, recv_timeout).await;
+
+        Ok(result)
+    })
+    .await
+}
+
+const SHARED_SUB_NACK_DISCARD: TestContext = TestContext {
+    refs: &["MQTT-4.8.2-6"],
+    description: "Server MUST discard message if subscriber sends PUBACK with Reason Code >= 0x80",
+    compliance: Compliance::Must,
+};
+
+/// If a shared subscription client responds with a PUBACK containing Reason
+/// Code >= 0x80, the server MUST discard the message and not attempt to send
+/// it to any other subscriber [MQTT-4.8.2-6].
+async fn shared_sub_negative_ack_discard(addr: &str, recv_timeout: Duration, pb: &ProgressBar) -> TestResult {
+    let ctx = SHARED_SUB_NACK_DISCARD;
+    run_test(ctx, pb, async {
+        let topic = "mqtt/test/shared/nack";
+        let shared_filter = "$share/nackgrp/mqtt/test/shared/nack";
+
+        // 1. Connect subscriber A.
+        let params_a = ConnectParams::new("mqtt-test-shared-nack-a");
+        let (mut sub_a, connack) = client::connect(addr, &params_a, recv_timeout).await?;
+
+        if connack.properties.shared_subscription_available == Some(false) {
+            return Ok(TestResult::skip(
+                &ctx,
+                "Broker does not support shared subscriptions",
+            ));
+        }
+
+        let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
+        sub_a.send_subscribe(&sub).await?;
+        sub_a.recv(recv_timeout).await?; // SUBACK
+
+        // 2. Connect subscriber B but do NOT subscribe yet — this ensures
+        //    the message is routed to A (the only subscriber in the group).
+        let params_b = ConnectParams::new("mqtt-test-shared-nack-b");
+        let (mut sub_b, _) = client::connect(addr, &params_b, recv_timeout).await?;
+
+        // 3. Publish one QoS 1 message.
+        let pub_params = ConnectParams::new("mqtt-test-shared-nack-pub");
+        let (mut pub_client, _) = client::connect(addr, &pub_params, recv_timeout).await?;
+        let msg = PublishParams::qos1(topic, b"nack-test".to_vec(), 1);
+        pub_client.send_publish(&msg).await?;
+        // Wait for PUBACK from server.
+        for _ in 0..5 {
+            if let Ok(Packet::PubAck(_)) = pub_client.recv(recv_timeout).await {
+                break;
+            }
+        }
+        drop(pub_client);
+
+        // 4. A should receive the message. Send negative PUBACK (0x80).
+        match sub_a.recv(recv_timeout).await? {
+            Packet::Publish(p) => {
+                if let Some(pid) = p.packet_id {
+                    sub_a.send_puback(pid, 0x80).await?;
+                }
+            }
+            other => {
+                return Ok(TestResult::fail_packet(&ctx, "PUBLISH on subscriber A", &other));
+            }
+        }
+
+        // 5. Now subscribe B to the same shared group.
+        let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
+        sub_b.send_subscribe(&sub).await?;
+        sub_b.recv(recv_timeout).await?; // SUBACK
+
+        // 6. B should NOT receive the NACKed message.
+        let short_timeout = Duration::from_millis(500);
+        match sub_b.recv(short_timeout).await {
+            Err(_) => {
+                // Timeout — no message received. This is correct.
+                Ok(TestResult::pass(&ctx))
+            }
+            Ok(Packet::Publish(_)) => Ok(TestResult::fail(
+                &ctx,
+                "Server redirected NACKed message to another subscriber (should have discarded)",
+            )),
+            Ok(_) => {
+                // Some other packet — not the message, pass.
+                Ok(TestResult::pass(&ctx))
+            }
+        }
+    })
+    .await
+}
+
+/// Clean up a persistent session by reconnecting with clean_start=true.
+async fn cleanup_session(addr: &str, client_id: &str, recv_timeout: Duration) {
+    let params = ConnectParams::new(client_id);
+    if let Ok((_c, _)) = client::connect(addr, &params, recv_timeout).await {
+        // AutoDisconnect handles the clean disconnect on drop.
+    }
 }

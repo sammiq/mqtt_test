@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod connect;
 pub mod disconnect;
 pub mod malformed;
@@ -43,6 +44,7 @@ pub async fn run_selected(
             SuiteName::Malformed => malformed::tests(config),
             SuiteName::Disconnect => disconnect::tests(config),
             SuiteName::RequestResponse => request_response::tests(config),
+            SuiteName::Auth => auth::tests(config),
         };
         let pb = make_progress_bar(mp, runner.name, runner.count());
         pb.println(format!(

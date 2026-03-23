@@ -23,6 +23,7 @@ pub enum SuiteName {
     Malformed,
     Disconnect,
     RequestResponse,
+    Auth,
 }
 
 impl std::fmt::Display for SuiteName {
@@ -37,6 +38,7 @@ impl std::fmt::Display for SuiteName {
             Self::Malformed  => write!(f, "malformed"),
             Self::Disconnect       => write!(f, "disconnect"),
             Self::RequestResponse  => write!(f, "request-response"),
+            Self::Auth             => write!(f, "auth"),
         }
     }
 }
@@ -149,6 +151,7 @@ async fn main() {
         SuiteName::Transport, SuiteName::Connect, SuiteName::Ping,
         SuiteName::Publish, SuiteName::Subscribe, SuiteName::Session,
         SuiteName::Malformed, SuiteName::Disconnect, SuiteName::RequestResponse,
+        SuiteName::Auth,
     ];
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 

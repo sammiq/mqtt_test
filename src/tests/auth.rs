@@ -1,0 +1,419 @@
+//! Enhanced Authentication compliance tests [MQTT-4.12].
+//!
+//! MQTT v5 defines an optional challenge-response authentication mechanism
+//! using AUTH packets exchanged between client and server during connection.
+//!
+//! Most brokers (including Mosquitto) do **not** implement enhanced authentication.
+//! Tests that require a multi-step AUTH exchange will skip gracefully when the
+//! broker rejects the authentication method. To fully exercise this suite, use a
+//! broker configured with a challenge-response auth plugin (e.g. SCRAM-SHA-256).
+
+use std::time::Duration;
+
+use crate::client::RawClient;
+use crate::codec::{ConnectParams, Packet, Properties};
+use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+
+pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
+    let mut suite = SuiteRunner::new("ENHANCED AUTH");
+
+    suite.add(BAD_AUTH_METHOD, bad_auth_method(config));
+    suite.add(NO_AUTH_NO_AUTH_PACKET, no_auth_no_auth_packet(config));
+    suite.add(AUTH_CONTINUE, auth_continue(config));
+    suite.add(AUTH_METHOD_CONSISTENT, auth_method_consistent(config));
+    suite.add(FULL_EXCHANGE, full_exchange(config));
+    suite.add(REAUTH, reauth(config));
+    suite.add(REAUTH_FAIL, reauth_fail(config));
+
+    suite
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+const AUTH_METHOD: &str = "SCRAM-SHA-256";
+const SKIP_MSG: &str = "Broker does not support enhanced authentication";
+
+/// Build an AUTH response Properties with the standard test method and data.
+fn auth_response(data: &[u8]) -> Properties {
+    Properties {
+        authentication_method: Some(AUTH_METHOD.into()),
+        authentication_data: Some(data.to_vec()),
+        ..Default::default()
+    }
+}
+
+/// Build a ConnectParams requesting enhanced auth with the test method.
+fn auth_connect_params(client_id: &str) -> ConnectParams {
+    let mut params = ConnectParams::new(client_id);
+    params.properties.authentication_method = Some(AUTH_METHOD.into());
+    params.properties.authentication_data = Some(b"client-first-data".to_vec());
+    params
+}
+
+/// Drive the initial auth exchange to completion, returning the connected client.
+/// Returns `None` (skip) if the broker rejects the auth method.
+async fn complete_auth_exchange(
+    config: TestConfig<'_>,
+    client_id: &str,
+) -> anyhow::Result<Option<RawClient>> {
+    let params = auth_connect_params(client_id);
+    let mut client = RawClient::connect_tcp(config.addr).await?;
+    client.send_connect(&params).await?;
+
+    loop {
+        match client.recv(config.recv_timeout).await? {
+            Packet::Auth { reason_code: 0x18, .. } => {
+                client.send_auth(0x18, &auth_response(b"client-response")).await?;
+            }
+            Packet::ConnAck(connack) if connack.reason_code == 0x00 => {
+                return Ok(Some(client));
+            }
+            Packet::ConnAck(connack)
+                if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
+            {
+                return Ok(None);
+            }
+            _ => return Ok(None),
+        }
+    }
+}
+
+// ── Tests that work without an auth plugin ──────────────────────────────────
+
+const BAD_AUTH_METHOD: TestContext = TestContext {
+    refs: &["MQTT-4.12.0-1"],
+    description:
+        "Server MUST close connection if it does not support the Authentication Method",
+    compliance: Compliance::Must,
+};
+
+/// Send CONNECT with an unsupported Authentication Method. The server MAY send
+/// CONNACK with 0x8C (Bad authentication method) or 0x87 (Not Authorized) and
+/// MUST close the Network Connection [MQTT-4.12.0-1].
+async fn bad_auth_method(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = BAD_AUTH_METHOD;
+
+    let mut params = ConnectParams::new("mqtt-test-auth-bad-method");
+    params.properties.authentication_method = Some("BOGUS-AUTH-METHOD-12345".into());
+
+    let mut client = RawClient::connect_tcp(config.addr).await?;
+    client.send_connect(&params).await?;
+
+    match client.recv(config.recv_timeout).await {
+        Ok(Packet::ConnAck(connack))
+            if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
+        {
+            Ok(TestResult::pass(&ctx))
+        }
+        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => {
+            Ok(TestResult::fail(
+                &ctx,
+                "Broker accepted CONNECT with unsupported Authentication Method",
+            ))
+        }
+        Ok(Packet::Disconnect(_)) | Err(_) => {
+            // Connection closed (possibly without CONNACK) — the MUST to close is satisfied,
+            // though a CONNACK before close is preferred. Pass since the spec says "MAY send CONNACK".
+            Ok(TestResult::pass(&ctx))
+        }
+        Ok(Packet::Auth { .. }) => {
+            Ok(TestResult::fail(
+                &ctx,
+                "Broker sent AUTH for unsupported method instead of rejecting",
+            ))
+        }
+        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK (reject)", &other)),
+    }
+}
+
+const NO_AUTH_NO_AUTH_PACKET: TestContext = TestContext {
+    refs: &["MQTT-4.12.0-6"],
+    description:
+        "Server MUST NOT send AUTH if client did not include Authentication Method in CONNECT",
+    compliance: Compliance::Must,
+};
+
+/// A plain CONNECT (no Authentication Method) must never trigger an AUTH packet
+/// from the server [MQTT-4.12.0-6]. We connect normally and verify that the
+/// first response is CONNACK, not AUTH.
+async fn no_auth_no_auth_packet(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = NO_AUTH_NO_AUTH_PACKET;
+
+    let params = ConnectParams::new("mqtt-test-auth-no-method");
+    let mut client = RawClient::connect_tcp(config.addr).await?;
+    client.send_connect(&params).await?;
+
+    match client.recv(config.recv_timeout).await? {
+        Packet::ConnAck(connack) if connack.reason_code == 0x00 => {
+            if connack.properties.authentication_method.is_some() {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "CONNACK included Authentication Method despite client not requesting it",
+                ));
+            }
+            let _ = client.send_disconnect(0x00).await;
+            Ok(TestResult::pass(&ctx))
+        }
+        Packet::ConnAck(_) => {
+            // Connection rejected for other reasons — still no AUTH, so pass
+            Ok(TestResult::pass(&ctx))
+        }
+        Packet::Auth { .. } => Ok(TestResult::fail(
+            &ctx,
+            "Server sent AUTH packet despite no Authentication Method in CONNECT",
+        )),
+        other => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
+    }
+}
+
+// ── Tests that require a broker with enhanced auth support ──────────────────
+//
+// These tests skip when the broker rejects the auth method, which is the
+// common case for brokers like Mosquitto that don't implement enhanced auth.
+
+const AUTH_CONTINUE: TestContext = TestContext {
+    refs: &["MQTT-4.12.0-2"],
+    description:
+        "Server MUST send AUTH with Reason Code 0x18 (Continue) when it requires more auth data",
+    compliance: Compliance::Must,
+};
+
+/// Server sends AUTH rc=0x18 to request additional authentication data
+/// [MQTT-4.12.0-2]. This is the first step of a challenge-response exchange.
+async fn auth_continue(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = AUTH_CONTINUE;
+
+    let params = auth_connect_params("mqtt-test-auth-continue");
+    let mut client = RawClient::connect_tcp(config.addr).await?;
+    client.send_connect(&params).await?;
+
+    match client.recv(config.recv_timeout).await {
+        Ok(Packet::Auth { reason_code: 0x18, .. }) => {
+            let _ = client.send_disconnect(0x00).await;
+            Ok(TestResult::pass(&ctx))
+        }
+        Ok(Packet::ConnAck(connack))
+            if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
+        {
+            Ok(TestResult::skip(&ctx, SKIP_MSG))
+        }
+        Err(_) => Ok(TestResult::skip(&ctx, SKIP_MSG)),
+        Ok(other) => Ok(TestResult::fail_packet(&ctx, "AUTH(rc=0x18)", &other)),
+    }
+}
+
+const AUTH_METHOD_CONSISTENT: TestContext = TestContext {
+    refs: &["MQTT-4.12.0-5"],
+    description:
+        "AUTH packets and successful CONNACK MUST include same Authentication Method as CONNECT",
+    compliance: Compliance::Must,
+};
+
+/// Every AUTH packet and the final CONNACK must carry the same Authentication
+/// Method that the client specified in CONNECT [MQTT-4.12.0-5].
+async fn auth_method_consistent(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = AUTH_METHOD_CONSISTENT;
+
+    let params = auth_connect_params("mqtt-test-auth-consistent");
+    let mut client = RawClient::connect_tcp(config.addr).await?;
+    client.send_connect(&params).await?;
+
+    loop {
+        match client.recv(config.recv_timeout).await? {
+            Packet::Auth { reason_code: 0x18, ref properties } => {
+                match &properties.authentication_method {
+                    Some(m) if m == AUTH_METHOD => {
+                        client.send_auth(0x18, &auth_response(b"client-response")).await?;
+                    }
+                    Some(m) => {
+                        return Ok(TestResult::fail(
+                            &ctx,
+                            format!(
+                                "AUTH contained Authentication Method \"{m}\", expected \"{AUTH_METHOD}\""
+                            ),
+                        ));
+                    }
+                    None => {
+                        return Ok(TestResult::fail(
+                            &ctx,
+                            "AUTH packet missing Authentication Method property",
+                        ));
+                    }
+                }
+            }
+            Packet::ConnAck(ref connack) if connack.reason_code == 0x00 => {
+                match &connack.properties.authentication_method {
+                    Some(m) if m == AUTH_METHOD => {
+                        let _ = client.send_disconnect(0x00).await;
+                        return Ok(TestResult::pass(&ctx));
+                    }
+                    Some(m) => {
+                        return Ok(TestResult::fail(
+                            &ctx,
+                            format!(
+                                "CONNACK contained Authentication Method \"{m}\", expected \"{AUTH_METHOD}\""
+                            ),
+                        ));
+                    }
+                    None => {
+                        return Ok(TestResult::fail(
+                            &ctx,
+                            "Successful CONNACK missing Authentication Method property",
+                        ));
+                    }
+                }
+            }
+            Packet::ConnAck(connack)
+                if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
+            {
+                return Ok(TestResult::skip(&ctx, SKIP_MSG));
+            }
+            other => return Ok(TestResult::fail_packet(&ctx, "AUTH or CONNACK", &other)),
+        }
+    }
+}
+
+const FULL_EXCHANGE: TestContext = TestContext {
+    refs: &["MQTT-4.12.0-2", "MQTT-4.12.0-3"],
+    description:
+        "Complete enhanced auth exchange: CONNECT → AUTH(s) → CONNACK success",
+    compliance: Compliance::Must,
+};
+
+/// Walk through a full challenge-response exchange until CONNACK [MQTT-4.12.0-2, -3].
+/// The exact data values are auth-method-specific; we send placeholder responses.
+async fn full_exchange(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = FULL_EXCHANGE;
+
+    let params = auth_connect_params("mqtt-test-auth-exchange");
+    let mut client = RawClient::connect_tcp(config.addr).await?;
+    client.send_connect(&params).await?;
+
+    let mut rounds = 0u8;
+    loop {
+        if rounds > 10 {
+            return Ok(TestResult::fail(
+                &ctx,
+                "Auth exchange exceeded 10 rounds without completing",
+            ));
+        }
+
+        match client.recv(config.recv_timeout).await? {
+            Packet::Auth { reason_code: 0x18, .. } => {
+                rounds += 1;
+                client.send_auth(0x18, &auth_response(b"client-response")).await?;
+            }
+            Packet::ConnAck(connack) if connack.reason_code == 0x00 => {
+                let _ = client.send_disconnect(0x00).await;
+                return Ok(TestResult::pass(&ctx));
+            }
+            Packet::ConnAck(connack)
+                if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
+            {
+                return Ok(TestResult::skip(&ctx, SKIP_MSG));
+            }
+            Packet::ConnAck(connack) => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    format!(
+                        "Auth exchange ended with CONNACK reason {:#04x} (expected 0x00)",
+                        connack.reason_code
+                    ),
+                ));
+            }
+            other => return Ok(TestResult::fail_packet(&ctx, "AUTH or CONNACK", &other)),
+        }
+    }
+}
+
+const REAUTH: TestContext = TestContext {
+    refs: &["MQTT-4.12.1-1"],
+    description:
+        "Client can re-authenticate after CONNACK by sending AUTH with Reason Code 0x19",
+    compliance: Compliance::Must,
+};
+
+/// After a successful enhanced-auth connection, initiate re-authentication
+/// by sending AUTH rc=0x19 [MQTT-4.12.1-1]. The server should respond with
+/// AUTH rc=0x00 (success) or rc=0x18 (continue).
+async fn reauth(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = REAUTH;
+
+    let Some(mut client) = complete_auth_exchange(config, "mqtt-test-auth-reauth").await? else {
+        return Ok(TestResult::skip(&ctx, SKIP_MSG));
+    };
+
+    // Initiate re-authentication
+    client.send_auth(0x19, &auth_response(b"reauth-data")).await?;
+
+    let mut rounds = 0u8;
+    loop {
+        if rounds > 10 {
+            return Ok(TestResult::fail(&ctx, "Re-auth exchange exceeded 10 rounds"));
+        }
+
+        match client.recv(Duration::from_secs(5)).await {
+            Ok(Packet::Auth { reason_code: 0x00, .. }) => {
+                let _ = client.send_disconnect(0x00).await;
+                return Ok(TestResult::pass(&ctx));
+            }
+            Ok(Packet::Auth { reason_code: 0x18, .. }) => {
+                rounds += 1;
+                client.send_auth(0x18, &auth_response(b"reauth-response")).await?;
+            }
+            Ok(Packet::Disconnect(_)) | Err(_) => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "Server disconnected instead of handling re-authentication",
+                ));
+            }
+            Ok(other) => {
+                return Ok(TestResult::fail_packet(&ctx, "AUTH(0x00 or 0x18)", &other));
+            }
+        }
+    }
+}
+
+const REAUTH_FAIL: TestContext = TestContext {
+    refs: &["MQTT-4.12.1-2"],
+    description:
+        "Failed re-authentication SHOULD send DISCONNECT with appropriate Reason Code",
+    compliance: Compliance::Should,
+};
+
+/// If re-authentication fails, the server SHOULD send DISCONNECT with a reason
+/// code before closing [MQTT-4.12.1-2]. We trigger this by sending a re-auth
+/// with a different (unsupported) method.
+async fn reauth_fail(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = REAUTH_FAIL;
+
+    let Some(mut client) = complete_auth_exchange(config, "mqtt-test-auth-reauth-fail").await?
+    else {
+        return Ok(TestResult::skip(&ctx, SKIP_MSG));
+    };
+
+    // Send re-auth with a *different* method — this violates MQTT-4.12.1-1
+    // and should cause the server to reject.
+    let bad_props = Properties {
+        authentication_method: Some("BOGUS-REAUTH-METHOD".into()),
+        ..Default::default()
+    };
+    client.send_auth(0x19, &bad_props).await?;
+
+    match client.recv(Duration::from_secs(5)).await {
+        Ok(Packet::Disconnect(disc)) if disc.reason_code >= 0x80 => {
+            Ok(TestResult::pass(&ctx))
+        }
+        Ok(Packet::Disconnect(_)) => {
+            // DISCONNECT with non-error code — unusual but still a disconnect
+            Ok(TestResult::pass(&ctx))
+        }
+        Err(_) => {
+            Ok(TestResult::fail(
+                &ctx,
+                "Server closed connection without sending DISCONNECT on re-auth failure",
+            ))
+        }
+        Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
+    }
+}

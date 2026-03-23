@@ -43,7 +43,8 @@ cargo clippy   # should produce zero warnings
 - Use `#[allow(dead_code)]` for public API surface not yet consumed (codec structs, client methods) rather than removing it
 - QoS enum variants use standard MQTT naming (AtMostOnce, AtLeastOnce, ExactlyOnce)
 - Prefer struct initialization syntax over field reassignment after Default::default()
-- `TestConfig` is `Copy` — pass `*config` to individual test functions; they receive it by value
-- Test count is derived automatically from `SuiteRunner` — just add tests via `suite.add(CTX, test_fn(*config))` in the module's `tests()` function
+- `TestConfig` is `Copy` — passed by value everywhere; no `&` or `*` needed
+- Test count is derived automatically from `SuiteRunner` — just add tests via `suite.add(CTX, test_fn(config))` in the module's `tests()` function
 - All test suites receive the same `TestConfig` (including TLS info); tests that don't use TLS simply ignore it, TLS tests return SKIP when `config.tls_info` is `None`
+- Tests that require broker features not universally supported (e.g. enhanced auth) should always register and return SKIP with a descriptive reason, rather than being conditionally omitted
 - `test-broker.sh` runs a single pass with TCP (port 1883) and TLS transport (port 8883)

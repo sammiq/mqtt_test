@@ -5,7 +5,8 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 ## Project structure
 
 - `src/main.rs` — CLI entry point (clap), runs all test suites and prints report
-- `src/client.rs` — `RawClient` async TCP/TLS/WebSocket wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum, `WsFramer`
+- `src/client.rs` — `RawClient` async TCP/TLS/WebSocket wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum
+- `src/ws.rs` — WebSocket support: HTTP upgrade handshake, `WsFramer` frame codec, `WsStream` (AsyncRead/AsyncWrite over framed TCP)
 - `src/codec.rs` — Custom MQTT v5 packet encoder/decoder (no external MQTT library)
 - `src/types.rs` — `Compliance` (Must/Should/May), `Outcome`, `TestResult`, `Suite`, `SuiteRunner`, `TestConfig`
 - `src/report.rs` — Report formatting/printing

@@ -3,6 +3,7 @@ mod codec;
 mod report;
 mod tests;
 mod types;
+mod ws;
 
 use std::io::IsTerminal;
 use std::time::Duration;

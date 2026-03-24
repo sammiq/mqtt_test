@@ -198,6 +198,14 @@ impl Properties {
             ($id:expr, $val:expr) => {
                 if let Some(v) = $val {
                     props.push($id);
+                    props.push(v);
+                }
+            };
+        }
+        macro_rules! bool_byte {
+            ($id:expr, $val:expr) => {
+                if let Some(v) = $val {
+                    props.push($id);
                     props.push(v as u8);
                 }
             };
@@ -252,14 +260,14 @@ impl Properties {
         two_byte!(prop::SERVER_KEEP_ALIVE, self.server_keep_alive);
         utf8!(prop::AUTHENTICATION_METHOD, self.authentication_method);
         binary!(prop::AUTHENTICATION_DATA, self.authentication_data);
-        one_byte!(
+        bool_byte!(
             prop::REQUEST_PROBLEM_INFORMATION,
-            self.request_problem_information.map(|b| b as u8)
+            self.request_problem_information
         );
         four_byte!(prop::WILL_DELAY_INTERVAL, self.will_delay_interval);
-        one_byte!(
+        bool_byte!(
             prop::REQUEST_RESPONSE_INFORMATION,
-            self.request_response_information.map(|b| b as u8)
+            self.request_response_information
         );
         utf8!(prop::RESPONSE_INFORMATION, self.response_information);
         utf8!(prop::SERVER_REFERENCE, self.server_reference);
@@ -268,27 +276,24 @@ impl Properties {
         two_byte!(prop::TOPIC_ALIAS_MAXIMUM, self.topic_alias_maximum);
         two_byte!(prop::TOPIC_ALIAS, self.topic_alias);
         one_byte!(prop::MAXIMUM_QOS, self.maximum_qos);
-        one_byte!(
-            prop::RETAIN_AVAILABLE,
-            self.retain_available.map(|b| b as u8)
-        );
+        bool_byte!(prop::RETAIN_AVAILABLE, self.retain_available);
         for (k, v) in &self.user_properties {
             props.push(prop::USER_PROPERTY);
             push_str(k, &mut props);
             push_str(v, &mut props);
         }
         four_byte!(prop::MAXIMUM_PACKET_SIZE, self.maximum_packet_size);
-        one_byte!(
+        bool_byte!(
             prop::WILDCARD_SUBSCRIPTION_AVAILABLE,
-            self.wildcard_subscription_available.map(|b| b as u8)
+            self.wildcard_subscription_available
         );
-        one_byte!(
+        bool_byte!(
             prop::SUBSCRIPTION_IDS_AVAILABLE,
-            self.subscription_ids_available.map(|b| b as u8)
+            self.subscription_ids_available
         );
-        one_byte!(
+        bool_byte!(
             prop::SHARED_SUBSCRIPTION_AVAILABLE,
-            self.shared_subscription_available.map(|b| b as u8)
+            self.shared_subscription_available
         );
 
         encode_vbi(props.len() as u32, buf);
@@ -306,100 +311,79 @@ impl Properties {
 
         let mut p = Properties::default();
 
+        macro_rules! one_byte {
+            ($field:expr) => {{
+                $field = Some(data[*pos]);
+                *pos += 1;
+            }};
+        }
+        macro_rules! bool_byte {
+            ($field:expr) => {{
+                $field = Some(data[*pos] != 0);
+                *pos += 1;
+            }};
+        }
+        macro_rules! two_byte {
+            ($field:expr) => {
+                $field = Some(read_u16(data, pos)?)
+            };
+        }
+        macro_rules! four_byte {
+            ($field:expr) => {
+                $field = Some(read_u32(data, pos)?)
+            };
+        }
+        macro_rules! utf8 {
+            ($field:expr) => {
+                $field = Some(read_str(data, pos)?)
+            };
+        }
+        macro_rules! binary {
+            ($field:expr) => {
+                $field = Some(read_bytes(data, pos)?)
+            };
+        }
+
         while *pos < end {
             let id = data[*pos];
             *pos += 1;
             match id {
-                prop::PAYLOAD_FORMAT_INDICATOR => {
-                    p.payload_format_indicator = Some(data[*pos]);
-                    *pos += 1;
-                }
-                prop::MESSAGE_EXPIRY_INTERVAL => {
-                    p.message_expiry_interval = Some(read_u32(data, pos)?);
-                }
-                prop::CONTENT_TYPE => {
-                    p.content_type = Some(read_str(data, pos)?);
-                }
-                prop::RESPONSE_TOPIC => {
-                    p.response_topic = Some(read_str(data, pos)?);
-                }
-                prop::CORRELATION_DATA => {
-                    p.correlation_data = Some(read_bytes(data, pos)?);
-                }
+                prop::PAYLOAD_FORMAT_INDICATOR => one_byte!(p.payload_format_indicator),
+                prop::MESSAGE_EXPIRY_INTERVAL => four_byte!(p.message_expiry_interval),
+                prop::CONTENT_TYPE => utf8!(p.content_type),
+                prop::RESPONSE_TOPIC => utf8!(p.response_topic),
+                prop::CORRELATION_DATA => binary!(p.correlation_data),
                 prop::SUBSCRIPTION_IDENTIFIER => {
                     p.subscription_identifier = Some(decode_vbi(data, pos)?);
                 }
-                prop::SESSION_EXPIRY_INTERVAL => {
-                    p.session_expiry_interval = Some(read_u32(data, pos)?);
-                }
-                prop::ASSIGNED_CLIENT_ID => {
-                    p.assigned_client_id = Some(read_str(data, pos)?);
-                }
-                prop::SERVER_KEEP_ALIVE => {
-                    p.server_keep_alive = Some(read_u16(data, pos)?);
-                }
-                prop::AUTHENTICATION_METHOD => {
-                    p.authentication_method = Some(read_str(data, pos)?);
-                }
-                prop::AUTHENTICATION_DATA => {
-                    p.authentication_data = Some(read_bytes(data, pos)?);
-                }
-                prop::REQUEST_PROBLEM_INFORMATION => {
-                    p.request_problem_information = Some(data[*pos] != 0);
-                    *pos += 1;
-                }
-                prop::WILL_DELAY_INTERVAL => {
-                    p.will_delay_interval = Some(read_u32(data, pos)?);
-                }
-                prop::REQUEST_RESPONSE_INFORMATION => {
-                    p.request_response_information = Some(data[*pos] != 0);
-                    *pos += 1;
-                }
-                prop::RESPONSE_INFORMATION => {
-                    p.response_information = Some(read_str(data, pos)?);
-                }
-                prop::SERVER_REFERENCE => {
-                    p.server_reference = Some(read_str(data, pos)?);
-                }
-                prop::REASON_STRING => {
-                    p.reason_string = Some(read_str(data, pos)?);
-                }
-                prop::RECEIVE_MAXIMUM => {
-                    p.receive_maximum = Some(read_u16(data, pos)?);
-                }
-                prop::TOPIC_ALIAS_MAXIMUM => {
-                    p.topic_alias_maximum = Some(read_u16(data, pos)?);
-                }
-                prop::TOPIC_ALIAS => {
-                    p.topic_alias = Some(read_u16(data, pos)?);
-                }
-                prop::MAXIMUM_QOS => {
-                    p.maximum_qos = Some(data[*pos]);
-                    *pos += 1;
-                }
-                prop::RETAIN_AVAILABLE => {
-                    p.retain_available = Some(data[*pos] != 0);
-                    *pos += 1;
-                }
+                prop::SESSION_EXPIRY_INTERVAL => four_byte!(p.session_expiry_interval),
+                prop::ASSIGNED_CLIENT_ID => utf8!(p.assigned_client_id),
+                prop::SERVER_KEEP_ALIVE => two_byte!(p.server_keep_alive),
+                prop::AUTHENTICATION_METHOD => utf8!(p.authentication_method),
+                prop::AUTHENTICATION_DATA => binary!(p.authentication_data),
+                prop::REQUEST_PROBLEM_INFORMATION => bool_byte!(p.request_problem_information),
+                prop::WILL_DELAY_INTERVAL => four_byte!(p.will_delay_interval),
+                prop::REQUEST_RESPONSE_INFORMATION => bool_byte!(p.request_response_information),
+                prop::RESPONSE_INFORMATION => utf8!(p.response_information),
+                prop::SERVER_REFERENCE => utf8!(p.server_reference),
+                prop::REASON_STRING => utf8!(p.reason_string),
+                prop::RECEIVE_MAXIMUM => two_byte!(p.receive_maximum),
+                prop::TOPIC_ALIAS_MAXIMUM => two_byte!(p.topic_alias_maximum),
+                prop::TOPIC_ALIAS => two_byte!(p.topic_alias),
+                prop::MAXIMUM_QOS => one_byte!(p.maximum_qos),
+                prop::RETAIN_AVAILABLE => bool_byte!(p.retain_available),
                 prop::USER_PROPERTY => {
                     let k = read_str(data, pos)?;
                     let v = read_str(data, pos)?;
                     p.user_properties.push((k, v));
                 }
-                prop::MAXIMUM_PACKET_SIZE => {
-                    p.maximum_packet_size = Some(read_u32(data, pos)?);
-                }
+                prop::MAXIMUM_PACKET_SIZE => four_byte!(p.maximum_packet_size),
                 prop::WILDCARD_SUBSCRIPTION_AVAILABLE => {
-                    p.wildcard_subscription_available = Some(data[*pos] != 0);
-                    *pos += 1;
+                    bool_byte!(p.wildcard_subscription_available)
                 }
-                prop::SUBSCRIPTION_IDS_AVAILABLE => {
-                    p.subscription_ids_available = Some(data[*pos] != 0);
-                    *pos += 1;
-                }
+                prop::SUBSCRIPTION_IDS_AVAILABLE => bool_byte!(p.subscription_ids_available),
                 prop::SHARED_SUBSCRIPTION_AVAILABLE => {
-                    p.shared_subscription_available = Some(data[*pos] != 0);
-                    *pos += 1;
+                    bool_byte!(p.shared_subscription_available)
                 }
                 unknown => {
                     return Err(DecodeError::Protocol(format!(

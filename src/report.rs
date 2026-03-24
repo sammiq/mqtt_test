@@ -62,8 +62,8 @@ impl Report {
         for r in &all_results {
             let section = requirement_section(r.ctx.primary_ref());
             if section != last_section {
-                println!("\nMQTT {section}");
-                println!("{}", "-".repeat(6 + section.len()));
+                println!("\nSection {section}");
+                println!("{}", "-".repeat(9 + section.len()));
                 last_section = section;
             }
             println!("  {}", format_result(r, verbose));
@@ -166,12 +166,21 @@ fn parse_requirement_key(id: &str) -> Vec<u32> {
         .collect()
 }
 
-/// Extract the spec section from an ID, e.g. "MQTT-3.1.2-4" -> "3.1.2".
+/// Extract the spec section from an ID, e.g. "MQTT-3.1.2-4" -> "3.1".
+///
+/// Chapters 3 and 4 are grouped at the X.Y level (e.g. 3.1 = CONNECT,
+/// 4.7 = Topic Names and Filters).  Chapters 1, 2, and 6 are each a
+/// single section and group at the chapter level.
 fn requirement_section(id: &str) -> String {
     let stripped = id.strip_prefix("MQTT-").unwrap_or(id);
-    // Take everything up to the last '-' which is the requirement number within the section
-    match stripped.rsplit_once('-') {
-        Some((section, _)) => section.to_string(),
+    let parts: Vec<&str> = stripped.split('.').collect();
+    match parts.first().copied() {
+        // Chapters 3 (Control Packets) and 4 (Operational Behavior) have
+        // distinct sections per packet type / topic, so group at X.Y.
+        Some("3") | Some("4") if parts.len() >= 2 => {
+            format!("{}.{}", parts[0], parts[1])
+        }
+        Some(chapter) => chapter.to_string(),
         None => stripped.to_string(),
     }
 }
@@ -237,22 +246,24 @@ mod tests {
 
     #[test]
     fn requirement_section_standard() {
-        assert_eq!(requirement_section("MQTT-3.1.2-4"), "3.1.2");
+        assert_eq!(requirement_section("MQTT-3.1.2-4"), "3.1");
     }
 
     #[test]
     fn requirement_section_deep() {
-        assert_eq!(requirement_section("MQTT-4.7.1-2"), "4.7.1");
+        assert_eq!(requirement_section("MQTT-4.7.1-2"), "4.7");
     }
 
     #[test]
     fn requirement_section_no_prefix() {
-        assert_eq!(requirement_section("3.1.2-4"), "3.1.2");
+        assert_eq!(requirement_section("3.1.2-4"), "3.1");
     }
 
     #[test]
-    fn requirement_section_no_dash() {
-        assert_eq!(requirement_section("MQTT-3.1.2"), "3.1.2");
+    fn requirement_section_chapter_only() {
+        assert_eq!(requirement_section("MQTT-1.5.4-1"), "1");
+        assert_eq!(requirement_section("MQTT-2.2.1-3"), "2");
+        assert_eq!(requirement_section("MQTT-6.0.0-1"), "6");
     }
 
     #[test]

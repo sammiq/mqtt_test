@@ -37,14 +37,14 @@ cargo run -- 127.0.0.1 --no-tls                        # skip TLS transport test
 cargo run -- 127.0.0.1 --ws-port 8083                   # test WebSocket on port 8083
 cargo clippy   # should produce zero warnings
 ./test-broker-mosquitto.sh  # spins up mosquitto in Docker, runs full suite (TCP + TLS + WebSocket)
-./test-broker-hivemq.sh     # spins up HiveMQ CE in Docker, runs suite (TCP + WebSocket, no TLS)
+./test-broker-hivemq.sh     # spins up HiveMQ CE in Docker, runs full suite (TCP + TLS + WebSocket)
 ```
 
 ## Conventions
 
-- After making changes to code, run `cargo fmt` before finishing to keep formatting consistent
+- After making changes to code, run `cargo clippy` and `cargo fmt`
 - After making changes to code, always run existing tests and look to add tests for missing cases
-- Never commit changes as part of another task, unless you have asked explicitly to do so
+- Never commit changes as part of a task, unless you have asked explicitly to do so
 - Ensure any relevant information in CLAUDE.md is correct after making changes
 - Use `#[allow(dead_code)]` for public API surface not yet consumed (codec structs, client methods) rather than removing it
 - QoS enum variants use standard MQTT naming (AtMostOnce, AtLeastOnce, ExactlyOnce)
@@ -54,6 +54,6 @@ cargo clippy   # should produce zero warnings
 - All test suites receive the same `TestConfig` (including TLS and WebSocket info); tests that don't use TLS/WS simply ignore it, TLS tests return SKIP when `config.tls_info` is `None`, WS tests when `config.ws_info` is `None`
 - Tests that require broker features not universally supported (e.g. enhanced auth) should always register and return SKIP with a descriptive reason, rather than being conditionally omitted
 - `test-broker-mosquitto.sh` runs a single pass with TCP (port 1883), TLS transport (port 8883), and WebSocket (port 8083)
-- `test-broker-hivemq.sh` runs HiveMQ CE with TCP (port 1884) and WebSocket (port 8084), no TLS
+- `test-broker-hivemq.sh` runs HiveMQ CE with TCP (port 1884), TLS (port 8884), and WebSocket (port 8084)
 - When matching `recv()` results in tests: `RecvError::Closed` = broker cleanly closed (pass for "expect disconnect" tests), `RecvError::Timeout` = broker didn't respond (fail for "expect disconnect", pass for "expect no message"), `RecvError::Other` = I/O error like connection reset (always fail — prevents false passes when broker isn't ready)
 - Tests that use `RawClient::connect_tcp` directly (pre-CONNECT malformed packet tests) rely on `RecvError::Other` catching connection resets from unready brokers; tests that go through `client::connect()` are already protected by the CONNACK handshake

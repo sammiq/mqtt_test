@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::client::{self, RawClient};
+use crate::client::{self, RawClient, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams, WillParams,
 };
@@ -195,10 +195,15 @@ async fn zero_length_client_id_no_clean_start(
 
     match client.recv().await {
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x85 => Ok(TestResult::pass(&ctx)),
-        Err(_) | Ok(Packet::Disconnect(_)) => {
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => {
             // Connection closed — also acceptable rejection
             Ok(TestResult::pass(&ctx))
         }
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => {
             let _ = client.send_disconnect(0x00).await;
             Ok(TestResult::fail(
@@ -264,7 +269,12 @@ async fn first_packet_must_be_connect(config: TestConfig<'_>) -> anyhow::Result<
     client.send_pingreq().await?;
 
     match client.recv().await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::PingResp) => Ok(TestResult::fail(
             &ctx,
             "Broker responded to PINGREQ without prior CONNECT",
@@ -450,8 +460,12 @@ async fn duplicate_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
     // Broker must either send DISCONNECT or close the connection.
     match client.recv().await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect", &other)),
     }
 }
@@ -483,7 +497,12 @@ async fn invalid_protocol_name(config: TestConfig<'_>) -> anyhow::Result<TestRes
     client.send_raw(bad_connect).await?;
 
     match client.recv().await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "connection close", &other)),
     }
 }
@@ -526,7 +545,12 @@ async fn invalid_protocol_version(config: TestConfig<'_>) -> anyhow::Result<Test
                 connack.reason_code
             ),
         )),
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK or close", &other)),
     }
 }
@@ -606,7 +630,12 @@ async fn keep_alive_timeout(config: TestConfig<'_>) -> anyhow::Result<TestResult
 
     // Do NOT send PINGREQ. Wait for the broker to disconnect us.
     match client.recv_with_timeout(Duration::from_secs(5)).await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
             "disconnect after keep-alive timeout",
@@ -707,7 +736,9 @@ async fn will_message_removed_on_disconnect(config: TestConfig<'_>) -> anyhow::R
 
     // Short timeout — we expect NO message
     match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::fail(
             &ctx,
             "Will message was published despite normal DISCONNECT",
@@ -822,9 +853,16 @@ async fn server_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult
                     // 0x9B = QoS not supported
                     Ok(TestResult::pass(&ctx))
                 }
-                Err(_) | Ok(Packet::Disconnect(_)) => {
+                Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => {
                     // Disconnected — acceptable
                     Ok(TestResult::pass(&ctx))
+                }
+                Err(RecvError::Timeout) => Ok(TestResult::fail(
+                    &ctx,
+                    "broker did not disconnect (timed out)",
+                )),
+                Err(RecvError::Other(e)) => {
+                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
                 }
                 Ok(Packet::PubAck(ack)) if ack.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
                 Ok(Packet::PubAck(_)) => Ok(TestResult::fail(
@@ -846,7 +884,14 @@ async fn server_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult
 
             match client.recv().await {
                 Ok(Packet::Disconnect(d)) if d.reason_code == 0x9B => Ok(TestResult::pass(&ctx)),
-                Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+                Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+                Err(RecvError::Timeout) => Ok(TestResult::fail(
+                    &ctx,
+                    "broker did not disconnect (timed out)",
+                )),
+                Err(RecvError::Other(e)) => {
+                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
+                }
                 Ok(Packet::PubRec(rec)) if rec.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
                 Ok(Packet::PubRec(_)) => Ok(TestResult::fail(
                     &ctx,

@@ -5,7 +5,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 ## Project structure
 
 - `src/main.rs` — CLI entry point (clap), runs all test suites and prints report
-- `src/client.rs` — `RawClient` async TCP/TLS/WebSocket wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum
+- `src/client.rs` — `RawClient` async TCP/TLS/WebSocket wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum, `RecvError` (Timeout/Closed/Other)
 - `src/ws.rs` — WebSocket support: HTTP upgrade handshake, `WsFramer` frame codec, `WsStream` (AsyncRead/AsyncWrite over framed TCP)
 - `src/codec.rs` — Custom MQTT v5 packet encoder/decoder (no external MQTT library)
 - `src/types.rs` — `Compliance` (Must/Should/May), `Outcome`, `TestResult`, `Suite`, `SuiteRunner`, `TestConfig`
@@ -24,6 +24,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 - Use `RawClient` directly when DISCONNECT is the subject of the test and should be explicit in the code
 - Transport suite (MQTT §4.2) tests TCP and TLS connectivity; TLS via `tokio-rustls` with explicit `TlsConfig` — other suites always use plain TCP
 - WebSocket suite (MQTT §6) tests MQTT-over-WebSocket; uses a minimal custom WebSocket client (`WsFramer`) with HTTP upgrade handshake — no external WS library
+- `RawClient::recv()` returns `Result<Packet, RecvError>` — tests match on `RecvError::Closed` (clean TCP close), `RecvError::Timeout`, and `RecvError::Other` (I/O errors including connection reset) to distinguish broker behaviour from infrastructure failures
 - Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror, tokio-rustls, rustls-pemfile, base64
 
 ## Building and running
@@ -35,7 +36,8 @@ cargo run -- 127.0.0.1 --ca-cert /path/to/ca.crt      # verify TLS certs
 cargo run -- 127.0.0.1 --no-tls                        # skip TLS transport test
 cargo run -- 127.0.0.1 --ws-port 8083                   # test WebSocket on port 8083
 cargo clippy   # should produce zero warnings
-./test-broker.sh   # spins up mosquitto in Docker, runs full suite (TCP + TLS + WebSocket)
+./test-broker.sh          # spins up mosquitto in Docker, runs full suite (TCP + TLS + WebSocket)
+./test-broker-hivemq.sh   # spins up HiveMQ CE in Docker, runs suite (TCP + WebSocket, no TLS)
 ```
 
 ## Conventions
@@ -52,3 +54,6 @@ cargo clippy   # should produce zero warnings
 - All test suites receive the same `TestConfig` (including TLS and WebSocket info); tests that don't use TLS/WS simply ignore it, TLS tests return SKIP when `config.tls_info` is `None`, WS tests when `config.ws_info` is `None`
 - Tests that require broker features not universally supported (e.g. enhanced auth) should always register and return SKIP with a descriptive reason, rather than being conditionally omitted
 - `test-broker.sh` runs a single pass with TCP (port 1883), TLS transport (port 8883), and WebSocket (port 8083)
+- `test-broker-hivemq.sh` runs HiveMQ CE with TCP (port 1884) and WebSocket (port 8084), no TLS
+- When matching `recv()` results in tests: `RecvError::Closed` = broker cleanly closed (pass for "expect disconnect" tests), `RecvError::Timeout` = broker didn't respond (fail for "expect disconnect", pass for "expect no message"), `RecvError::Other` = I/O error like connection reset (always fail — prevents false passes when broker isn't ready)
+- Tests that use `RawClient::connect_tcp` directly (pre-CONNECT malformed packet tests) rely on `RecvError::Other` catching connection resets from unready brokers; tests that go through `client::connect()` are already protected by the CONNACK handshake

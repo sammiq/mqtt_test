@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::client;
+use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
 
@@ -190,10 +190,15 @@ async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
             &format!("PUBLISH on topic \"{topic}\""),
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
-            "No message delivered to QoS 1 subscriber",
+            "No message delivered to QoS 1 subscriber (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No message delivered to QoS 1 subscriber (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -267,7 +272,12 @@ async fn invalid_qos3(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_raw(bad_publish).await?;
 
     match client.recv().await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
             "disconnect (malformed QoS=3)",
@@ -302,7 +312,12 @@ async fn dup_on_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_raw(bad_publish).await?;
 
     match client.recv().await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(_)) => {
             // Some brokers may silently accept and forward — this is non-compliant
             Ok(TestResult::fail(
@@ -380,7 +395,15 @@ async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Tes
             &format!("PUBLISH on topic \"{topic}\""),
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(&ctx, "No message delivered to subscriber")),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "No message delivered to subscriber (timed out)",
+        )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No message delivered to subscriber (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -420,10 +443,15 @@ async fn retain_flag_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResu
             "Received PUBLISH but retain flag not set on delivery",
         )),
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "retained PUBLISH", &other)),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
-            "No retained message delivered to new subscriber",
+            "No retained message delivered to new subscriber (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No retained message delivered to new subscriber (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -730,7 +758,8 @@ async fn message_ordering(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
                 received.push(String::from_utf8_lossy(&p.payload).to_string());
             }
             Ok(_) => {}
-            Err(_) => break,
+            Err(RecvError::Closed | RecvError::Timeout) => break,
+            Err(RecvError::Other(e)) => return Err(e),
         }
     }
 
@@ -790,7 +819,17 @@ async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> anyhow::
             "Retained message delivered but Retain flag is 0 (SHOULD be 1)",
         ),
         Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH with Retain=1", &other),
-        Err(_) => TestResult::fail(&ctx, "No retained message delivered to new subscriber"),
+        Err(RecvError::Timeout) => TestResult::fail(
+            &ctx,
+            "No retained message delivered to new subscriber (timed out)",
+        ),
+        Err(RecvError::Closed) => TestResult::fail(
+            &ctx,
+            "No retained message delivered to new subscriber (connection closed)",
+        ),
+        Err(RecvError::Other(e)) => {
+            return Err(e);
+        }
     };
 
     // Clean up: remove retained message by publishing empty payload with retain.
@@ -843,7 +882,9 @@ async fn retained_deletion(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     .await?;
 
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == topic && p.payload.is_empty() => {
             // Some brokers send the empty retained message — this is acceptable
             Ok(TestResult::pass(&ctx))
@@ -912,7 +953,15 @@ async fn retained_replacement(config: TestConfig<'_>) -> anyhow::Result<TestResu
             }
         }
         Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH", &other),
-        Err(_) => TestResult::fail(&ctx, "No retained message delivered"),
+        Err(RecvError::Timeout) => {
+            TestResult::fail(&ctx, "No retained message delivered (timed out)")
+        }
+        Err(RecvError::Closed) => {
+            TestResult::fail(&ctx, "No retained message delivered (connection closed)")
+        }
+        Err(RecvError::Other(e)) => {
+            return Err(e);
+        }
     };
 
     // Clean up
@@ -1047,10 +1096,15 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Test
             "PUBLISH with decremented MEI",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
-            "No message delivered after session resume",
+            "No message delivered after session resume (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No message delivered after session resume (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1196,10 +1250,15 @@ async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<TestResult>
             "PUBLISH via alias reuse",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
-            "No message delivered via alias reuse",
+            "No message delivered via alias reuse (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No message delivered via alias reuse (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1270,7 +1329,12 @@ async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> anyhow::Resul
 
     // Server should disconnect or send DISCONNECT — alias mapping was reset
     match client2.recv().await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
             "disconnect (alias reset)",
@@ -1622,11 +1686,16 @@ async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<TestRes
     client.send_pubrel(7, 0x00).await?;
     match client.recv().await {
         Ok(Packet::PubComp(comp)) if comp.packet_id == 7 => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::Disconnect(_)) | Err(_) => {
+        Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => {
             // Some brokers may consider duplicate PUBREL after PUBCOMP as
             // a protocol error — still acceptable behaviour
             Ok(TestResult::pass(&ctx))
         }
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
             "PUBCOMP(7) for duplicate PUBREL",
@@ -1681,10 +1750,15 @@ async fn payload_format_utf8_validated(config: TestConfig<'_>) -> anyhow::Result
                 "Server accepted invalid UTF-8 payload without validation (Payload Format Indicator=1)",
             ))
         }
-        Err(_) => {
+        Err(RecvError::Closed) => {
             // Connection closed — server may have validated and closed
             Ok(TestResult::pass(&ctx))
         }
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
             "PUBACK or DISCONNECT",
@@ -1820,10 +1894,17 @@ async fn retained_qos0_stored(config: TestConfig<'_>) -> anyhow::Result<TestResu
             TestResult::fail(&ctx, "Retained message delivered but payload was empty")
         }
         Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH", &other),
-        Err(_) => TestResult::fail(
+        Err(RecvError::Timeout) => TestResult::fail(
             &ctx,
-            "No QoS 0 retained message delivered to new subscriber (server MAY discard)",
+            "No QoS 0 retained message delivered to new subscriber (timed out, server MAY discard)",
         ),
+        Err(RecvError::Closed) => TestResult::fail(
+            &ctx,
+            "No QoS 0 retained message delivered to new subscriber (connection closed)",
+        ),
+        Err(RecvError::Other(e)) => {
+            return Err(e);
+        }
     };
 
     // Clean up: remove retained message
@@ -1986,10 +2067,15 @@ async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> anyhow::
             "PUBCOMP(30) after message expiry",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
-            "No PUBCOMP after message expiry — server must continue QoS 2 flow",
+            "No PUBCOMP after message expiry (timed out) — server must continue QoS 2 flow",
         )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No PUBCOMP after message expiry (connection closed) — server must continue QoS 2 flow",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -2114,11 +2200,29 @@ async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Resu
             match sub_client.recv().await {
                 Ok(Packet::PingResp) => Ok(TestResult::pass(&ctx)),
                 Ok(other) => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
-                Err(_) => Ok(TestResult::fail(&ctx, "No PINGRESP when quota is zero")),
+                Err(RecvError::Timeout) => Ok(TestResult::fail(
+                    &ctx,
+                    "No PINGRESP when quota is zero (timed out)",
+                )),
+                Err(RecvError::Closed) => Ok(TestResult::fail(
+                    &ctx,
+                    "No PINGRESP when quota is zero (connection closed)",
+                )),
+                Err(RecvError::Other(e)) => {
+                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
+                }
             }
         }
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
-        Err(_) => Ok(TestResult::fail(&ctx, "No PINGRESP when quota is zero")),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "No PINGRESP when quota is zero (timed out)",
+        )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No PINGRESP when quota is zero (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -2199,7 +2303,17 @@ async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> anyhow::Resul
             )
         }
         Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH", &other),
-        Err(_) => TestResult::fail(&ctx, "No retained message delivered to new subscriber"),
+        Err(RecvError::Timeout) => TestResult::fail(
+            &ctx,
+            "No retained message delivered to new subscriber (timed out)",
+        ),
+        Err(RecvError::Closed) => TestResult::fail(
+            &ctx,
+            "No retained message delivered to new subscriber (connection closed)",
+        ),
+        Err(RecvError::Other(e)) => {
+            return Err(e);
+        }
     };
 
     // Clean up: remove retained message
@@ -2263,7 +2377,8 @@ async fn ordered_topic_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult
                 received.push(String::from_utf8_lossy(&p.payload).to_string());
             }
             Ok(_) => {}
-            Err(_) => break,
+            Err(RecvError::Closed | RecvError::Timeout) => break,
+            Err(RecvError::Other(e)) => return Err(e),
         }
     }
 
@@ -2360,6 +2475,11 @@ async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Res
             }
         }
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
-        Err(_) => Ok(TestResult::fail(&ctx, "No message delivered")),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No message delivered (timed out)")),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No message delivered (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }

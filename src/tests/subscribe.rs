@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::client;
+use crate::client::{self, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions, SubscribeParams,
     UnsubscribeParams,
@@ -256,7 +256,8 @@ async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Resul
                 break;
             }
             Ok(Packet::Publish(_)) => {} // other messages on # — ignore
-            Err(_) => break,
+            Err(RecvError::Timeout | RecvError::Closed) => break,
+            Err(RecvError::Other(e)) => return Err(e),
             Ok(_) => {}
         }
     }
@@ -552,7 +553,9 @@ async fn no_local_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     // Expect NO message — short timeout is sufficient to confirm absence.
     match client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/no_local" => Ok(TestResult::fail(
             &ctx,
             "Received own PUBLISH despite no_local=true",
@@ -629,10 +632,15 @@ async fn retain_as_published(config: TestConfig<'_>) -> anyhow::Result<TestResul
             "PUBLISH on topic \"mqtt/test/sub/rap\"",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering retained message",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No retained message delivered to subscriber",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -687,11 +695,27 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     // Should receive retained message on first subscribe
     match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => {}
-        _ => {
+        Ok(other) => {
+            return Ok(TestResult::fail_packet(
+                &ctx,
+                "retained PUBLISH on first subscription",
+                &other,
+            ));
+        }
+        Err(RecvError::Closed) => {
+            return Ok(TestResult::fail(
+                &ctx,
+                "broker closed connection before delivering retained message on first subscription",
+            ));
+        }
+        Err(RecvError::Timeout) => {
             return Ok(TestResult::fail(
                 &ctx,
                 "No retained message on first subscription",
             ));
+        }
+        Err(RecvError::Other(e)) => {
+            return Err(e);
         }
     }
 
@@ -713,7 +737,9 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
     // Should NOT receive retained message again — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => Ok(TestResult::fail(
             &ctx,
             "Retained message sent again on re-subscription",
@@ -776,7 +802,9 @@ async fn retain_handling_2(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
     // Should NOT receive any retained message — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh2" => Ok(TestResult::fail(
             &ctx,
             "Retained message delivered despite retain_handling=2",
@@ -841,7 +869,9 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
         .await?;
 
     match client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::fail(
             &ctx,
             "Message delivered after UNSUBSCRIBE",
@@ -914,7 +944,12 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Re
             "PUBLISH on overlap/exact",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(&ctx, "No message delivered")),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering message",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No message delivered")),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1049,10 +1084,15 @@ async fn multi_level_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult>
             "PUBLISH matching a/b/#",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering message for deep topic hierarchy",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No message received for deep topic hierarchy",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1090,7 +1130,11 @@ async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<TestRes
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/wc/any/end" => {
             // Verify no second message arrives (the non-matching one)
             match sub.recv_with_timeout(Duration::from_millis(500)).await {
-                Err(_) => Ok(TestResult::pass(&ctx)), // No extra message — correct
+                Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)), // No extra message — correct
+                Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+                Err(RecvError::Other(e)) => {
+                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
+                }
                 Ok(Packet::Publish(p2)) if p2.topic == "mqtt/test/wc/any/extra/end" => Ok(
                     TestResult::fail(&ctx, "'+' wildcard matched across multiple levels"),
                 ),
@@ -1102,10 +1146,15 @@ async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<TestRes
             "PUBLISH matching a/+/c",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering wildcard match",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No message received for wildcard match",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1230,10 +1279,15 @@ async fn empty_topic_level(config: TestConfig<'_>) -> anyhow::Result<TestResult>
             "PUBLISH on topic with empty level",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering topic with empty level",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No message received for topic with empty level",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1294,10 +1348,15 @@ async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResu
             "PUBLISH on \"mqtt/Test/CASE\"",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering exact-case topic",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No message received for exact-case topic",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1355,10 +1414,15 @@ async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
             "PUBLISH on \"mqtt/exact/match\"",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering exact-match topic",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No message received for exact-match topic",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1423,11 +1487,20 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
                 &other,
             ));
         }
-        Err(_) => {
+        Err(RecvError::Closed) => {
+            return Ok(TestResult::fail(
+                &ctx,
+                "broker closed connection before delivering \"mqtt/test/sep/a/b\"",
+            ));
+        }
+        Err(RecvError::Timeout) => {
             return Ok(TestResult::fail(
                 &ctx,
                 "No message received for \"mqtt/test/sep/a/b\"",
             ));
+        }
+        Err(RecvError::Other(e)) => {
+            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
         }
     }
 
@@ -1455,10 +1528,15 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
             "PUBLISH on \"mqtt/test/sep/a//b\"",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering \"mqtt/test/sep/a//b\"",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No message received for \"mqtt/test/sep/a//b\"",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1534,7 +1612,9 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
 
     // Step 5: Verify none arrive
     match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::fail(
             &ctx,
             "Message delivered after UNSUBSCRIBE + UNSUBACK",
@@ -1695,11 +1775,20 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
         Ok(other) => {
             return Ok(TestResult::fail_packet(&ctx, "retained PUBLISH", &other));
         }
-        Err(_) => {
+        Err(RecvError::Closed) => {
+            return Ok(TestResult::fail(
+                &ctx,
+                "broker closed connection before delivering retained message with retain_handling=0",
+            ));
+        }
+        Err(RecvError::Timeout) => {
             return Ok(TestResult::fail(
                 &ctx,
                 "No retained message delivered on subscribe with retain_handling=0",
             ));
+        }
+        Err(RecvError::Other(e)) => {
+            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
         }
     }
 
@@ -1727,10 +1816,15 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
             "retained PUBLISH on re-sub",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering retained message on re-subscription",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "No retained message on re-subscription with retain_handling=0",
         )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1784,7 +1878,12 @@ async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<Te
             }
         }
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
-        Err(_) => Ok(TestResult::fail(&ctx, "No message delivered to subscriber")),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering message",
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No message delivered to subscriber")),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1836,11 +1935,20 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
             sub_client.send_unsubscribe(&unsub).await?;
         }
         Ok(other) => return Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
-        Err(_) => {
+        Err(RecvError::Closed) => {
+            return Ok(TestResult::fail(
+                &ctx,
+                "broker closed connection before delivering message",
+            ));
+        }
+        Err(RecvError::Timeout) => {
             return Ok(TestResult::fail(
                 &ctx,
                 "No message received before unsubscribe",
             ));
+        }
+        Err(RecvError::Other(e)) => {
+            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
         }
     }
 
@@ -1941,7 +2049,7 @@ async fn shared_sub_topic_filter_format(config: TestConfig<'_>) -> anyhow::Resul
             {
                 rejected += 1;
             }
-            Ok(Packet::Disconnect(_)) | Err(_) => {
+            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => {
                 // Broker disconnected us — this counts as rejection.
                 // Reconnect for remaining tests.
                 rejected += 1;
@@ -1950,6 +2058,12 @@ async fn shared_sub_topic_filter_format(config: TestConfig<'_>) -> anyhow::Resul
                         client::connect(config.addr, &params, config.recv_timeout).await?;
                     client = new_client;
                 }
+            }
+            Err(RecvError::Timeout) => {
+                // Timeout waiting for SUBACK — treat as inconclusive, skip.
+            }
+            Err(RecvError::Other(e)) => {
+                return Err(e);
             }
             Ok(Packet::SubAck(_)) => {
                 // Broker accepted — not a rejection.
@@ -2140,10 +2254,15 @@ async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Tes
             "PUBLISH or PUBREL from shared subscription on reconnect",
             &other,
         ),
-        Err(_) => TestResult::fail(
+        Err(RecvError::Closed) => TestResult::fail(
+            &ctx,
+            "broker closed connection before delivering QoS 2 message after reconnect",
+        ),
+        Err(RecvError::Timeout) => TestResult::fail(
             &ctx,
             "No QoS 2 message delivered to shared subscriber after reconnect",
         ),
+        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
     };
 
     cleanup_session(config.addr, sub_id, config.recv_timeout).await;
@@ -2224,10 +2343,12 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
     // 6. B should NOT receive the NACKed message.
     let short_timeout = Duration::from_millis(500);
     match sub_b.recv_with_timeout(short_timeout).await {
-        Err(_) => {
+        Err(RecvError::Timeout) => {
             // Timeout — no message received. This is correct.
             Ok(TestResult::pass(&ctx))
         }
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(_)) => Ok(TestResult::fail(
             &ctx,
             "Server redirected NACKed message to another subscriber (should have discarded)",

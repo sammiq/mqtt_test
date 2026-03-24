@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use crate::client::RawClient;
+use crate::client::{RawClient, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
 
@@ -96,6 +96,15 @@ const BAD_AUTH_METHOD: TestContext = TestContext {
 async fn bad_auth_method(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = BAD_AUTH_METHOD;
 
+    // Probe: verify the broker is accepting MQTT connections before testing.
+    // Without this, a connection reset from an unready broker would be
+    // indistinguishable from a legitimate rejection of the bad auth method.
+    let probe = ConnectParams::new("mqtt-test-auth-probe");
+    let (probe_client, _) = crate::client::connect(config.addr, &probe, config.recv_timeout)
+        .await
+        .map_err(|e| anyhow::anyhow!("broker not reachable (probe failed): {e:#}"))?;
+    drop(probe_client);
+
     let mut params = ConnectParams::new("mqtt-test-auth-bad-method");
     params.properties.authentication_method = Some("BOGUS-AUTH-METHOD-12345".into());
 
@@ -112,11 +121,16 @@ async fn bad_auth_method(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
             &ctx,
             "Broker accepted CONNECT with unsupported Authentication Method",
         )),
-        Ok(Packet::Disconnect(_)) | Err(_) => {
+        Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => {
             // Connection closed (possibly without CONNACK) — the MUST to close is satisfied,
             // though a CONNACK before close is preferred. Pass since the spec says "MAY send CONNACK".
             Ok(TestResult::pass(&ctx))
         }
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not close connection (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Auth { .. }) => Ok(TestResult::fail(
             &ctx,
             "Broker sent AUTH for unsupported method instead of rejecting",
@@ -196,7 +210,12 @@ async fn auth_continue(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         {
             Ok(TestResult::skip(&ctx, SKIP_MSG))
         }
-        Err(_) => Ok(TestResult::skip(&ctx, SKIP_MSG)),
+        Err(RecvError::Closed) => Ok(TestResult::skip(&ctx, SKIP_MSG)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not respond to CONNECT (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "AUTH(rc=0x18)", &other)),
     }
 }
@@ -375,11 +394,20 @@ async fn reauth(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
                     .send_auth(0x18, &auth_response(b"reauth-response"))
                     .await?;
             }
-            Ok(Packet::Disconnect(_)) | Err(_) => {
+            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => {
                 return Ok(TestResult::fail(
                     &ctx,
                     "Server disconnected instead of handling re-authentication",
                 ));
+            }
+            Err(RecvError::Timeout) => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "Server did not respond to re-authentication (timed out)",
+                ));
+            }
+            Err(RecvError::Other(e)) => {
+                return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
             }
             Ok(other) => {
                 return Ok(TestResult::fail_packet(&ctx, "AUTH(0x00 or 0x18)", &other));
@@ -419,10 +447,15 @@ async fn reauth_fail(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
             // DISCONNECT with non-error code — unusual but still a disconnect
             Ok(TestResult::pass(&ctx))
         }
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
             &ctx,
             "Server closed connection without sending DISCONNECT on re-auth failure",
         )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "Server did not respond to failed re-auth (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
     }
 }

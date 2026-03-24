@@ -25,7 +25,7 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 - Transport suite (MQTT §4.2) tests TCP and TLS connectivity; TLS via `tokio-rustls` with explicit `TlsConfig` — other suites always use plain TCP
 - WebSocket suite (MQTT §6) tests MQTT-over-WebSocket; uses a minimal custom WebSocket client (`WsFramer`) with HTTP upgrade handshake — no external WS library
 - `RawClient::recv()` returns `Result<Packet, RecvError>` — tests match on `RecvError::Closed` (clean TCP close), `RecvError::Timeout`, and `RecvError::Other` (I/O errors including connection reset) to distinguish broker behaviour from infrastructure failures
-- Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror, tokio-rustls, rustls-pemfile, base64
+- Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror, tokio-rustls, rustls-pki-types, base64
 
 ## Building and running
 
@@ -44,7 +44,7 @@ cargo clippy   # should produce zero warnings
 
 - After making changes to code, run `cargo clippy` and `cargo fmt`
 - After making changes to code, always run existing tests and look to add tests for missing cases
-- Never commit changes as part of a task, unless you have asked explicitly to do so
+- NEVER commit changes, unless you have asked explicitly to do so
 - Ensure any relevant information in CLAUDE.md is correct after making changes
 - Use `#[allow(dead_code)]` for public API surface not yet consumed (codec structs, client methods) rather than removing it
 - QoS enum variants use standard MQTT naming (AtMostOnce, AtLeastOnce, ExactlyOnce)

@@ -142,18 +142,14 @@ impl TlsConfig {
         insecure: bool,
         server_name: &str,
     ) -> Result<Self> {
-        use std::io::BufReader;
-
         let mut root_store = rustls::RootCertStore::empty();
 
         if let Some(ca_path) = ca_cert {
-            let file = std::fs::File::open(ca_path)
+            use rustls_pki_types::pem::PemObject;
+            let certs = rustls_pki_types::CertificateDer::pem_file_iter(ca_path)
                 .with_context(|| format!("cannot open CA cert: {}", ca_path.display()))?;
-            let mut reader = BufReader::new(file);
-            let certs = rustls_pemfile::certs(&mut reader)
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("failed to parse CA certificates")?;
             for cert in certs {
+                let cert = cert.context("failed to parse CA certificate")?;
                 root_store
                     .add(cert)
                     .context("failed to add CA certificate")?;

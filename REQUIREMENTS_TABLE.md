@@ -12,8 +12,6 @@ Generated: 2026-03-24
 | Client (client-side obligation, not server-testable) | 26 |
 | Not tested (with explanation) | 19 |
 
-Test results against Mosquitto: 121/121 MUST pass, 15/15 SHOULD pass, 13/25 MAY detected.
-
 ---
 
 ## Section 1 — MQTT Control Packet Format

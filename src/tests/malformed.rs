@@ -5,7 +5,7 @@
 //! These tests send intentionally broken packets and verify the server
 //! terminates the connection.
 
-use crate::client::{self, RawClient};
+use crate::client::{self, RawClient, RecvError};
 use crate::codec::{ConnectParams, Packet};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
 
@@ -41,9 +41,16 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Expect the broker to either send DISCONNECT or close the connection.
+///
+/// - Connection closed → pass (broker rejected the packet).
+/// - DISCONNECT packet → pass.
+/// - Timeout → fail (broker ignored the malformed packet).
+/// - Other error → fail (unexpected).
 async fn expect_disconnect(client: &mut RawClient, ctx: &TestContext) -> TestResult {
     match client.recv().await {
-        Err(_) => TestResult::pass(ctx),
+        Err(RecvError::Closed) => TestResult::pass(ctx),
+        Err(RecvError::Timeout) => TestResult::fail(ctx, "broker did not disconnect (timed out)"),
+        Err(RecvError::Other(e)) => TestResult::fail(ctx, format!("unexpected error: {e:#}")),
         Ok(Packet::Disconnect(_)) => TestResult::pass(ctx),
         Ok(other) => TestResult::fail_packet(ctx, "disconnect or connection close", &other),
     }
@@ -249,7 +256,12 @@ async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<Te
 
     // Server should either disconnect or return SUBACK with error reason code (0x80+).
     match client.recv().await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::SubAck(ack)) => {
             if ack.reason_codes.iter().all(|&c| c >= 0x80) {
                 Ok(TestResult::pass(&ctx))
@@ -391,7 +403,12 @@ async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> anyhow::Resu
 
     // Server should either disconnect or return SUBACK with error reason code (0x80+).
     match client.recv().await {
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::SubAck(ack)) => {
             if ack.reason_codes.iter().all(|&c| c >= 0x80) {
                 Ok(TestResult::pass(&ctx))

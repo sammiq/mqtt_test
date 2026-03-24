@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::client;
+use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
 
@@ -139,10 +139,11 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     let result = match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "redelivered PUBLISH on session resume", &other),
-        Err(_) => TestResult::fail(
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
             &ctx,
             "No queued QoS 1 message redelivered after session resume",
         ),
+        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
     };
     // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
@@ -233,10 +234,11 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
             "redelivered PUBLISH or PUBREL on session resume",
             &other,
         ),
-        Err(_) => TestResult::fail(
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
             &ctx,
             "No queued QoS 2 message redelivered after session resume",
         ),
+        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
     };
     // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
@@ -299,10 +301,11 @@ async fn subscription_persists_across_sessions(
     let result = match c2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "PUBLISH from persisted subscription", &other),
-        Err(_) => TestResult::fail(
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
             &ctx,
             "No message received — subscription did not persist across reconnect",
         ),
+        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
     };
     // AutoDisconnect on c2 sends DISCONNECT on drop.
 
@@ -412,7 +415,9 @@ async fn session_takeover(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
 
     // c1 should have been disconnected by the server.
     let result = match c1.recv().await {
-        Err(_) => TestResult::pass(&ctx), // Connection closed
+        Err(RecvError::Closed) => TestResult::pass(&ctx),
+        Err(RecvError::Timeout) => TestResult::fail(&ctx, "broker did not disconnect (timed out)"),
+        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
         Ok(Packet::Disconnect(_)) => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "DISCONNECT or connection close", &other),
     };
@@ -546,10 +551,11 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
     let result = match c2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "queued PUBLISH from persisted session", &other),
-        Err(_) => TestResult::fail(
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
             &ctx,
             "Session Present=1 but queued message not delivered — session state incomplete",
         ),
+        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
     };
 
     cleanup_session(config.addr, client_id, config.recv_timeout).await;

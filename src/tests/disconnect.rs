@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::client;
+use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillParams};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
 
@@ -55,8 +55,12 @@ async fn server_closes_after_disconnect(config: TestConfig<'_>) -> anyhow::Resul
 
     // After DISCONNECT, any further recv should fail (connection closed)
     match client.recv().await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
             "connection close after DISCONNECT",
@@ -104,10 +108,15 @@ async fn disconnect_with_will(config: TestConfig<'_>) -> anyhow::Result<TestResu
             "PUBLISH (will message)",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
-            "Will message not received after DISCONNECT with reason 0x04",
+            "Will message not received after DISCONNECT with reason 0x04 (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "Will message not received after DISCONNECT with reason 0x04 (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -144,7 +153,9 @@ async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> anyhow::Resu
 
     // Wait briefly — should NOT receive the will message
     match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
-        Err(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::fail(
             &ctx,
             "Will message was published despite normal DISCONNECT (0x00)",
@@ -178,7 +189,7 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Res
 
     // Server MUST treat this as a protocol error — disconnect with 0x82 or close.
     match client.recv().await {
-        Err(_) => {
+        Err(RecvError::Closed) => {
             // Connection closed — could be normal close or protocol error close.
             // Since we just sent a DISCONNECT, the server closing is expected.
             // We check if the server sends a DISCONNECT with protocol error first.
@@ -186,6 +197,11 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Res
             // server at minimum didn't honor the invalid session expiry.
             Ok(TestResult::pass(&ctx))
         }
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "broker did not disconnect (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Disconnect(d)) if d.reason_code == 0x00 => {
             // Normal disconnect response — server may have just ignored the invalid
@@ -241,7 +257,10 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
                 "Will message arrived immediately despite Will Delay Interval of 3s",
             ));
         }
-        _ => {} // expected — no message yet
+        Err(RecvError::Other(e)) => {
+            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
+        }
+        _ => {} // Timeout or Closed or unrelated packet — expected, no message yet
     }
 
     // Will SHOULD arrive within 5 seconds total
@@ -252,10 +271,15 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
             "delayed will PUBLISH",
             &other,
         )),
-        Err(_) => Ok(TestResult::fail(
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
             &ctx,
             "Will message not received within 5 seconds (delay was 3s)",
         )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "Will message not received — connection closed (delay was 3s)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -295,13 +319,15 @@ async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> anyhow::R
                 d.reason_code
             ),
         )),
-        Err(_) => {
+        Err(RecvError::Closed) => {
             // Connection closed without DISCONNECT — still acceptable
             Ok(TestResult::fail(
                 &ctx,
                 "Connection closed without sending DISCONNECT (expected 0x8E reason code)",
             ))
         }
+        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No DISCONNECT received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
     }
 }
@@ -334,10 +360,16 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
 
         // Check if broker disconnects us
         match c.recv_with_timeout(Duration::from_secs(2)).await {
-            Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-            Err(_) => {
-                // Connection closed — also acceptable
-                Ok(TestResult::pass(&ctx))
+            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+            Err(RecvError::Timeout) => {
+                // Broker accepted it — it has no practical limit
+                Ok(TestResult::skip(
+                    &ctx,
+                    "Broker accepted 1MB payload — no Maximum Packet Size enforced",
+                ))
+            }
+            Err(RecvError::Other(e)) => {
+                Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
             }
             Ok(_) => {
                 // Broker accepted it — it has no practical limit
@@ -355,7 +387,14 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
 
         match c.recv().await {
             Ok(Packet::Disconnect(d)) if d.reason_code == 0x95 => Ok(TestResult::pass(&ctx)),
-            Ok(Packet::Disconnect(_)) | Err(_) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+            Err(RecvError::Timeout) => Ok(TestResult::fail(
+                &ctx,
+                "broker did not disconnect (timed out)",
+            )),
+            Err(RecvError::Other(e)) => {
+                Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
+            }
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
         }
     }
@@ -396,10 +435,13 @@ async fn disconnect_reason_string(config: TestConfig<'_>) -> anyhow::Result<Test
                 ))
             }
         }
-        _ => Ok(TestResult::fail(
+        Err(RecvError::Closed) => Ok(TestResult::fail(
             &ctx,
-            "No DISCONNECT received (connection closed without reason)",
+            "Connection closed without sending DISCONNECT",
         )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No DISCONNECT received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
     }
 }
 
@@ -436,13 +478,15 @@ async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> anyhow::Result<
                 d.reason_code
             ),
         )),
-        Err(_) => {
+        Err(RecvError::Closed) => {
             // Connection closed without DISCONNECT — server did not send one
             Ok(TestResult::fail(
                 &ctx,
                 "Connection closed without sending DISCONNECT (server SHOULD send DISCONNECT before closing)",
             ))
         }
+        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No DISCONNECT received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
             "DISCONNECT with error reason code",

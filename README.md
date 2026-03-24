@@ -26,7 +26,7 @@ See [REQUIREMENTS_TABLE.md](REQUIREMENTS_TABLE.md) for a full mapping of every n
 
 - Rust (edition 2024)
 - An MQTT v5 broker to test against
-- Docker (optional, for `test-broker.sh`)
+- Docker (optional, for `test-broker-mosquitto.sh` / `test-broker-hivemq.sh`)
 
 ## Building
 
@@ -54,6 +54,7 @@ mqtt_test [OPTIONS] [HOST]
 | `--tls-port <PORT>` | `8883` | TLS port for MQTT |
 | `--no-tls` | | Skip TLS transport tests |
 | `--ws-port <PORT>` | `8083` | WebSocket port for MQTT |
+| `--ws-path <PATH>` | `/mqtt` | WebSocket path for MQTT |
 | `--no-ws` | | Skip WebSocket transport tests |
 | `--ca-cert <PATH>` | | CA certificate PEM file for TLS verification (insecure if omitted) |
 | `-t, --timeout-ms <MS>` | `5000` | Timeout in milliseconds for each broker response |
@@ -84,10 +85,11 @@ cargo run -- 127.0.0.1 --order requirement
 
 ### Quick test with Docker
 
-`test-broker.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up:
+`test-broker-mosquitto.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up. `test-broker-hivemq.sh` does the same with HiveMQ CE (TCP + WebSocket, no TLS):
 
 ```sh
-./test-broker.sh
+./test-broker-mosquitto.sh
+./test-broker-hivemq.sh
 ```
 
 ## Sample output

@@ -23,6 +23,26 @@ use tokio_rustls::rustls::pki_types as rustls_pki_types;
 use crate::codec::{
     self, ConnectParams, Packet, Properties, PublishParams, SubscribeParams, UnsubscribeParams,
 };
+
+// ── RecvError ────────────────────────────────────────────────────────────────
+
+/// Distinguishes the reasons a [`RawClient::recv`] call can fail.
+///
+/// Tests match on these variants to decide whether an error counts as
+/// "broker disconnected" (expected in malformed-packet tests) or
+/// "timed out" (broker ignored the packet — a compliance failure).
+#[derive(Debug, thiserror::Error)]
+pub enum RecvError {
+    /// The configured timeout elapsed with no complete packet received.
+    #[error("timed out waiting for broker packet")]
+    Timeout,
+    /// The broker closed the TCP connection (read returned 0 bytes).
+    #[error("broker closed the connection")]
+    Closed,
+    /// Any other I/O or decode error.
+    #[error("{0:#}")]
+    Other(anyhow::Error),
+}
 pub use crate::ws::{WsFramer, WsUpgradeResult};
 
 use crate::ws::WsStream;
@@ -247,13 +267,14 @@ impl RawClient {
     pub async fn connect_ws(
         addr: &str,
         host: &str,
+        path: &str,
         recv_timeout: Duration,
     ) -> Result<(Self, WsUpgradeResult)> {
         let mut tcp = TcpStream::connect(addr)
             .await
             .with_context(|| format!("TCP connect to {addr} failed"))?;
 
-        let upgrade_result = crate::ws::ws_upgrade(&mut tcp, host, "/")
+        let upgrade_result = crate::ws::ws_upgrade(&mut tcp, host, path)
             .await
             .context("WebSocket upgrade failed")?;
 
@@ -368,23 +389,22 @@ impl RawClient {
     // ── Receive ──────────────────────────────────────────────────────────────
 
     /// Wait up to the client's configured timeout for the next complete packet.
-    pub async fn recv(&mut self) -> Result<Packet> {
+    pub async fn recv(&mut self) -> Result<Packet, RecvError> {
         self.recv_with_timeout(self.recv_timeout).await
     }
 
     /// Wait up to a custom timeout for the next complete packet.
-    pub async fn recv_with_timeout(&mut self, wait: Duration) -> Result<Packet> {
+    pub async fn recv_with_timeout(&mut self, wait: Duration) -> Result<Packet, RecvError> {
         trace!(timeout_ms = wait.as_millis() as u64, "waiting for packet");
-        let packet = timeout(wait, self.recv_inner())
-            .await
-            .context("timed out waiting for broker packet")?;
-        if let Ok(ref p) = packet {
-            debug!(packet = %p, "received");
-        }
-        packet
+        let packet = match timeout(wait, self.recv_inner()).await {
+            Err(_) => return Err(RecvError::Timeout),
+            Ok(result) => result?,
+        };
+        debug!(packet = %packet, "received");
+        Ok(packet)
     }
 
-    async fn recv_inner(&mut self) -> Result<Packet> {
+    async fn recv_inner(&mut self) -> Result<Packet, RecvError> {
         loop {
             // Try to parse what we already have buffered.
             match codec::decode_packet(&self.read_buf) {
@@ -393,20 +413,19 @@ impl RawClient {
                     return Ok(packet);
                 }
                 Ok(None) => {}
-                Err(e) => bail!("decode error: {e}"),
+                Err(e) => return Err(RecvError::Other(anyhow::anyhow!("decode error: {e}"))),
             }
 
             // Need more bytes from the broker.
             let mut tmp = [0u8; 4096];
-            let n = self
-                .stream
-                .read(&mut tmp)
-                .await
-                .context("read from broker failed")?;
+            let n =
+                self.stream.read(&mut tmp).await.map_err(|e| {
+                    RecvError::Other(anyhow::anyhow!("read from broker failed: {e}"))
+                })?;
             trace!(bytes = n, "read from socket");
             if n == 0 {
                 debug!("broker closed the connection");
-                bail!("broker closed the connection");
+                return Err(RecvError::Closed);
             }
             self.read_buf.extend_from_slice(&tmp[..n]);
         }
@@ -494,11 +513,12 @@ pub async fn connect_tls(
 pub async fn connect_ws(
     addr: &str,
     host: &str,
+    path: &str,
     params: &ConnectParams,
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck, WsUpgradeResult)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (WebSocket)");
-    let (mut client, upgrade) = RawClient::connect_ws(addr, host, recv_timeout).await?;
+    let (mut client, upgrade) = RawClient::connect_ws(addr, host, path, recv_timeout).await?;
     client.send_connect(params).await?;
 
     match client.recv().await? {

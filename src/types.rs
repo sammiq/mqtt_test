@@ -17,6 +17,8 @@ pub struct TestConfig<'a> {
     pub recv_timeout: Duration,
     /// TLS endpoint address and config, if available.
     pub tls_info: Option<(&'a str, &'a TlsConfig)>,
+    /// WebSocket endpoint address and hostname, if available.
+    pub ws_info: Option<(&'a str, &'a str)>,
 }
 
 /// How the MQTT v5 specification describes a behaviour.

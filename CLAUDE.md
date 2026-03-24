@@ -5,12 +5,12 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 ## Project structure
 
 - `src/main.rs` — CLI entry point (clap), runs all test suites and prints report
-- `src/client.rs` — `RawClient` async TCP/TLS wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum
+- `src/client.rs` — `RawClient` async TCP/TLS/WebSocket wrapper, `AutoDisconnect` RAII wrapper, `Transport` enum, `WsFramer`
 - `src/codec.rs` — Custom MQTT v5 packet encoder/decoder (no external MQTT library)
 - `src/types.rs` — `Compliance` (Must/Should/May), `Outcome`, `TestResult`, `Suite`, `SuiteRunner`, `TestConfig`
 - `src/report.rs` — Report formatting/printing
 - `src/tests/` — Test suites
-- `REQUIREMENTS_TABLE` — List of MQTT v5 requirements and their implementation status in the project
+- `REQUIREMENTS_TABLE.md` — List of MQTT v5 requirements and their implementation status in the project
 
 ## Architecture
 
@@ -22,7 +22,8 @@ MQTT v5 broker compliance testing tool written in Rust. Tests brokers (not clien
 - Use `into_raw()` to escape auto-disconnect when a test intentionally skips DISCONNECT (e.g. abrupt disconnects for session resumption)
 - Use `RawClient` directly when DISCONNECT is the subject of the test and should be explicit in the code
 - Transport suite (MQTT §4.2) tests TCP and TLS connectivity; TLS via `tokio-rustls` with explicit `TlsConfig` — other suites always use plain TCP
-- Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror, tokio-rustls, rustls-pemfile
+- WebSocket suite (MQTT §6) tests MQTT-over-WebSocket; uses a minimal custom WebSocket client (`WsFramer`) with HTTP upgrade handshake — no external WS library
+- Dependencies are minimal: tokio, bytes, clap, anyhow, thiserror, tokio-rustls, rustls-pemfile, base64
 
 ## Building and running
 
@@ -31,8 +32,9 @@ cargo build
 cargo run -- 127.0.0.1                                # TCP :1883, tries TLS :8883
 cargo run -- 127.0.0.1 --ca-cert /path/to/ca.crt      # verify TLS certs
 cargo run -- 127.0.0.1 --no-tls                        # skip TLS transport test
+cargo run -- 127.0.0.1 --ws-port 8083                   # test WebSocket on port 8083
 cargo clippy   # should produce zero warnings
-./test-broker.sh   # spins up mosquitto in Docker, runs full suite (TCP + TLS)
+./test-broker.sh   # spins up mosquitto in Docker, runs full suite (TCP + TLS + WebSocket)
 ```
 
 ## Conventions
@@ -46,6 +48,6 @@ cargo clippy   # should produce zero warnings
 - Prefer struct initialization syntax over field reassignment after Default::default()
 - `TestConfig` is `Copy` — passed by value everywhere; no `&` or `*` needed
 - Test count is derived automatically from `SuiteRunner` — just add tests via `suite.add(CTX, test_fn(config))` in the module's `tests()` function
-- All test suites receive the same `TestConfig` (including TLS info); tests that don't use TLS simply ignore it, TLS tests return SKIP when `config.tls_info` is `None`
+- All test suites receive the same `TestConfig` (including TLS and WebSocket info); tests that don't use TLS/WS simply ignore it, TLS tests return SKIP when `config.tls_info` is `None`, WS tests when `config.ws_info` is `None`
 - Tests that require broker features not universally supported (e.g. enhanced auth) should always register and return SKIP with a descriptive reason, rather than being conditionally omitted
-- `test-broker.sh` runs a single pass with TCP (port 1883) and TLS transport (port 8883)
+- `test-broker.sh` runs a single pass with TCP (port 1883), TLS transport (port 8883), and WebSocket (port 8083)

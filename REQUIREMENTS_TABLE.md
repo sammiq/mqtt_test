@@ -7,13 +7,12 @@ Generated: 2026-03-24
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested, passing) | 171 |
+| Implemented (tested, passing) | 174 |
 | Structural (codec/format, implicitly covered) | 37 |
-| Client (client-side obligation, not server-testable) | 25 |
+| Client (client-side obligation, not server-testable) | 26 |
 | Not tested (with explanation) | 19 |
-| WebSocket (out of scope — TCP/TLS only) | 4 |
 
-Test results against Mosquitto: 118/118 MUST pass, 15/15 SHOULD pass, 13/25 MAY detected.
+Test results against Mosquitto: 121/121 MUST pass, 15/15 SHOULD pass, 13/25 MAY detected.
 
 ---
 
@@ -418,7 +417,7 @@ Test results against Mosquitto: 118/118 MUST pass, 15/15 SHOULD pass, 13/25 MAY 
 
 | Requirement | Level | Status | Description |
 |-------------|-------|--------|-------------|
-| MQTT-6.0.0-1 | MUST | WebSocket | Non-binary WebSocket frame: must close connection. Out of scope (TCP/TLS only). |
-| MQTT-6.0.0-2 | MUST | WebSocket | Must not assume MQTT packets aligned on WebSocket frames. Out of scope (TCP/TLS only). |
-| MQTT-6.0.0-3 | MUST | WebSocket | Client must include "mqtt" in WebSocket Sub Protocols. Out of scope (TCP/TLS only). |
-| MQTT-6.0.0-4 | MUST | WebSocket | WebSocket Subprotocol returned must be "mqtt". Out of scope (TCP/TLS only). |
+| MQTT-6.0.0-1 | MUST | Implemented | Non-binary WebSocket frame: server must close connection. Tested by sending text frame after WS upgrade. |
+| MQTT-6.0.0-2 | MUST | Implemented | Server must not assume MQTT packets are aligned on WebSocket frames. Tested by splitting CONNECT across two WS frames. |
+| MQTT-6.0.0-3 | MUST | Client | Client must include "mqtt" in WebSocket Sub Protocols. Client-side requirement, not a broker behaviour. |
+| MQTT-6.0.0-4 | MUST | Implemented | WebSocket subprotocol returned by server must be "mqtt". Verified during WS upgrade handshake. |

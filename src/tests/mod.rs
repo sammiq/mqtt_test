@@ -8,6 +8,7 @@ pub mod request_response;
 pub mod session;
 pub mod subscribe;
 pub mod transport;
+pub mod websocket;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
@@ -45,6 +46,7 @@ pub async fn run_selected(
             SuiteName::Disconnect => disconnect::tests(config),
             SuiteName::RequestResponse => request_response::tests(config),
             SuiteName::Auth => auth::tests(config),
+            SuiteName::WebSocket => websocket::tests(config),
         };
         let pb = make_progress_bar(mp, runner.name, runner.count());
         pb.println(format!(

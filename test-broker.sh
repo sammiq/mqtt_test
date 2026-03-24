@@ -4,6 +4,7 @@ set -euo pipefail
 CONTAINER_NAME="mqtt-test-mosquitto"
 PORT=1883
 TLS_PORT=8883
+WS_PORT=8083
 CERT_DIR=$(mktemp -d)
 chmod 755 "$CERT_DIR"
 
@@ -29,13 +30,13 @@ openssl x509 -req -in "$CERT_DIR/server.csr" -CA "$CERT_DIR/ca.crt" -CAkey "$CER
     -copy_extensions copyall 2>/dev/null
 chmod 644 "$CERT_DIR"/*
 
-echo "Starting mosquitto container on ports $PORT (TCP) and $TLS_PORT (TLS)..."
+echo "Starting mosquitto container on ports $PORT (TCP), $TLS_PORT (TLS), $WS_PORT (WebSocket)..."
 docker run -d --name "$CONTAINER_NAME" \
-    -p "$PORT:1883" -p "$TLS_PORT:8883" \
+    -p "$PORT:1883" -p "$TLS_PORT:8883" -p "$WS_PORT:8083" \
     --security-opt label=disable \
     -v "$CERT_DIR:/certs" \
     eclipse-mosquitto:latest \
-    sh -c 'printf "listener 1883\nallow_anonymous true\n\nlistener 8883\nallow_anonymous true\ncafile /certs/ca.crt\ncertfile /certs/server.crt\nkeyfile /certs/server.key\n" > /tmp/mosquitto.conf && mosquitto -c /tmp/mosquitto.conf -v'
+    sh -c 'printf "listener 1883\nallow_anonymous true\n\nlistener 8883\nallow_anonymous true\ncafile /certs/ca.crt\ncertfile /certs/server.crt\nkeyfile /certs/server.key\n\nlistener 8083\nprotocol websockets\nallow_anonymous true\n" > /tmp/mosquitto.conf && mosquitto -c /tmp/mosquitto.conf -v'
 
 # Wait for mosquitto to be ready — use docker exec to verify from inside the container
 echo "Waiting for mosquitto to accept connections..."
@@ -56,8 +57,8 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     exit 1
 fi
 
-echo "Running MQTT compliance tests (TCP + TLS)..."
+echo "Running MQTT compliance tests (TCP + TLS + WebSocket)..."
 echo
 cargo run -- 127.0.0.1 \
-    --tcp-port "$PORT" --tls-port "$TLS_PORT" \
+    --tcp-port "$PORT" --tls-port "$TLS_PORT" --ws-port "$WS_PORT" \
     --ca-cert "$CERT_DIR/ca.crt" "$@"

@@ -18,6 +18,7 @@ Uses a custom MQTT v5 packet codec — no external MQTT client library — givin
 | Disconnect | DISCONNECT handling, will message lifecycle, reason codes |
 | Request/Response | Request/response pattern, response topic, correlation data |
 | Auth | Enhanced authentication (MQTT §4.12), skips gracefully without auth plugin |
+| WebSocket | WebSocket transport (MQTT §6), subprotocol negotiation, frame handling |
 
 See [REQUIREMENTS_TABLE.md](REQUIREMENTS_TABLE.md) for a full mapping of every normative spec requirement to its test coverage status.
 
@@ -52,6 +53,8 @@ mqtt_test [OPTIONS] [HOST]
 | `--tcp-port <PORT>` | `1883` | TCP port for MQTT |
 | `--tls-port <PORT>` | `8883` | TLS port for MQTT |
 | `--no-tls` | | Skip TLS transport tests |
+| `--ws-port <PORT>` | `8083` | WebSocket port for MQTT |
+| `--no-ws` | | Skip WebSocket transport tests |
 | `--ca-cert <PATH>` | | CA certificate PEM file for TLS verification (insecure if omitted) |
 | `-t, --timeout-ms <MS>` | `5000` | Timeout in milliseconds for each broker response |
 | `-s, --suite <SUITES>` | all | Run only specific suites (comma-separated) |
@@ -81,7 +84,7 @@ cargo run -- 127.0.0.1 --order requirement
 
 ### Quick test with Docker
 
-`test-broker.sh` spins up a Mosquitto container with TCP and TLS, runs the full suite, and cleans up:
+`test-broker.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up:
 
 ```sh
 ./test-broker.sh
@@ -91,7 +94,7 @@ cargo run -- 127.0.0.1 --order requirement
 
 ```
 Summary
-  Required (MUST):       118/118
+  Required (MUST):       121/121
   Recommended (SHOULD):  15/15
   Optional (MAY):        13/25
 

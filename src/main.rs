@@ -24,6 +24,8 @@ pub enum SuiteName {
     Disconnect,
     RequestResponse,
     Auth,
+    #[value(name = "websocket")]
+    WebSocket,
 }
 
 impl std::fmt::Display for SuiteName {
@@ -39,6 +41,7 @@ impl std::fmt::Display for SuiteName {
             Self::Disconnect => write!(f, "disconnect"),
             Self::RequestResponse => write!(f, "request-response"),
             Self::Auth => write!(f, "auth"),
+            Self::WebSocket => write!(f, "websocket"),
         }
     }
 }
@@ -89,6 +92,14 @@ struct Args {
     /// Path to CA certificate PEM file for TLS verification (omit for insecure)
     #[arg(long)]
     ca_cert: Option<std::path::PathBuf>,
+
+    /// WebSocket port for MQTT (default: 8083)
+    #[arg(long, default_value_t = 8083)]
+    ws_port: u16,
+
+    /// Skip WebSocket transport tests
+    #[arg(long)]
+    no_ws: bool,
 }
 
 #[tokio::main]
@@ -143,6 +154,33 @@ async fn main() {
         }
     };
 
+    // Determine whether to run WebSocket tests.
+    let ws_port_is_explicit = std::env::args().any(|a| a.starts_with("--ws-port"));
+    let ws_addr = if args.no_ws {
+        None
+    } else {
+        let addr = format!("{}:{}", args.host, args.ws_port);
+
+        let ws_reachable = matches!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect(&addr),
+            )
+            .await,
+            Ok(Ok(_))
+        );
+
+        if !ws_reachable {
+            if ws_port_is_explicit {
+                eprintln!("Error: cannot connect to WebSocket endpoint at {addr}");
+                std::process::exit(1);
+            }
+            None
+        } else {
+            Some(addr)
+        }
+    };
+
     // Resolve which suites to run
     let all_suites = vec![
         SuiteName::Transport,
@@ -155,6 +193,7 @@ async fn main() {
         SuiteName::Disconnect,
         SuiteName::RequestResponse,
         SuiteName::Auth,
+        SuiteName::WebSocket,
     ];
     let suites_to_run = args.suite.as_deref().unwrap_or(&all_suites);
 
@@ -166,6 +205,11 @@ async fn main() {
         println!("TLS endpoint at {addr}");
     } else if !args.no_tls {
         println!("TLS endpoint not reachable, skipping TLS transport test");
+    }
+    if let Some(ref addr) = ws_addr {
+        println!("WebSocket endpoint at {addr}");
+    } else if !args.no_ws {
+        println!("WebSocket endpoint not reachable, skipping WebSocket tests");
     }
     println!(
         "Suites: {}\n",
@@ -184,10 +228,12 @@ async fn main() {
     }
 
     let tls_info = tls_addr.as_deref().zip(tls_config.as_ref());
+    let ws_info = ws_addr.as_deref().map(|addr| (addr, args.host.as_str()));
     let config = types::TestConfig {
         addr: &tcp_addr,
         recv_timeout,
         tls_info,
+        ws_info,
     };
     let start = std::time::Instant::now();
     let report = tests::run_selected(config, suites_to_run, &mp).await;

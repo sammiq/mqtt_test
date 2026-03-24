@@ -99,7 +99,7 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // 2. Disconnect the subscriber abruptly (no DISCONNECT packet) so messages queue.
     drop(sub_client.into_raw());
@@ -113,7 +113,7 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     pub_client.send_publish(&pub_msg).await?;
     // Wait for PUBACK.
     for _ in 0..5 {
-        if let Packet::PubAck(_) = pub_client.recv(config.recv_timeout).await? {
+        if let Packet::PubAck(_) = pub_client.recv().await? {
             break;
         }
     }
@@ -136,7 +136,7 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     }
 
     // 5. Check for the redelivered message.
-    let result = match sub_client2.recv(config.recv_timeout).await {
+    let result = match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "redelivered PUBLISH on session resume", &other),
         Err(_) => TestResult::fail(
@@ -174,7 +174,7 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     let sub = SubscribeParams::simple(1, topic, QoS::ExactlyOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // 2. Disconnect subscriber abruptly.
     drop(sub_client.into_raw());
@@ -189,12 +189,12 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     // Complete the QoS 2 handshake on the publisher side.
     for _ in 0..5 {
-        match pub_client.recv(config.recv_timeout).await? {
+        match pub_client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 1 => {
                 pub_client.send_pubrel(1, 0x00).await?;
                 // Wait for PUBCOMP.
                 for _ in 0..5 {
-                    if let Packet::PubComp(_) = pub_client.recv(config.recv_timeout).await? {
+                    if let Packet::PubComp(_) = pub_client.recv().await? {
                         break;
                     }
                 }
@@ -222,7 +222,7 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     }
 
     // 5. Should receive the queued QoS 2 message (as PUBLISH or PUBREL depending on state).
-    let result = match sub_client2.recv(config.recv_timeout).await {
+    let result = match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(Packet::PubRel(_)) => {
             // The broker may resume at the PUBREL stage — this is also valid.
@@ -269,7 +269,7 @@ async fn subscription_persists_across_sessions(
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
     c1.send_subscribe(&sub).await?;
-    c1.recv(config.recv_timeout).await?; // SUBACK
+    c1.recv().await?; // SUBACK
     drop(c1); // AutoDisconnect sends DISCONNECT on drop.
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -296,7 +296,7 @@ async fn subscription_persists_across_sessions(
     // AutoDisconnect on pub_client sends DISCONNECT on drop.
 
     // 4. The reconnected subscriber should receive it without re-subscribing.
-    let result = match c2.recv(config.recv_timeout).await {
+    let result = match c2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "PUBLISH from persisted subscription", &other),
         Err(_) => TestResult::fail(
@@ -411,7 +411,7 @@ async fn session_takeover(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
     let (_c2, _) = client::connect(config.addr, &params2, config.recv_timeout).await?;
 
     // c1 should have been disconnected by the server.
-    let result = match c1.recv(config.recv_timeout).await {
+    let result = match c1.recv().await {
         Err(_) => TestResult::pass(&ctx), // Connection closed
         Ok(Packet::Disconnect(_)) => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "DISCONNECT or connection close", &other),
@@ -444,7 +444,7 @@ async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<TestRe
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     c1.send_subscribe(&sub).await?;
-    c1.recv(config.recv_timeout).await?; // SUBACK
+    c1.recv().await?; // SUBACK
 
     drop(c1); // Graceful disconnect
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -508,7 +508,7 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     c1.send_subscribe(&sub).await?;
-    c1.recv(config.recv_timeout).await?; // SUBACK
+    c1.recv().await?; // SUBACK
 
     // Disconnect abruptly so messages queue
     drop(c1.into_raw());
@@ -521,7 +521,7 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
         .send_publish(&PublishParams::qos1(topic, b"persist-verify".to_vec(), 1))
         .await?;
     for _ in 0..5 {
-        if let Ok(Packet::PubAck(_)) = pub_client.recv(config.recv_timeout).await {
+        if let Ok(Packet::PubAck(_)) = pub_client.recv().await {
             break;
         }
     }
@@ -543,7 +543,7 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
     }
 
     // 4. Verify queued message is delivered — proves session state was preserved.
-    let result = match c2.recv(config.recv_timeout).await {
+    let result = match c2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(&ctx, "queued PUBLISH from persisted session", &other),
         Err(_) => TestResult::fail(

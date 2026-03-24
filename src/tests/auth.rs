@@ -57,11 +57,11 @@ async fn complete_auth_exchange(
     client_id: &str,
 ) -> anyhow::Result<Option<RawClient>> {
     let params = auth_connect_params(client_id);
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
     client.send_connect(&params).await?;
 
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::Auth {
                 reason_code: 0x18, ..
             } => {
@@ -99,10 +99,10 @@ async fn bad_auth_method(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let mut params = ConnectParams::new("mqtt-test-auth-bad-method");
     params.properties.authentication_method = Some("BOGUS-AUTH-METHOD-12345".into());
 
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
     client.send_connect(&params).await?;
 
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Ok(Packet::ConnAck(connack))
             if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
         {
@@ -138,10 +138,10 @@ async fn no_auth_no_auth_packet(config: TestConfig<'_>) -> anyhow::Result<TestRe
     let ctx = NO_AUTH_NO_AUTH_PACKET;
 
     let params = ConnectParams::new("mqtt-test-auth-no-method");
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
     client.send_connect(&params).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::ConnAck(connack) if connack.reason_code == 0x00 => {
             if connack.properties.authentication_method.is_some() {
                 return Ok(TestResult::fail(
@@ -181,10 +181,10 @@ async fn auth_continue(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = AUTH_CONTINUE;
 
     let params = auth_connect_params("mqtt-test-auth-continue");
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
     client.send_connect(&params).await?;
 
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Ok(Packet::Auth {
             reason_code: 0x18, ..
         }) => {
@@ -213,11 +213,11 @@ async fn auth_method_consistent(config: TestConfig<'_>) -> anyhow::Result<TestRe
     let ctx = AUTH_METHOD_CONSISTENT;
 
     let params = auth_connect_params("mqtt-test-auth-consistent");
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
     client.send_connect(&params).await?;
 
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::Auth {
                 reason_code: 0x18,
                 ref properties,
@@ -286,7 +286,7 @@ async fn full_exchange(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = FULL_EXCHANGE;
 
     let params = auth_connect_params("mqtt-test-auth-exchange");
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
     client.send_connect(&params).await?;
 
     let mut rounds = 0u8;
@@ -298,7 +298,7 @@ async fn full_exchange(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
             ));
         }
 
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::Auth {
                 reason_code: 0x18, ..
             } => {
@@ -360,7 +360,7 @@ async fn reauth(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
             ));
         }
 
-        match client.recv(Duration::from_secs(5)).await {
+        match client.recv_with_timeout(Duration::from_secs(5)).await {
             Ok(Packet::Auth {
                 reason_code: 0x00, ..
             }) => {
@@ -413,7 +413,7 @@ async fn reauth_fail(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     };
     client.send_auth(0x19, &bad_props).await?;
 
-    match client.recv(Duration::from_secs(5)).await {
+    match client.recv_with_timeout(Duration::from_secs(5)).await {
         Ok(Packet::Disconnect(disc)) if disc.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Disconnect(_)) => {
             // DISCONNECT with non-error code — unusual but still a disconnect

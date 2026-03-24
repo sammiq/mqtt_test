@@ -27,7 +27,7 @@ async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> anyhow::Result<TestRes
 
     client.send_pingreq().await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::PingResp => Ok(TestResult::pass(&ctx)),
         other => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
     }
@@ -47,7 +47,7 @@ async fn multiple_pings(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     for i in 0..3u8 {
         client.send_pingreq().await?;
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PingResp => {}
             other => {
                 return Ok(TestResult::fail_packet(

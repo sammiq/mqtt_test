@@ -499,11 +499,12 @@ impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
 pub struct RawClient {
     stream: Transport,
     read_buf: BytesMut,
+    recv_timeout: Duration,
 }
 
 impl RawClient {
     /// Open a plain TCP connection. Does *not* send CONNECT.
-    pub async fn connect_tcp(addr: &str) -> Result<Self> {
+    pub async fn connect_tcp(addr: &str, recv_timeout: Duration) -> Result<Self> {
         let tcp = TcpStream::connect(addr)
             .await
             .with_context(|| format!("TCP connect to {addr} failed"))?;
@@ -511,11 +512,12 @@ impl RawClient {
         Ok(Self {
             stream: Transport::Tcp(tcp),
             read_buf: BytesMut::with_capacity(4096),
+            recv_timeout,
         })
     }
 
     /// Open a TLS connection. Does *not* send CONNECT.
-    pub async fn connect_tls(addr: &str, tls: &TlsConfig) -> Result<Self> {
+    pub async fn connect_tls(addr: &str, tls: &TlsConfig, recv_timeout: Duration) -> Result<Self> {
         let tcp = TcpStream::connect(addr)
             .await
             .with_context(|| format!("TCP connect to {addr} failed"))?;
@@ -527,12 +529,17 @@ impl RawClient {
         Ok(Self {
             stream: Transport::Tls(tls_stream),
             read_buf: BytesMut::with_capacity(4096),
+            recv_timeout,
         })
     }
 
     /// Open a WebSocket connection. Performs the HTTP upgrade handshake.
     /// Does *not* send CONNECT. Returns the upgrade result alongside the client.
-    pub async fn connect_ws(addr: &str, host: &str) -> Result<(Self, WsUpgradeResult)> {
+    pub async fn connect_ws(
+        addr: &str,
+        host: &str,
+        recv_timeout: Duration,
+    ) -> Result<(Self, WsUpgradeResult)> {
         let mut tcp = TcpStream::connect(addr)
             .await
             .with_context(|| format!("TCP connect to {addr} failed"))?;
@@ -544,6 +551,7 @@ impl RawClient {
         let client = Self {
             stream: Transport::WebSocket(WsStream::new(tcp)),
             read_buf: BytesMut::with_capacity(4096),
+            recv_timeout,
         };
 
         Ok((client, upgrade_result))
@@ -650,8 +658,13 @@ impl RawClient {
 
     // ── Receive ──────────────────────────────────────────────────────────────
 
-    /// Wait up to `wait` for the next complete packet from the broker.
-    pub async fn recv(&mut self, wait: Duration) -> Result<Packet> {
+    /// Wait up to the client's configured timeout for the next complete packet.
+    pub async fn recv(&mut self) -> Result<Packet> {
+        self.recv_with_timeout(self.recv_timeout).await
+    }
+
+    /// Wait up to a custom timeout for the next complete packet.
+    pub async fn recv_with_timeout(&mut self, wait: Duration) -> Result<Packet> {
         trace!(timeout_ms = wait.as_millis() as u64, "waiting for packet");
         let packet = timeout(wait, self.recv_inner())
             .await
@@ -741,10 +754,10 @@ pub async fn connect(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
     debug!(addr, client_id = %params.client_id, "CONNECT");
-    let mut client = RawClient::connect_tcp(addr).await?;
+    let mut client = RawClient::connect_tcp(addr, recv_timeout).await?;
     client.send_connect(params).await?;
 
-    match client.recv(recv_timeout).await? {
+    match client.recv().await? {
         Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
         other => bail!("expected CONNACK, got {other}"),
     }
@@ -758,10 +771,10 @@ pub async fn connect_tls(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (TLS)");
-    let mut client = RawClient::connect_tls(addr, tls).await?;
+    let mut client = RawClient::connect_tls(addr, tls, recv_timeout).await?;
     client.send_connect(params).await?;
 
-    match client.recv(recv_timeout).await? {
+    match client.recv().await? {
         Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
         other => bail!("expected CONNACK, got {other}"),
     }
@@ -776,10 +789,10 @@ pub async fn connect_ws(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck, WsUpgradeResult)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (WebSocket)");
-    let (mut client, upgrade) = RawClient::connect_ws(addr, host).await?;
+    let (mut client, upgrade) = RawClient::connect_ws(addr, host, recv_timeout).await?;
     client.send_connect(params).await?;
 
-    match client.recv(recv_timeout).await? {
+    match client.recv().await? {
         Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack, upgrade)),
         other => bail!("expected CONNACK, got {other}"),
     }
@@ -799,7 +812,7 @@ pub async fn connect_and_subscribe(
 
     let sub = SubscribeParams::simple(1, topic, qos);
     client.send_subscribe(&sub).await?;
-    client.recv(recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     Ok(client)
 }

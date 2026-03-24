@@ -54,7 +54,7 @@ async fn server_closes_after_disconnect(config: TestConfig<'_>) -> anyhow::Resul
     client.send_disconnect(0x00).await?;
 
     // After DISCONNECT, any further recv should fail (connection closed)
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
@@ -97,7 +97,7 @@ async fn disconnect_with_will(config: TestConfig<'_>) -> anyhow::Result<TestResu
     // Disconnect with reason 0x04 — will message should still be published
     will_client.send_disconnect(0x04).await?;
 
-    match sub_client.recv(Duration::from_secs(5)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(5)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -143,7 +143,7 @@ async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> anyhow::Resu
     drop(will_client);
 
     // Wait briefly — should NOT receive the will message
-    match sub_client.recv(Duration::from_secs(2)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::fail(
             &ctx,
@@ -177,7 +177,7 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Res
     client.send_disconnect_with_properties(0x00, &props).await?;
 
     // Server MUST treat this as a protocol error — disconnect with 0x82 or close.
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Err(_) => {
             // Connection closed — could be normal close or protocol error close.
             // Since we just sent a DISCONNECT, the server closing is expected.
@@ -234,7 +234,7 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
     drop(will_client.into_raw());
 
     // Will should NOT arrive within 1 second
-    match sub_client.recv(Duration::from_secs(1)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => {
             return Ok(TestResult::fail(
                 &ctx,
@@ -245,7 +245,7 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
     }
 
     // Will SHOULD arrive within 5 seconds total
-    match sub_client.recv(Duration::from_secs(5)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(5)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -286,7 +286,7 @@ async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> anyhow::R
     let (_c2, _) = client::connect(config.addr, &params2, config.recv_timeout).await?;
 
     // c1 should receive DISCONNECT with reason 0x8E
-    match c1.recv(config.recv_timeout).await {
+    match c1.recv().await {
         Ok(Packet::Disconnect(d)) if d.reason_code == 0x8E => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Disconnect(d)) => Ok(TestResult::fail(
             &ctx,
@@ -333,7 +333,7 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
         c.send_publish(&publish).await?;
 
         // Check if broker disconnects us
-        match c.recv(Duration::from_secs(2)).await {
+        match c.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
             Err(_) => {
                 // Connection closed — also acceptable
@@ -353,7 +353,7 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
         let publish = PublishParams::qos0("test/large/packet", large_payload);
         c.send_publish(&publish).await?;
 
-        match c.recv(config.recv_timeout).await {
+        match c.recv().await {
             Ok(Packet::Disconnect(d)) if d.reason_code == 0x95 => Ok(TestResult::pass(&ctx)),
             Ok(Packet::Disconnect(_)) | Err(_) => Ok(TestResult::pass(&ctx)),
             Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
@@ -385,7 +385,7 @@ async fn disconnect_reason_string(config: TestConfig<'_>) -> anyhow::Result<Test
     params2.properties.session_expiry_interval = Some(60);
     let (_c2, _) = client::connect(config.addr, &params2, config.recv_timeout).await?;
 
-    match c1.recv(config.recv_timeout).await {
+    match c1.recv().await {
         Ok(Packet::Disconnect(d)) => {
             if d.properties.reason_string.is_some() {
                 Ok(TestResult::pass(&ctx))
@@ -427,7 +427,7 @@ async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> anyhow::Result<
     client.send_publish(&publish).await?;
 
     // Server SHOULD send DISCONNECT with a reason code before closing
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Disconnect(d)) => Ok(TestResult::fail(
             &ctx,

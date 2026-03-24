@@ -5,8 +5,6 @@
 //! These tests send intentionally broken packets and verify the server
 //! terminates the connection.
 
-use std::time::Duration;
-
 use crate::client::{self, RawClient};
 use crate::codec::{ConnectParams, Packet};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
@@ -43,12 +41,8 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Expect the broker to either send DISCONNECT or close the connection.
-async fn expect_disconnect(
-    client: &mut RawClient,
-    recv_timeout: Duration,
-    ctx: &TestContext,
-) -> TestResult {
-    match client.recv(recv_timeout).await {
+async fn expect_disconnect(client: &mut RawClient, ctx: &TestContext) -> TestResult {
+    match client.recv().await {
         Err(_) => TestResult::pass(ctx),
         Ok(Packet::Disconnect(_)) => TestResult::pass(ctx),
         Ok(other) => TestResult::fail_packet(ctx, "disconnect or connection close", &other),
@@ -68,7 +62,7 @@ const RESERVED_FLAGS: TestContext = TestContext {
 async fn reserved_connect_flags(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = RESERVED_FLAGS;
 
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Hand-craft a CONNECT with reserved flag bit 0 = 1.
     // Protocol Name "MQTT", Protocol Level 5, Connect Flags 0x03 (Clean Start + reserved=1).
@@ -85,7 +79,7 @@ async fn reserved_connect_flags(config: TestConfig<'_>) -> anyhow::Result<TestRe
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const BAD_REMAINING_LEN: TestContext = TestContext {
@@ -99,7 +93,7 @@ const BAD_REMAINING_LEN: TestContext = TestContext {
 async fn malformed_remaining_length(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = BAD_REMAINING_LEN;
 
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Send a CONNECT-like packet with a 5-byte remaining length (all continuation bits set).
     // This violates the VBI encoding limit of 4 bytes.
@@ -110,7 +104,7 @@ async fn malformed_remaining_length(config: TestConfig<'_>) -> anyhow::Result<Te
     ];
     client.send_raw(bad_packet).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
@@ -138,7 +132,7 @@ async fn publish_empty_topic_no_alias(config: TestConfig<'_>) -> anyhow::Result<
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const TOPIC_ALIAS_ZERO: TestContext = TestContext {
@@ -166,7 +160,7 @@ async fn publish_topic_alias_zero(config: TestConfig<'_>) -> anyhow::Result<Test
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const SUB_NO_FILTERS: TestContext = TestContext {
@@ -194,7 +188,7 @@ async fn subscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestResu
     ];
     client.send_raw(bad_subscribe).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const SUB_INVALID_QOS: TestContext = TestContext {
@@ -223,7 +217,7 @@ async fn subscribe_invalid_qos(config: TestConfig<'_>) -> anyhow::Result<TestRes
     ];
     client.send_raw(bad_subscribe).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const INVALID_WILDCARD: TestContext = TestContext {
@@ -254,7 +248,7 @@ async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<Te
     client.send_raw(bad_subscribe).await?;
 
     // Server should either disconnect or return SUBACK with error reason code (0x80+).
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::SubAck(ack)) => {
             if ack.reason_codes.iter().all(|&c| c >= 0x80) {
@@ -301,7 +295,7 @@ async fn unsubscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestRe
     ];
     client.send_raw(bad_unsubscribe).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const UNSUB_RESERVED_BITS: TestContext = TestContext {
@@ -330,7 +324,7 @@ async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Tes
     ];
     client.send_raw(bad_unsubscribe).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
@@ -365,7 +359,7 @@ async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> anyhow::Result<T
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const INVALID_PLUS_WILDCARD: TestContext = TestContext {
@@ -396,7 +390,7 @@ async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> anyhow::Resu
     client.send_raw(bad_subscribe).await?;
 
     // Server should either disconnect or return SUBACK with error reason code (0x80+).
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::SubAck(ack)) => {
             if ack.reason_codes.iter().all(|&c| c >= 0x80) {
@@ -446,7 +440,7 @@ async fn publish_topic_with_null_char(config: TestConfig<'_>) -> anyhow::Result<
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const SUB_WRONG_FIXED: TestContext = TestContext {
@@ -475,7 +469,7 @@ async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> anyhow::Re
     ];
     client.send_raw(bad_subscribe).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 // ── Username / Password ─────────────────────────────────────────────────────
@@ -491,7 +485,7 @@ const USERNAME_TRUNCATED: TestContext = TestContext {
 async fn username_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = USERNAME_TRUNCATED;
 
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Username flag (0x82 = clean_start + username) but payload
     // contains only a client ID — no username bytes.
@@ -508,7 +502,7 @@ async fn username_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const UTF8_SURROGATE: TestContext = TestContext {
@@ -540,7 +534,7 @@ async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> anyhow::Result<
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const PUBACK_BAD_FLAGS: TestContext = TestContext {
@@ -567,7 +561,7 @@ async fn puback_invalid_fixed_header_flags(config: TestConfig<'_>) -> anyhow::Re
     ];
     client.send_raw(bad_puback).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const WILL_QOS_THREE: TestContext = TestContext {
@@ -581,7 +575,7 @@ const WILL_QOS_THREE: TestContext = TestContext {
 async fn will_qos_three(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = WILL_QOS_THREE;
 
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Will Flag=1, Will QoS=3 (both bits set), Clean Start=1.
     // Connect flags = 0x1E = 0b_0001_1110.
@@ -602,7 +596,7 @@ async fn will_qos_three(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
@@ -627,7 +621,7 @@ async fn disconnect_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Test
     ];
     client.send_raw(bad_disconnect).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
 const PASSWORD_TRUNCATED: TestContext = TestContext {
@@ -641,7 +635,7 @@ const PASSWORD_TRUNCATED: TestContext = TestContext {
 async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = PASSWORD_TRUNCATED;
 
-    let mut client = RawClient::connect_tcp(config.addr).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Username + Password flags but only client ID + username in payload.
     // Remaining length claims 27 bytes but we only provide enough for client ID + username.
@@ -660,5 +654,5 @@ async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, config.recv_timeout, &ctx).await)
+    Ok(expect_disconnect(&mut client, &ctx).await)
 }

@@ -61,9 +61,9 @@ async fn response_topic_forwarded(config: TestConfig<'_>) -> anyhow::Result<Test
         },
     };
     pub_client.send_publish(&publish).await?;
-    pub_client.recv(config.recv_timeout).await?; // PUBACK
+    pub_client.recv().await?; // PUBACK
 
-    match sub.recv(config.recv_timeout).await? {
+    match sub.recv().await? {
         Packet::Publish(msg) => {
             if msg.properties.response_topic.as_deref() == Some("reply/to/me") {
                 Ok(TestResult::pass(&ctx))
@@ -121,9 +121,9 @@ async fn correlation_data_forwarded(config: TestConfig<'_>) -> anyhow::Result<Te
         },
     };
     pub_client.send_publish(&publish).await?;
-    pub_client.recv(config.recv_timeout).await?; // PUBACK
+    pub_client.recv().await?; // PUBACK
 
-    match sub.recv(config.recv_timeout).await? {
+    match sub.recv().await? {
         Packet::Publish(msg) => {
             if msg.properties.correlation_data.as_deref() == Some(b"\x01\x02\x03\xAB\xCD") {
                 Ok(TestResult::pass(&ctx))
@@ -195,10 +195,10 @@ async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<TestRes
         },
     };
     client_a.send_publish(&request).await?;
-    client_a.recv(config.recv_timeout).await?; // PUBACK
+    client_a.recv().await?; // PUBACK
 
     // Client B receives the request
-    let req_msg = match client_b.recv(config.recv_timeout).await? {
+    let req_msg = match client_b.recv().await? {
         Packet::Publish(msg) => msg,
         other => return Ok(TestResult::fail_packet(&ctx, "PUBLISH (request)", &other)),
     };
@@ -218,10 +218,10 @@ async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<TestRes
         },
     };
     client_b.send_publish(&response).await?;
-    client_b.recv(config.recv_timeout).await?; // PUBACK
+    client_b.recv().await?; // PUBACK
 
     // Client A receives the response
-    match client_a.recv(config.recv_timeout).await? {
+    match client_a.recv().await? {
         Packet::Publish(msg) => {
             let corr_ok = msg.properties.correlation_data.as_deref() == Some(b"req-1");
             let payload_ok = msg.payload == b"4";
@@ -279,9 +279,9 @@ async fn response_topic_with_correlation(config: TestConfig<'_>) -> anyhow::Resu
         },
     };
     pub_client.send_publish(&publish).await?;
-    pub_client.recv(config.recv_timeout).await?; // PUBACK
+    pub_client.recv().await?; // PUBACK
 
-    match sub.recv(config.recv_timeout).await? {
+    match sub.recv().await? {
         Packet::Publish(msg) => {
             let rt_ok = msg.properties.response_topic.as_deref() == Some("test/rr/response");
             let cd_ok = msg.properties.correlation_data.as_deref() == Some(b"corr-42");
@@ -343,13 +343,13 @@ async fn multiple_correlation_data(config: TestConfig<'_>) -> anyhow::Result<Tes
             },
         };
         pub_client.send_publish(&publish).await?;
-        pub_client.recv(config.recv_timeout).await?; // PUBACK
+        pub_client.recv().await?; // PUBACK
     }
 
     // Receive both messages
     let mut received_corrs = Vec::new();
     for _ in 0..2 {
-        match sub.recv(config.recv_timeout).await? {
+        match sub.recv().await? {
             Packet::Publish(msg) => {
                 received_corrs.push(msg.properties.correlation_data.unwrap_or_default());
             }

@@ -88,7 +88,7 @@ async fn qos0_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let pub_params = PublishParams::qos0("mqtt/test/pub/qos0", b"hello".to_vec());
     client.send_publish(&pub_params).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::Publish(p) if p.topic == "mqtt/test/pub/qos0" => Ok(TestResult::pass(&ctx)),
         other => Ok(TestResult::fail_packet(
             &ctx,
@@ -115,7 +115,7 @@ async fn qos1_gets_puback(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
     client.send_publish(&pub_params).await?;
 
     for _ in 0..5 {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubAck(ack) if ack.packet_id == 1 => {
                 return Ok(TestResult::pass(&ctx));
             }
@@ -164,13 +164,13 @@ async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     // Drain publisher PUBACK
     for _ in 0..5 {
-        if let Packet::PubAck(_) = pub_client.recv(config.recv_timeout).await? {
+        if let Packet::PubAck(_) = pub_client.recv().await? {
             break;
         }
     }
 
     // Subscriber should receive at QoS 1
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {
             // ACK it
             if let Some(pid) = p.packet_id {
@@ -214,11 +214,11 @@ async fn qos2_full_flow(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_publish(&pub_params).await?;
 
     for _ in 0..5 {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 2 => {
                 client.send_pubrel(2, 0x00).await?;
 
-                match client.recv(config.recv_timeout).await? {
+                match client.recv().await? {
                     Packet::PubComp(comp) if comp.packet_id == 2 => {
                         return Ok(TestResult::pass(&ctx));
                     }
@@ -266,7 +266,7 @@ async fn invalid_qos3(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     ];
     client.send_raw(bad_publish).await?;
 
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -301,7 +301,7 @@ async fn dup_on_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     ];
     client.send_raw(bad_publish).await?;
 
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(_)) => {
             // Some brokers may silently accept and forward — this is non-compliant
@@ -351,7 +351,7 @@ async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     // Complete publisher QoS 2 flow
     for _ in 0..5 {
-        match pub_client.recv(config.recv_timeout).await? {
+        match pub_client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 1 => {
                 pub_client.send_pubrel(1, 0x00).await?;
             }
@@ -361,7 +361,7 @@ async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Tes
     }
 
     // Subscriber should receive at QoS 0 (no packet_id field)
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {
             if p.qos == QoS::AtMostOnce {
                 Ok(TestResult::pass(&ctx))
@@ -411,7 +411,7 @@ async fn retain_flag_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.retain && p.topic == "mqtt/test/pub/retain" => {
             Ok(TestResult::pass(&ctx))
         }
@@ -464,7 +464,7 @@ async fn topic_alias_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResu
     client.send_publish(&pub_params).await?;
 
     for _ in 0..5 {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubAck(ack) if ack.packet_id == 1 => {
                 return Ok(TestResult::pass(&ctx));
             }
@@ -518,7 +518,7 @@ async fn property_forwarding_test(
     };
     client.send_publish(&pub_params).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {
             if check(&p.properties) {
                 Ok(TestResult::pass(&ctx))
@@ -713,7 +713,7 @@ async fn message_ordering(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
 
     // Drain PUBACKs
     for _ in 0..10 {
-        match pub_client.recv(config.recv_timeout).await {
+        match pub_client.recv().await {
             Ok(Packet::PubAck(_)) => {}
             _ => break,
         }
@@ -722,7 +722,7 @@ async fn message_ordering(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
     // Receive and verify order
     let mut received = Vec::new();
     for _ in 0..5 {
-        match sub_client.recv(config.recv_timeout).await {
+        match sub_client.recv().await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 if let Some(pid) = p.packet_id {
                     sub_client.send_puback(pid, 0x00).await?;
@@ -783,7 +783,7 @@ async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> anyhow::
     )
     .await?;
 
-    let result = match sub_client.recv(config.recv_timeout).await {
+    let result = match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic && p.retain => TestResult::pass(&ctx),
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::fail(
             &ctx,
@@ -842,7 +842,7 @@ async fn retained_deletion(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     )
     .await?;
 
-    match sub_client.recv(Duration::from_secs(1)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) if p.topic == topic && p.payload.is_empty() => {
             // Some brokers send the empty retained message — this is acceptable
@@ -897,7 +897,7 @@ async fn retained_replacement(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    let result = match sub_client.recv(config.recv_timeout).await {
+    let result = match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {
             if p.payload == b"v2" {
                 TestResult::pass(&ctx)
@@ -948,7 +948,7 @@ async fn puback_no_matching_subscribers(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::PubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_code == 0x10 {
                 Ok(TestResult::pass(&ctx))
@@ -989,7 +989,7 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Test
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
     drop(sub_client); // disconnect
 
     // Publish with MEI=60 while subscriber is offline
@@ -1010,7 +1010,7 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Test
     pub_client.send_publish(&pub_params).await?;
     // Drain PUBACK
     for _ in 0..5 {
-        if let Ok(Packet::PubAck(_)) = pub_client.recv(config.recv_timeout).await {
+        if let Ok(Packet::PubAck(_)) = pub_client.recv().await {
             break;
         }
     }
@@ -1025,7 +1025,7 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Test
     let (mut sub_client2, _) =
         client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
 
-    match sub_client2.recv(config.recv_timeout).await {
+    match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {
             if let Some(pid) = p.packet_id {
                 sub_client2.send_puback(pid, 0x00).await?;
@@ -1076,7 +1076,7 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<T
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Publish a message with payload larger than 64 bytes from another client
     let pub_conn = ConnectParams::new("mqtt-test-maxpkt-pub");
@@ -1087,7 +1087,7 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<T
         .await?;
 
     // Should NOT be delivered (would exceed max packet size)
-    let got_big = matches!(sub_client.recv(Duration::from_secs(1)).await, Ok(Packet::Publish(p)) if p.topic == topic && p.payload.len() > 40);
+    let got_big = matches!(sub_client.recv_with_timeout(Duration::from_secs(1)).await, Ok(Packet::Publish(p)) if p.topic == topic && p.payload.len() > 40);
 
     if got_big {
         return Ok(TestResult::fail(
@@ -1101,7 +1101,7 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<T
         .send_publish(&PublishParams::qos0(topic, b"small".to_vec()))
         .await?;
 
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::pass(&ctx)),
         _ => Ok(TestResult::pass(&ctx)), // Server may have disconnected — still compliant
     }
@@ -1159,7 +1159,7 @@ async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     };
     pub_client.send_publish(&p1).await?;
 
-    match sub_client.recv(config.recv_timeout).await? {
+    match sub_client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {}
         other => {
             return Ok(TestResult::fail_packet(
@@ -1185,7 +1185,7 @@ async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     };
     pub_client.send_publish(&p2).await?;
 
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) => Ok(TestResult::fail(
             &ctx,
@@ -1269,7 +1269,7 @@ async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> anyhow::Resul
     client2.send_publish(&p2).await?;
 
     // Server should disconnect or send DISCONNECT — alias mapping was reset
-    match client2.recv(config.recv_timeout).await {
+    match client2.recv().await {
         Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -1301,7 +1301,7 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Publish 5 QoS 1 messages from another client
     let pub_conn = ConnectParams::new("mqtt-test-recvmax-pub");
@@ -1317,7 +1317,7 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<
     }
     // Drain PUBACKs
     for _ in 0..10 {
-        match pub_client.recv(Duration::from_secs(1)).await {
+        match pub_client.recv_with_timeout(Duration::from_secs(1)).await {
             Ok(Packet::PubAck(_)) => {}
             _ => break,
         }
@@ -1326,7 +1326,7 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<
     // Read messages WITHOUT sending PUBACKs — server should stop after 2
     let mut unacked = Vec::new();
     for _ in 0..5 {
-        match sub_client.recv(Duration::from_secs(2)).await {
+        match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 unacked.push(p.packet_id);
             }
@@ -1352,7 +1352,7 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<
     // Should receive more messages now
     let mut total = unacked.len();
     for _ in 0..5 {
-        match sub_client.recv(Duration::from_secs(2)).await {
+        match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 if let Some(pid) = p.packet_id {
                     sub_client.send_puback(pid, 0x00).await?;
@@ -1395,7 +1395,7 @@ async fn qos2_duplicate_publish(config: TestConfig<'_>) -> anyhow::Result<TestRe
 
     // Get PUBREC
     for _ in 0..5 {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 10 => break,
             Packet::Publish(_) => {} // loopback
             other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(10)", &other)),
@@ -1416,11 +1416,11 @@ async fn qos2_duplicate_publish(config: TestConfig<'_>) -> anyhow::Result<TestRe
 
     // Should get another PUBREC for the same packet ID
     for _ in 0..5 {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 10 => {
                 // Complete the flow
                 client.send_pubrel(10, 0x00).await?;
-                match client.recv(config.recv_timeout).await? {
+                match client.recv().await? {
                     Packet::PubComp(comp) if comp.packet_id == 10 => {
                         return Ok(TestResult::pass(&ctx));
                     }
@@ -1474,7 +1474,7 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"first".to_vec(), 1))
         .await?;
-    match pub_client.recv(config.recv_timeout).await? {
+    match pub_client.recv().await? {
         Packet::PubAck(ack) if ack.packet_id == 1 => {}
         other => return Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other)),
     }
@@ -1483,7 +1483,7 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"second".to_vec(), 1))
         .await?;
-    match pub_client.recv(config.recv_timeout).await? {
+    match pub_client.recv().await? {
         Packet::PubAck(ack) if ack.packet_id == 1 => {}
         other => return Ok(TestResult::fail_packet(&ctx, "PUBACK(1) reuse", &other)),
     }
@@ -1491,7 +1491,7 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<
     // Verify both messages arrived
     let mut payloads = Vec::new();
     for _ in 0..2 {
-        match sub.recv(config.recv_timeout).await {
+        match sub.recv().await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 if let Some(pid) = p.packet_id {
                     sub.send_puback(pid, 0x00).await?;
@@ -1536,7 +1536,7 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
         .await?;
     // Expect PUBREC
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 5 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(5)", &other)),
@@ -1544,7 +1544,7 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
     }
     client.send_pubrel(5, 0x00).await?;
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 5 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(5)", &other)),
@@ -1560,7 +1560,7 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
         ))
         .await?;
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 5 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(5) reuse", &other)),
@@ -1568,7 +1568,7 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
     }
     client.send_pubrel(5, 0x00).await?;
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 5 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(5) reuse", &other)),
@@ -1601,7 +1601,7 @@ async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<TestRes
         ))
         .await?;
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 7 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(7)", &other)),
@@ -1611,7 +1611,7 @@ async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<TestRes
     // Send PUBREL
     client.send_pubrel(7, 0x00).await?;
     loop {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 7 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(7)", &other)),
@@ -1620,7 +1620,7 @@ async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<TestRes
 
     // Send duplicate PUBREL — server MUST respond with PUBCOMP
     client.send_pubrel(7, 0x00).await?;
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Ok(Packet::PubComp(comp)) if comp.packet_id == 7 => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Disconnect(_)) | Err(_) => {
             // Some brokers may consider duplicate PUBREL after PUBCOMP as
@@ -1665,7 +1665,7 @@ async fn payload_format_utf8_validated(config: TestConfig<'_>) -> anyhow::Result
     };
     client.send_publish(&publish).await?;
 
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Ok(Packet::Disconnect(d)) if d.reason_code == 0x99 => {
             // Server validated and rejected — good
             Ok(TestResult::pass(&ctx))
@@ -1742,7 +1742,7 @@ async fn user_properties_order(config: TestConfig<'_>) -> anyhow::Result<TestRes
     };
     pub_client.send_publish(&pub_params).await?;
 
-    match sub_client.recv(config.recv_timeout).await? {
+    match sub_client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {
             if p.properties.user_properties == ordered_props {
                 Ok(TestResult::pass(&ctx))
@@ -1812,7 +1812,7 @@ async fn retained_qos0_stored(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    let result = match sub_client.recv(config.recv_timeout).await {
+    let result = match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic && !p.payload.is_empty() => {
             TestResult::pass(&ctx)
         }
@@ -1873,7 +1873,7 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
 
     // Wait for PUBREC
     for _ in 0..5 {
-        match pub_client.recv(config.recv_timeout).await? {
+        match pub_client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 20 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(20)", &other)),
@@ -1894,7 +1894,7 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
 
     // Should get PUBREC again
     for _ in 0..5 {
-        match pub_client.recv(config.recv_timeout).await? {
+        match pub_client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 20 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(20) dup", &other)),
@@ -1904,7 +1904,7 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
     // Complete the flow
     pub_client.send_pubrel(20, 0x00).await?;
     for _ in 0..5 {
-        match pub_client.recv(config.recv_timeout).await? {
+        match pub_client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 20 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(20)", &other)),
@@ -1914,7 +1914,7 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
     // Count messages received by subscriber — should be exactly 1
     let mut count = 0;
     loop {
-        match sub_client.recv(Duration::from_secs(1)).await {
+        match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
             Ok(Packet::Publish(p)) if p.topic == topic => count += 1,
             _ => break,
         }
@@ -1966,7 +1966,7 @@ async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> anyhow::
 
     // Wait for PUBREC
     for _ in 0..5 {
-        match client.recv(config.recv_timeout).await? {
+        match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 30 => break,
             Packet::Publish(_) => continue,
             other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(30)", &other)),
@@ -1979,7 +1979,7 @@ async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> anyhow::
     // Send PUBREL — server MUST still respond with PUBCOMP
     client.send_pubrel(30, 0x00).await?;
 
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Ok(Packet::PubComp(comp)) if comp.packet_id == 30 => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -2024,10 +2024,10 @@ async fn qos1_initial_delivery_dup_zero(config: TestConfig<'_>) -> anyhow::Resul
         .send_publish(&PublishParams::qos1(topic, b"dup-check".to_vec(), 1))
         .await?;
     // Drain PUBACK
-    let _ = pub_client.recv(config.recv_timeout).await;
+    let _ = pub_client.recv().await;
 
     // Receive forwarded message on subscriber
-    match sub_client.recv(config.recv_timeout).await? {
+    match sub_client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {
             if let Some(pid) = p.packet_id {
                 sub_client.send_puback(pid, 0x00).await?;
@@ -2073,7 +2073,7 @@ async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Resu
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Publish 3 QoS 1 messages from another client
     let pub_conn = ConnectParams::new("mqtt-test-quota0-pub");
@@ -2089,7 +2089,7 @@ async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Resu
     }
     // Drain PUBACKs
     for _ in 0..5 {
-        match pub_client.recv(Duration::from_secs(1)).await {
+        match pub_client.recv_with_timeout(Duration::from_secs(1)).await {
             Ok(Packet::PubAck(_)) => {}
             _ => break,
         }
@@ -2097,7 +2097,7 @@ async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Resu
 
     // Receive up to 2 messages but do NOT ACK them (fill quota)
     for _ in 0..2 {
-        match sub_client.recv(Duration::from_secs(2)).await {
+        match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(_)) => {}
             _ => break,
         }
@@ -2106,12 +2106,12 @@ async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Resu
     // Quota should now be zero. Send PINGREQ — server MUST still respond.
     sub_client.send_pingreq().await?;
 
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::PingResp) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(_)) => {
             // Might receive another publish before pingresp — try once more
             sub_client.send_pingreq().await?;
-            match sub_client.recv(config.recv_timeout).await {
+            match sub_client.recv().await {
                 Ok(Packet::PingResp) => Ok(TestResult::pass(&ctx)),
                 Ok(other) => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
                 Err(_) => Ok(TestResult::fail(&ctx, "No PINGRESP when quota is zero")),
@@ -2169,7 +2169,7 @@ async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> anyhow::Resul
     )
     .await?;
 
-    let result = match sub_client.recv(config.recv_timeout).await {
+    let result = match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic && p.retain => {
             if p.payload == b"original-retained" {
                 TestResult::pass(&ctx)
@@ -2258,7 +2258,7 @@ async fn ordered_topic_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult
     // Receive and verify order
     let mut received = Vec::new();
     for _ in 0..10 {
-        match sub_client.recv(config.recv_timeout).await {
+        match sub_client.recv().await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 received.push(String::from_utf8_lossy(&p.payload).to_string());
             }
@@ -2340,9 +2340,9 @@ async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Res
     pub_client.send_publish(&params).await?;
 
     // Drain PUBACK
-    let _ = pub_client.recv(config.recv_timeout).await;
+    let _ = pub_client.recv().await;
 
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {
             if let Some(pid) = p.packet_id {
                 sub_client.send_puback(pid, 0x00).await?;

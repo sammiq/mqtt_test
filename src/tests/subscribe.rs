@@ -76,7 +76,7 @@ async fn basic_subscribe(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let sub = SubscribeParams::simple(1, "mqtt/test/sub/basic", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
                 Ok(TestResult::pass(&ctx))
@@ -109,7 +109,7 @@ async fn wildcard_plus(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     let sub = SubscribeParams::simple(1, "mqtt/test/sub/wc_plus/+", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(_) => {}
         other => {
             return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
@@ -123,7 +123,7 @@ async fn wildcard_plus(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         ))
         .await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_plus/match" => {
             Ok(TestResult::pass(&ctx))
         }
@@ -150,7 +150,7 @@ async fn wildcard_hash(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     let sub = SubscribeParams::simple(1, "mqtt/test/sub/wc_hash/#", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(_) => {}
         other => {
             return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
@@ -164,7 +164,7 @@ async fn wildcard_hash(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         ))
         .await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_hash/deep/nested/topic" => {
             Ok(TestResult::pass(&ctx))
         }
@@ -198,7 +198,7 @@ async fn unsubscribe(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let unsub = UnsubscribeParams::simple(2, "mqtt/test/sub/unsub");
     client.send_unsubscribe(&unsub).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::UnsubAck(ack) if ack.packet_id == 2 => Ok(TestResult::pass(&ctx)),
         other => Ok(TestResult::fail_packet(&ctx, "UNSUBACK(2)", &other)),
     }
@@ -220,7 +220,7 @@ async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Resul
     // Subscribe to "#" which should match everything EXCEPT $-prefixed topics
     let sub = SubscribeParams::simple(1, "#", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(_) => {}
         other => {
             return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
@@ -247,7 +247,7 @@ async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Resul
     let mut received_dollar = false;
     let mut received_canary = false;
     for _ in 0..5 {
-        match client.recv(Duration::from_secs(2)).await {
+        match client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(p)) if p.topic.starts_with("$SYS") => {
                 received_dollar = true;
             }
@@ -318,7 +318,7 @@ async fn suback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Test
     };
     client.send_subscribe(&sub).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_codes.len() == 3 {
                 Ok(TestResult::pass(&ctx))
@@ -375,7 +375,7 @@ async fn unsuback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Te
         properties: Properties::default(),
     };
     client.send_subscribe(&sub).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     // Unsubscribe from all 3
     let unsub = UnsubscribeParams {
@@ -389,7 +389,7 @@ async fn unsuback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Te
     };
     client.send_unsubscribe(&unsub).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::UnsubAck(ack) if ack.packet_id == 2 => {
             if ack.reason_codes.len() == 3 {
                 Ok(TestResult::pass(&ctx))
@@ -429,7 +429,7 @@ async fn shared_subscription(config: TestConfig<'_>) -> anyhow::Result<TestResul
     let sub = SubscribeParams::simple(1, "$share/testgroup/mqtt/test/sub/shared", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
                 Ok(TestResult::pass(&ctx))
@@ -484,7 +484,7 @@ async fn subscription_identifier(config: TestConfig<'_>) -> anyhow::Result<TestR
         },
     };
     client.send_subscribe(&sub).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     client
         .send_publish(&PublishParams::qos0(
@@ -493,7 +493,7 @@ async fn subscription_identifier(config: TestConfig<'_>) -> anyhow::Result<TestR
         ))
         .await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::Publish(p) if p.topic == "mqtt/test/sub/subid" => {
             if p.properties.subscription_identifier == Some(42) {
                 Ok(TestResult::pass(&ctx))
@@ -541,7 +541,7 @@ async fn no_local_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         properties: Properties::default(),
     };
     client.send_subscribe(&sub).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     client
         .send_publish(&PublishParams::qos0(
@@ -551,7 +551,7 @@ async fn no_local_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         .await?;
 
     // Expect NO message — short timeout is sufficient to confirm absence.
-    match client.recv(Duration::from_secs(1)).await {
+    match client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/no_local" => Ok(TestResult::fail(
             &ctx,
@@ -611,9 +611,9 @@ async fn retain_as_published(config: TestConfig<'_>) -> anyhow::Result<TestResul
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rap" => {
             if p.retain {
                 Ok(TestResult::pass(&ctx))
@@ -682,10 +682,10 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult>
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Should receive retained message on first subscribe
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => {}
         _ => {
             return Ok(TestResult::fail(
@@ -709,10 +709,10 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult>
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub2).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Should NOT receive retained message again — short timeout.
-    match sub_client.recv(Duration::from_secs(1)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => Ok(TestResult::fail(
             &ctx,
@@ -772,10 +772,10 @@ async fn retain_handling_2(config: TestConfig<'_>) -> anyhow::Result<TestResult>
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Should NOT receive any retained message — short timeout.
-    match sub_client.recv(Duration::from_secs(1)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh2" => Ok(TestResult::fail(
             &ctx,
@@ -816,7 +816,7 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
     client
         .send_publish(&PublishParams::qos0(topic, b"before".to_vec()))
         .await?;
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {}
         other => {
             return Ok(TestResult::fail_packet(
@@ -830,7 +830,7 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
     // Unsubscribe
     let unsub = UnsubscribeParams::simple(2, topic);
     client.send_unsubscribe(&unsub).await?;
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::UnsubAck(_) => {}
         other => return Ok(TestResult::fail_packet(&ctx, "UNSUBACK", &other)),
     }
@@ -840,7 +840,7 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
         .send_publish(&PublishParams::qos0(topic, b"after".to_vec()))
         .await?;
 
-    match client.recv(Duration::from_secs(1)).await {
+    match client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::fail(
             &ctx,
@@ -869,12 +869,12 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Re
     // Subscribe to wildcard at QoS 0
     let sub1 = SubscribeParams::simple(1, "mqtt/test/sub/overlap/#", QoS::AtMostOnce);
     client.send_subscribe(&sub1).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     // Subscribe to exact topic at QoS 1
     let sub2 = SubscribeParams::simple(2, "mqtt/test/sub/overlap/exact", QoS::AtLeastOnce);
     client.send_subscribe(&sub2).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     // Publish QoS 1 from another client
     let pub_conn = ConnectParams::new("mqtt-test-overlap-pub");
@@ -889,13 +889,13 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Re
 
     // Drain publisher PUBACK
     for _ in 0..5 {
-        if let Ok(Packet::PubAck(_)) = pub_client.recv(config.recv_timeout).await {
+        if let Ok(Packet::PubAck(_)) = pub_client.recv().await {
             break;
         }
     }
 
     // Subscriber should receive at QoS 1 (the higher of the two)
-    match client.recv(config.recv_timeout).await {
+    match client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/overlap/exact" => {
             if let Some(pid) = p.packet_id {
                 client.send_puback(pid, 0x00).await?;
@@ -957,7 +957,7 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<T
         },
     };
     client.send_subscribe(&sub1).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     // Subscribe with sub-id 20 on exact
     let sub2 = SubscribeParams {
@@ -975,7 +975,7 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<T
         },
     };
     client.send_subscribe(&sub2).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     // Publish to the overlapping topic
     client
@@ -989,7 +989,7 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<T
     // Both approaches are valid per the spec.
     let mut ids_seen: Vec<u32> = Vec::new();
     for _ in 0..3 {
-        match client.recv(Duration::from_secs(2)).await {
+        match client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/sid_overlap/exact" => {
                 if let Some(id) = p.properties.subscription_identifier {
                     ids_seen.push(id);
@@ -1042,7 +1042,7 @@ async fn multi_level_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     let publish = PublishParams::qos0("mqtt/test/deep/a/b/c/d", b"deep".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match sub.recv(config.recv_timeout).await {
+    match sub.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/deep/a/b/c/d" => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -1086,10 +1086,10 @@ async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<TestRes
     let p2 = PublishParams::qos0("mqtt/test/wc/any/extra/end", b"no-match".to_vec());
     pub_client.send_publish(&p2).await?;
 
-    match sub.recv(config.recv_timeout).await {
+    match sub.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/wc/any/end" => {
             // Verify no second message arrives (the non-matching one)
-            match sub.recv(Duration::from_millis(500)).await {
+            match sub.recv_with_timeout(Duration::from_millis(500)).await {
                 Err(_) => Ok(TestResult::pass(&ctx)), // No extra message — correct
                 Ok(Packet::Publish(p2)) if p2.topic == "mqtt/test/wc/any/extra/end" => Ok(
                     TestResult::fail(&ctx, "'+' wildcard matched across multiple levels"),
@@ -1134,7 +1134,7 @@ async fn multiple_filters_single_subscribe(config: TestConfig<'_>) -> anyhow::Re
     };
     client.send_subscribe(&sub).await?;
 
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(ack) => {
             if ack.reason_codes.len() == 3 {
                 Ok(TestResult::pass(&ctx))
@@ -1170,12 +1170,12 @@ async fn subscription_upgrade_qos(config: TestConfig<'_>) -> anyhow::Result<Test
     // Subscribe at QoS 0
     let sub0 = SubscribeParams::simple(1, "mqtt/test/upgrade", QoS::AtMostOnce);
     client.send_subscribe(&sub0).await?;
-    client.recv(config.recv_timeout).await?; // SUBACK
+    client.recv().await?; // SUBACK
 
     // Re-subscribe at QoS 1
     let sub1 = SubscribeParams::simple(2, "mqtt/test/upgrade", QoS::AtLeastOnce);
     client.send_subscribe(&sub1).await?;
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(ack) => {
             if ack.reason_codes.first().copied() == Some(0x01) {
                 // Granted QoS 1
@@ -1223,7 +1223,7 @@ async fn empty_topic_level(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     let publish = PublishParams::qos0("mqtt/test//empty", b"empty-level".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match sub.recv(config.recv_timeout).await {
+    match sub.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test//empty" => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -1269,7 +1269,7 @@ async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResu
         ))
         .await?;
 
-    match sub.recv(Duration::from_secs(1)).await {
+    match sub.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/case" => {
             return Ok(TestResult::fail(
                 &ctx,
@@ -1287,7 +1287,7 @@ async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResu
         ))
         .await?;
 
-    match sub.recv(config.recv_timeout).await {
+    match sub.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/Test/CASE" => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -1333,7 +1333,7 @@ async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
         ))
         .await?;
 
-    match sub.recv(Duration::from_secs(1)).await {
+    match sub.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/exact/matcH" => {
             return Ok(TestResult::fail(
                 &ctx,
@@ -1348,7 +1348,7 @@ async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
         .send_publish(&PublishParams::qos0("mqtt/exact/match", b"exact".to_vec()))
         .await?;
 
-    match sub.recv(config.recv_timeout).await {
+    match sub.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/exact/match" => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -1396,7 +1396,7 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match sub1.recv(Duration::from_secs(1)).await {
+    match sub1.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a//b" => {
             return Ok(TestResult::fail(
                 &ctx,
@@ -1414,7 +1414,7 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match sub1.recv(config.recv_timeout).await {
+    match sub1.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a/b" => {}
         Ok(other) => {
             return Ok(TestResult::fail_packet(
@@ -1448,7 +1448,7 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match sub2.recv(config.recv_timeout).await {
+    match sub2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a//b" => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -1500,7 +1500,7 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
     pub_client
         .send_publish(&PublishParams::qos0(topic, b"before-unsub".to_vec()))
         .await?;
-    match sub_client.recv(config.recv_timeout).await? {
+    match sub_client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {}
         other => {
             return Ok(TestResult::fail_packet(
@@ -1514,7 +1514,7 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
     // Step 2: Unsubscribe and wait for UNSUBACK
     let unsub = UnsubscribeParams::simple(2, topic);
     sub_client.send_unsubscribe(&unsub).await?;
-    match sub_client.recv(config.recv_timeout).await? {
+    match sub_client.recv().await? {
         Packet::UnsubAck(_) => {}
         other => return Ok(TestResult::fail_packet(&ctx, "UNSUBACK", &other)),
     }
@@ -1533,7 +1533,7 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
     }
 
     // Step 5: Verify none arrive
-    match sub_client.recv(Duration::from_secs(2)).await {
+    match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
         Err(_) => Ok(TestResult::pass(&ctx)),
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::fail(
             &ctx,
@@ -1564,7 +1564,7 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv(config.recv_timeout).await? {
+    match client.recv().await? {
         Packet::SubAck(_) => {}
         other => return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
     }
@@ -1585,7 +1585,7 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result
 
     // Drain PUBACKs from publisher
     for _ in 0..5 {
-        match pub_client.recv(config.recv_timeout).await {
+        match pub_client.recv().await {
             Ok(Packet::PubAck(_)) => {}
             _ => break,
         }
@@ -1599,7 +1599,7 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result
     let mut got_unsuback = false;
     let mut buffered_count = 0u32;
     for _ in 0..20 {
-        match client.recv(Duration::from_secs(2)).await {
+        match client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 buffered_count += 1;
                 // ACK QoS 1 messages
@@ -1617,7 +1617,7 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result
 
     // If we haven't seen UNSUBACK yet, try once more
     if !got_unsuback {
-        match client.recv(config.recv_timeout).await {
+        match client.recv().await {
             Ok(Packet::UnsubAck(ack)) if ack.packet_id == 2 => {
                 got_unsuback = true;
             }
@@ -1687,10 +1687,10 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Must receive the retained message
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {}
         Ok(other) => {
             return Ok(TestResult::fail_packet(&ctx, "retained PUBLISH", &other));
@@ -1717,10 +1717,10 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub2).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // Must receive retained message again
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::pass(&ctx)),
         Ok(other) => Ok(TestResult::fail_packet(
             &ctx,
@@ -1766,10 +1766,10 @@ async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<Te
         .await?;
 
     // Drain PUBACK from publisher
-    let _ = pub_client.recv(config.recv_timeout).await;
+    let _ = pub_client.recv().await;
 
     // Subscriber should receive at QoS 0 (no packet_id)
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {
             if p.qos == QoS::AtMostOnce {
                 Ok(TestResult::pass(&ctx))
@@ -1807,7 +1807,7 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    match sub_client.recv(config.recv_timeout).await? {
+    match sub_client.recv().await? {
         Packet::SubAck(_) => {}
         other => return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
     }
@@ -1827,7 +1827,7 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
 
     // Read at least one PUBLISH from subscriber before unsubscribing
     let mut received_before_unsub = 0u32;
-    match sub_client.recv(config.recv_timeout).await {
+    match sub_client.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => {
             received_before_unsub += 1;
             // Do NOT send PUBACK — leave it in-flight
@@ -1850,7 +1850,7 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
     let mut got_unsuback = false;
     let mut first_pid_acked = false;
     for _ in 0..20 {
-        match sub_client.recv(Duration::from_secs(2)).await {
+        match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 // Additional messages may still arrive — ACK them
                 if let Some(pid) = p.packet_id {
@@ -1873,7 +1873,7 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
 
     // Try once more for UNSUBACK if needed
     if !got_unsuback {
-        match sub_client.recv(config.recv_timeout).await {
+        match sub_client.recv().await {
             Ok(Packet::UnsubAck(ack)) if ack.packet_id == 2 => {
                 got_unsuback = true;
             }
@@ -1931,7 +1931,7 @@ async fn shared_sub_topic_filter_format(config: TestConfig<'_>) -> anyhow::Resul
         let sub = SubscribeParams::simple(pid, *topic, QoS::AtMostOnce);
         client.send_subscribe(&sub).await?;
 
-        match client.recv(config.recv_timeout).await {
+        match client.recv().await {
             Ok(Packet::SubAck(ack))
                 if ack
                     .reason_codes
@@ -1998,14 +1998,14 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<Test
 
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtMostOnce);
     sub_a.send_subscribe(&sub).await?;
-    sub_a.recv(config.recv_timeout).await?; // SUBACK
+    sub_a.recv().await?; // SUBACK
 
     // Subscriber B at QoS 1.
     let params_b = ConnectParams::new("mqtt-test-shared-qos-b");
     let (mut sub_b, _) = client::connect(config.addr, &params_b, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
     sub_b.send_subscribe(&sub).await?;
-    sub_b.recv(config.recv_timeout).await?; // SUBACK
+    sub_b.recv().await?; // SUBACK
 
     // Publish 10 QoS 1 messages.
     let pub_params = ConnectParams::new("mqtt-test-shared-qos-pub");
@@ -2017,7 +2017,7 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<Test
     }
     // Drain PUBACKs.
     for _ in 0..10 {
-        let _ = pub_client.recv(config.recv_timeout).await;
+        let _ = pub_client.recv().await;
     }
 
     // Collect messages from both subscribers.
@@ -2025,14 +2025,14 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<Test
     let mut qos_violation = false;
 
     // Drain subscriber A — should all be QoS 0.
-    while let Ok(Packet::Publish(p)) = sub_a.recv(short_timeout).await {
+    while let Ok(Packet::Publish(p)) = sub_a.recv_with_timeout(short_timeout).await {
         if p.qos != QoS::AtMostOnce {
             qos_violation = true;
         }
     }
 
     // Drain subscriber B — should be QoS 0 or QoS 1.
-    while let Ok(Packet::Publish(p)) = sub_b.recv(short_timeout).await {
+    while let Ok(Packet::Publish(p)) = sub_b.recv_with_timeout(short_timeout).await {
         if p.qos == QoS::ExactlyOnce {
             qos_violation = true;
         }
@@ -2086,7 +2086,7 @@ async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     let sub = SubscribeParams::simple(1, shared_filter, QoS::ExactlyOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv(config.recv_timeout).await?; // SUBACK
+    sub_client.recv().await?; // SUBACK
 
     // 2. Disconnect subscriber abruptly.
     drop(sub_client.into_raw());
@@ -2100,11 +2100,11 @@ async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     // Complete publisher-side QoS 2 handshake.
     for _ in 0..5 {
-        match pub_client.recv(config.recv_timeout).await? {
+        match pub_client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 1 => {
                 pub_client.send_pubrel(1, 0x00).await?;
                 for _ in 0..5 {
-                    if let Packet::PubComp(_) = pub_client.recv(config.recv_timeout).await? {
+                    if let Packet::PubComp(_) = pub_client.recv().await? {
                         break;
                     }
                 }
@@ -2132,7 +2132,7 @@ async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Tes
     }
 
     // 5. Should receive the queued QoS 2 message.
-    let result = match sub_client2.recv(config.recv_timeout).await {
+    let result = match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
         Ok(Packet::PubRel(_)) => TestResult::pass(&ctx),
         Ok(other) => TestResult::fail_packet(
@@ -2179,7 +2179,7 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
 
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
     sub_a.send_subscribe(&sub).await?;
-    sub_a.recv(config.recv_timeout).await?; // SUBACK
+    sub_a.recv().await?; // SUBACK
 
     // 2. Connect subscriber B but do NOT subscribe yet — this ensures
     //    the message is routed to A (the only subscriber in the group).
@@ -2194,14 +2194,14 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
     pub_client.send_publish(&msg).await?;
     // Wait for PUBACK from server.
     for _ in 0..5 {
-        if let Ok(Packet::PubAck(_)) = pub_client.recv(config.recv_timeout).await {
+        if let Ok(Packet::PubAck(_)) = pub_client.recv().await {
             break;
         }
     }
     drop(pub_client);
 
     // 4. A should receive the message. Send negative PUBACK (0x80).
-    match sub_a.recv(config.recv_timeout).await? {
+    match sub_a.recv().await? {
         Packet::Publish(p) => {
             if let Some(pid) = p.packet_id {
                 sub_a.send_puback(pid, 0x80).await?;
@@ -2219,11 +2219,11 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
     // 5. Now subscribe B to the same shared group.
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
     sub_b.send_subscribe(&sub).await?;
-    sub_b.recv(config.recv_timeout).await?; // SUBACK
+    sub_b.recv().await?; // SUBACK
 
     // 6. B should NOT receive the NACKed message.
     let short_timeout = Duration::from_millis(500);
-    match sub_b.recv(short_timeout).await {
+    match sub_b.recv_with_timeout(short_timeout).await {
         Err(_) => {
             // Timeout — no message received. This is correct.
             Ok(TestResult::pass(&ctx))

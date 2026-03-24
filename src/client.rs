@@ -267,13 +267,14 @@ impl RawClient {
     pub async fn connect_ws(
         addr: &str,
         host: &str,
+        path: &str,
         recv_timeout: Duration,
     ) -> Result<(Self, WsUpgradeResult)> {
         let mut tcp = TcpStream::connect(addr)
             .await
             .with_context(|| format!("TCP connect to {addr} failed"))?;
 
-        let upgrade_result = crate::ws::ws_upgrade(&mut tcp, host, "/")
+        let upgrade_result = crate::ws::ws_upgrade(&mut tcp, host, path)
             .await
             .context("WebSocket upgrade failed")?;
 
@@ -512,11 +513,12 @@ pub async fn connect_tls(
 pub async fn connect_ws(
     addr: &str,
     host: &str,
+    path: &str,
     params: &ConnectParams,
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck, WsUpgradeResult)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (WebSocket)");
-    let (mut client, upgrade) = RawClient::connect_ws(addr, host, recv_timeout).await?;
+    let (mut client, upgrade) = RawClient::connect_ws(addr, host, path, recv_timeout).await?;
     client.send_connect(params).await?;
 
     match client.recv().await? {

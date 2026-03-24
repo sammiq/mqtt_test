@@ -98,6 +98,10 @@ struct Args {
     #[arg(long, default_value_t = 8083)]
     ws_port: u16,
 
+    /// WebSocket path for MQTT (default: /mqtt)
+    #[arg(long, default_value = "/mqtt")]
+    ws_path: String,
+
     /// Skip WebSocket transport tests
     #[arg(long)]
     no_ws: bool,
@@ -210,7 +214,9 @@ async fn main() {
     }
 
     let tls_info = tls_addr.as_deref().zip(tls_config.as_ref());
-    let ws_info = ws_addr.as_deref().map(|addr| (addr, args.host.as_str()));
+    let ws_info = ws_addr
+        .as_deref()
+        .map(|addr| (addr, args.host.as_str(), args.ws_path.as_str()));
     let config = types::TestConfig {
         addr: &tcp_addr,
         recv_timeout,

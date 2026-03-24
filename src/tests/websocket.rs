@@ -32,13 +32,13 @@ const WS_SUBPROTOCOL: TestContext = TestContext {
 
 async fn ws_subprotocol(config: TestConfig<'_>) -> Result<TestResult> {
     let ctx = WS_SUBPROTOCOL;
-    let Some((ws_addr, ws_host)) = config.ws_info else {
+    let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
         return Ok(TestResult::skip(&ctx, "WebSocket not configured"));
     };
 
     let params = ConnectParams::new("mqtt-test-ws-subprotocol");
     let (_client, connack, upgrade) =
-        client::connect_ws(ws_addr, ws_host, &params, config.recv_timeout).await?;
+        client::connect_ws(ws_addr, ws_host, ws_path, &params, config.recv_timeout).await?;
 
     if connack.reason_code != 0x00 {
         return Ok(TestResult::fail(
@@ -75,7 +75,7 @@ const WS_PACKET_SPANNING: TestContext = TestContext {
 /// the broker correctly reassembles MQTT packets that span frame boundaries.
 async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<TestResult> {
     let ctx = WS_PACKET_SPANNING;
-    let Some((ws_addr, ws_host)) = config.ws_info else {
+    let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
         return Ok(TestResult::skip(&ctx, "WebSocket not configured"));
     };
 
@@ -84,7 +84,7 @@ async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<TestResult> {
         .await
         .with_context(|| format!("TCP connect to {ws_addr} failed"))?;
 
-    ws_upgrade_raw(&mut tcp, ws_host).await?;
+    ws_upgrade_raw(&mut tcp, ws_host, ws_path).await?;
 
     // Build the CONNECT packet bytes
     let params = ConnectParams::new("mqtt-test-ws-spanning");
@@ -148,7 +148,7 @@ const WS_TEXT_FRAME_REJECTED: TestContext = TestContext {
 /// the connection.
 async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<TestResult> {
     let ctx = WS_TEXT_FRAME_REJECTED;
-    let Some((ws_addr, ws_host)) = config.ws_info else {
+    let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
         return Ok(TestResult::skip(&ctx, "WebSocket not configured"));
     };
 
@@ -156,7 +156,7 @@ async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<TestResult> {
         .await
         .with_context(|| format!("TCP connect to {ws_addr} failed"))?;
 
-    ws_upgrade_raw(&mut tcp, ws_host).await?;
+    ws_upgrade_raw(&mut tcp, ws_host, ws_path).await?;
 
     // Build CONNECT and send it as a text frame (wrong opcode)
     let params = ConnectParams::new("mqtt-test-ws-text-frame");
@@ -209,7 +209,7 @@ async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<TestResult> {
 
 /// Perform the WebSocket HTTP upgrade handshake directly on a TcpStream.
 /// Used by tests that need to control WebSocket framing manually.
-async fn ws_upgrade_raw(stream: &mut TcpStream, host: &str) -> Result<()> {
+async fn ws_upgrade_raw(stream: &mut TcpStream, host: &str, path: &str) -> Result<()> {
     use base64::Engine;
 
     let key_bytes: [u8; 16] = {
@@ -232,7 +232,7 @@ async fn ws_upgrade_raw(stream: &mut TcpStream, host: &str) -> Result<()> {
     let key = base64::engine::general_purpose::STANDARD.encode(key_bytes);
 
     let request = format!(
-        "GET / HTTP/1.1\r\n\
+        "GET {path} HTTP/1.1\r\n\
          Host: {host}\r\n\
          Upgrade: websocket\r\n\
          Connection: Upgrade\r\n\

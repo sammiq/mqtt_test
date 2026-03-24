@@ -103,6 +103,30 @@ struct Args {
     no_ws: bool,
 }
 
+/// Probe whether a port is reachable (2s timeout).
+/// If the user explicitly passed the corresponding CLI flag, failure is fatal;
+/// otherwise we return `None` so the caller can skip that transport gracefully.
+async fn probe_port(host: &str, port: u16, arg_flag: &str, label: &str) -> Option<String> {
+    let addr = format!("{host}:{port}");
+    let reachable = matches!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::net::TcpStream::connect(&addr)
+        )
+        .await,
+        Ok(Ok(_))
+    );
+    if reachable {
+        return Some(addr);
+    }
+    let is_explicit = std::env::args().any(|a| a.starts_with(arg_flag));
+    if is_explicit {
+        eprintln!("Error: cannot connect to {label} endpoint at {addr}");
+        std::process::exit(1);
+    }
+    None
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -120,66 +144,23 @@ async fn main() {
     let recv_timeout = Duration::from_millis(args.timeout_ms);
     let tcp_addr = format!("{}:{}", args.host, args.tcp_port);
 
-    // Determine whether to run TLS tests.
-    // By default we probe :8883 and skip gracefully if unreachable.
-    // --no-tls disables TLS entirely. Explicit --tls-port makes failure fatal.
-    let tls_port_is_explicit = std::env::args().any(|a| a.starts_with("--tls-port"));
-    let (tls_addr, tls_config) = if args.no_tls {
-        (None, None)
+    // Probe optional endpoints (TLS, WebSocket).
+    // Default ports are skipped gracefully if unreachable; explicit --*-port makes failure fatal.
+    let tls_addr = if args.no_tls {
+        None
     } else {
-        let addr = format!("{}:{}", args.host, args.tls_port);
-
-        // Preflight TLS probe
-        let tls_reachable = matches!(
-            tokio::time::timeout(
-                Duration::from_secs(2),
-                tokio::net::TcpStream::connect(&addr),
-            )
-            .await,
-            Ok(Ok(_))
-        );
-
-        if !tls_reachable {
-            if tls_port_is_explicit {
-                eprintln!("Error: cannot connect to TLS endpoint at {addr}");
-                std::process::exit(1);
-            }
-            // Default port, not reachable — skip TLS gracefully
-            (None, None)
-        } else {
-            // No --ca-cert means insecure mode
-            let insecure = args.ca_cert.is_none();
-            let config = client::TlsConfig::build(args.ca_cert.as_deref(), insecure, &args.host)
-                .expect("failed to build TLS configuration");
-            (Some(addr), Some(config))
-        }
+        probe_port(&args.host, args.tls_port, "--tls-port", "TLS").await
     };
+    let tls_config = tls_addr.as_ref().map(|_| {
+        let insecure = args.ca_cert.is_none();
+        client::TlsConfig::build(args.ca_cert.as_deref(), insecure, &args.host)
+            .expect("failed to build TLS configuration")
+    });
 
-    // Determine whether to run WebSocket tests.
-    let ws_port_is_explicit = std::env::args().any(|a| a.starts_with("--ws-port"));
     let ws_addr = if args.no_ws {
         None
     } else {
-        let addr = format!("{}:{}", args.host, args.ws_port);
-
-        let ws_reachable = matches!(
-            tokio::time::timeout(
-                Duration::from_secs(2),
-                tokio::net::TcpStream::connect(&addr),
-            )
-            .await,
-            Ok(Ok(_))
-        );
-
-        if !ws_reachable {
-            if ws_port_is_explicit {
-                eprintln!("Error: cannot connect to WebSocket endpoint at {addr}");
-                std::process::exit(1);
-            }
-            None
-        } else {
-            Some(addr)
-        }
+        probe_port(&args.host, args.ws_port, "--ws-port", "WebSocket").await
     };
 
     // Resolve which suites to run

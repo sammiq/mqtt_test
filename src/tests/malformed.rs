@@ -73,11 +73,12 @@ async fn expect_disconnect(client: &mut RawClient, ctx: &TestContext) -> TestRes
 ///
 /// For malformed CONNECT packets, the server MUST close the Network Connection
 /// [MQTT-3.1.4-1] and MAY send a CONNACK with Reason Code >= 0x80 before
-/// closing [MQTT-3.1.4-2].
+/// closing [MQTT-3.1.4-2]. Both parts matter: a CONNACK with an error code
+/// is only the first step — the connection MUST still be closed afterward.
 ///
 /// - Connection closed → pass.
 /// - DISCONNECT packet → pass.
-/// - CONNACK with reason >= 0x80 → pass (broker rejected with error).
+/// - CONNACK with reason >= 0x80 → wait for connection close (MUST).
 /// - CONNACK with reason 0x00 → fail (broker accepted malformed CONNECT).
 /// - Timeout → fail (broker ignored the malformed packet).
 async fn expect_connect_reject(client: &mut RawClient, ctx: &TestContext) -> TestResult {
@@ -86,7 +87,28 @@ async fn expect_connect_reject(client: &mut RawClient, ctx: &TestContext) -> Tes
         Err(RecvError::Timeout) => TestResult::fail(ctx, "broker did not disconnect (timed out)"),
         Err(RecvError::Other(e)) => TestResult::fail(ctx, format!("unexpected error: {e:#}")),
         Ok(Packet::Disconnect(_)) => TestResult::pass(ctx),
-        Ok(Packet::ConnAck(ack)) if ack.reason_code >= 0x80 => TestResult::pass(ctx),
+        Ok(Packet::ConnAck(ack)) if ack.reason_code >= 0x80 => {
+            // Broker rejected — now verify it closes the connection [MQTT-3.1.4-1].
+            match client.recv().await {
+                Err(RecvError::Closed) => TestResult::pass(ctx),
+                Ok(Packet::Disconnect(_)) => TestResult::pass(ctx),
+                Err(RecvError::Timeout) => TestResult::fail(
+                    ctx,
+                    format!(
+                        "Broker sent CONNACK(reason=0x{:02X}) but did not close the connection",
+                        ack.reason_code,
+                    ),
+                ),
+                Err(RecvError::Other(e)) => {
+                    TestResult::fail(ctx, format!("unexpected error after CONNACK: {e:#}"))
+                }
+                Ok(other) => TestResult::fail_packet(
+                    ctx,
+                    "connection close after error CONNACK",
+                    &other,
+                ),
+            }
+        }
         Ok(Packet::ConnAck(ack)) => TestResult::fail(
             ctx,
             format!(

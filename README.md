@@ -92,11 +92,12 @@ cargo run -- 127.0.0.1 --failures-only
 
 ### Quick test with Docker
 
-`test-broker-mosquitto.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up. `test-broker-hivemq.sh` does the same with HiveMQ CE (TCP + WebSocket, no TLS):
+`test-broker-mosquitto.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up. `test-broker-hivemq.sh` and `test-broker-emqx.sh` do the same with HiveMQ CE and EMQX Enterprise respectively:
 
 ```sh
 ./test-broker-mosquitto.sh
 ./test-broker-hivemq.sh
+./test-broker-emqx.sh
 ```
 
 ## Sample output

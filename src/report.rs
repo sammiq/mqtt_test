@@ -121,90 +121,53 @@ impl Report {
     }
 
     fn print_summary(&self, color: bool, elapsed: Duration) {
-        let mut must_pass = 0usize;
-        let mut must_total = 0usize;
-        let mut must_skip = 0usize;
-        let mut should_pass = 0usize;
-        let mut should_total = 0usize;
-        let mut should_skip = 0usize;
-        let mut may_pass = 0usize;
-        let mut may_total = 0usize;
-        let mut may_skip = 0usize;
+        let mut counts = [LevelCounts::default(); 3]; // [Must, Should, May]
 
         for suite in &self.suites {
             for r in &suite.results {
-                if matches!(r.outcome, Outcome::Skip(_)) {
-                    match r.ctx.compliance {
-                        Compliance::Must => must_skip += 1,
-                        Compliance::Should => should_skip += 1,
-                        Compliance::May => may_skip += 1,
+                let c = &mut counts[compliance_order(r.ctx.compliance) as usize];
+                match r.outcome {
+                    Outcome::Skip(_) => c.skip += 1,
+                    Outcome::Pass => {
+                        c.total += 1;
+                        c.pass += 1;
                     }
-                    continue;
-                }
-                let passed = matches!(r.outcome, Outcome::Pass);
-                match r.ctx.compliance {
-                    Compliance::Must => {
-                        must_total += 1;
-                        if passed {
-                            must_pass += 1;
-                        }
-                    }
-                    Compliance::Should => {
-                        should_total += 1;
-                        if passed {
-                            should_pass += 1;
-                        }
-                    }
-                    Compliance::May => {
-                        may_total += 1;
-                        if passed {
-                            may_pass += 1;
-                        }
-                    }
+                    Outcome::Fail { .. } => c.total += 1,
                 }
             }
         }
 
+        let [must, should, may] = counts;
+
         println!("\n{}", "=".repeat(60));
         println!("Summary  ({})", HumanDuration(elapsed));
 
-        let fmt_score = |pass: usize, total: usize, skip: usize| -> String {
-            let score = if !color || pass == total {
-                format!("{pass}/{total}")
+        let fmt_score = |c: LevelCounts, highlight_fails: bool| -> String {
+            let score = if !highlight_fails || c.pass == c.total {
+                format!("{}/{}", c.pass, c.total)
             } else {
-                format!("\x1b[31m{pass}/{total}\x1b[0m")
+                format!("\x1b[31m{}/{}\x1b[0m", c.pass, c.total)
             };
-            if skip > 0 {
-                format!("{score} ({skip} skipped)")
+            if c.skip > 0 {
+                format!("{score} ({} skipped)", c.skip)
             } else {
                 score
             }
         };
 
-        println!(
-            "  Required (MUST):       {}",
-            fmt_score(must_pass, must_total, must_skip)
-        );
-        println!(
-            "  Recommended (SHOULD):  {}",
-            fmt_score(should_pass, should_total, should_skip)
-        );
-        let may_score = format!("{may_pass}/{may_total}");
-        if may_skip > 0 {
-            println!("  Optional (MAY):        {may_score} ({may_skip} skipped)");
-        } else {
-            println!("  Optional (MAY):        {may_score}");
-        }
+        println!("  Required (MUST):       {}", fmt_score(must, color));
+        println!("  Recommended (SHOULD):  {}", fmt_score(should, color));
+        println!("  Optional (MAY):        {}", fmt_score(may, false));
 
-        if must_total > 0 && must_pass == must_total {
+        if must.total > 0 && must.pass == must.total {
             let msg = "Broker satisfies all required MQTT v5 behaviours.";
             if color {
                 println!("\n  \x1b[32m{msg}\x1b[0m");
             } else {
                 println!("\n  {msg}");
             }
-        } else if must_total > 0 {
-            let count = must_total - must_pass;
+        } else if must.total > 0 {
+            let count = must.total - must.pass;
             let msg = format!("Broker has {count} required compliance failure(s).");
             if color {
                 println!("\n  \x1b[31m{msg}\x1b[0m");
@@ -213,6 +176,13 @@ impl Report {
             }
         }
     }
+}
+
+#[derive(Default, Clone, Copy)]
+struct LevelCounts {
+    pass: usize,
+    total: usize,
+    skip: usize,
 }
 
 /// Returns true if the result is a failure (not pass, not skip).

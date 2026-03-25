@@ -447,6 +447,18 @@ impl Drop for AutoDisconnect {
     }
 }
 
+/// Send CONNECT on an already-opened client and return (AutoDisconnect, CONNACK).
+async fn handshake(
+    mut client: RawClient,
+    params: &ConnectParams,
+) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
+    client.send_connect(params).await?;
+    match client.recv().await? {
+        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
+        other => bail!("expected CONNACK, got {other}"),
+    }
+}
+
 /// Convenience: open TCP, send CONNECT, return the client and the CONNACK.
 ///
 /// Most tests call this rather than managing the handshake themselves.
@@ -456,13 +468,8 @@ pub async fn connect(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
     debug!(addr, client_id = %params.client_id, "CONNECT");
-    let mut client = RawClient::connect_tcp(addr, recv_timeout).await?;
-    client.send_connect(params).await?;
-
-    match client.recv().await? {
-        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
-        other => bail!("expected CONNACK, got {other}"),
-    }
+    let client = RawClient::connect_tcp(addr, recv_timeout).await?;
+    handshake(client, params).await
 }
 
 /// Convenience: open TLS, send CONNECT, return the client and the CONNACK.
@@ -473,13 +480,8 @@ pub async fn connect_tls(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (TLS)");
-    let mut client = RawClient::connect_tls(addr, tls, recv_timeout).await?;
-    client.send_connect(params).await?;
-
-    match client.recv().await? {
-        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
-        other => bail!("expected CONNACK, got {other}"),
-    }
+    let client = RawClient::connect_tls(addr, tls, recv_timeout).await?;
+    handshake(client, params).await
 }
 
 /// Convenience: open WebSocket, send CONNECT, return the client, CONNACK, and upgrade result.
@@ -491,13 +493,9 @@ pub async fn connect_ws(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck, WsUpgradeResult)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (WebSocket)");
-    let (mut client, upgrade) = RawClient::connect_ws(addr, host, path, recv_timeout).await?;
-    client.send_connect(params).await?;
-
-    match client.recv().await? {
-        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack, upgrade)),
-        other => bail!("expected CONNACK, got {other}"),
-    }
+    let (client, upgrade) = RawClient::connect_ws(addr, host, path, recv_timeout).await?;
+    let (auto, connack) = handshake(client, params).await?;
+    Ok((auto, connack, upgrade))
 }
 
 /// Convenience: connect with a simple client ID, subscribe to one topic,

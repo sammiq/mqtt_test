@@ -1037,10 +1037,13 @@ fn decode_pub_ack(body: &[u8]) -> Result<PubAck, DecodeError> {
     let mut pos = 0;
     let packet_id = read_u16(body, &mut pos)?;
     // Reason code may be absent when remaining_length == 2 (success assumed).
-    let reason_code = if body.len() > 2 { body[pos] } else { 0x00 };
-    if body.len() > 2 {
+    let reason_code = if pos < body.len() {
+        let rc = body[pos];
         pos += 1;
-    }
+        rc
+    } else {
+        0x00
+    };
     let properties = if pos < body.len() {
         Properties::decode(body, &mut pos)?
     } else {

@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::client::expect_publish;
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
 use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
@@ -149,19 +150,14 @@ async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     let topic = "mqtt/test/pub/qos1_delivery";
 
-    // Subscriber at QoS 1
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-qos1-del-sub",
+        "mqtt-test-qos1-del",
         topic,
         QoS::AtLeastOnce,
         config.recv_timeout,
     )
     .await?;
-
-    // Publisher at QoS 1
-    let pub_conn = ConnectParams::new("mqtt-test-qos1-del-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     let pub_params = PublishParams::qos1(topic, b"qos1-delivery-test".to_vec(), 1);
     pub_client.send_publish(&pub_params).await?;
@@ -174,35 +170,20 @@ async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     }
 
     // Subscriber should receive at QoS 1
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            // ACK it
-            if let Some(pid) = p.packet_id {
-                sub_client.send_puback(pid, 0x00).await?;
-            }
-            if p.qos == QoS::AtLeastOnce {
-                Ok(TestResult::pass(&ctx))
-            } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!("Delivered at {:?}, expected AtLeastOnce", p.qos),
-                ))
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(
+    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if let Some(pid) = p.packet_id {
+        sub_client.send_puback(pid, 0x00).await?;
+    }
+    if p.qos == QoS::AtLeastOnce {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
             &ctx,
-            &format!("PUBLISH on topic \"{topic}\""),
-            &other,
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message delivered to QoS 1 subscriber (timed out)",
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "No message delivered to QoS 1 subscriber (connection closed)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+            format!("Delivered at {:?}, expected AtLeastOnce", p.qos),
+        ))
     }
 }
 
@@ -351,10 +332,9 @@ async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     let topic = "mqtt/test/pub/qos_downgrade";
 
-    // Subscriber subscribes at QoS 0
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-qos-dg-sub",
+        "mqtt-test-qos-dg",
         topic,
         QoS::AtMostOnce,
         config.recv_timeout,
@@ -362,9 +342,6 @@ async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Tes
     .await?;
 
     // Publisher publishes at QoS 2
-    let pub_conn = ConnectParams::new("mqtt-test-qos-dg-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
-
     let pub_params = PublishParams::qos2(topic, b"downgrade-test".to_vec(), 1);
     pub_client.send_publish(&pub_params).await?;
 
@@ -380,34 +357,20 @@ async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Tes
     }
 
     // Subscriber should receive at QoS 0 (no packet_id field)
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            if p.qos == QoS::AtMostOnce {
-                Ok(TestResult::pass(&ctx))
-            } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Message delivered at {:?}, expected AtMostOnce (subscription QoS 0)",
-                        p.qos
-                    ),
-                ))
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(
+    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if p.qos == QoS::AtMostOnce {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
             &ctx,
-            &format!("PUBLISH on topic \"{topic}\""),
-            &other,
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message delivered to subscriber (timed out)",
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "No message delivered to subscriber (connection closed)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+            format!(
+                "Message delivered at {:?}, expected AtMostOnce (subscription QoS 0)",
+                p.qos
+            ),
+        ))
     }
 }
 
@@ -438,24 +401,17 @@ async fn retain_flag_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.retain && p.topic == "mqtt/test/pub/retain" => {
-            Ok(TestResult::pass(&ctx))
-        }
-        Ok(Packet::Publish(_)) => Ok(TestResult::fail(
+    let p = match expect_publish(&mut sub_client, &ctx, "mqtt/test/pub/retain").await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if p.retain {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
             &ctx,
             "Received PUBLISH but retain flag not set on delivery",
-        )),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "retained PUBLISH", &other)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No retained message delivered to new subscriber (timed out)",
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "No retained message delivered to new subscriber (connection closed)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        ))
     }
 }
 
@@ -724,19 +680,14 @@ async fn message_ordering(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
 
     let topic = "mqtt/test/pub/ordering";
 
-    // Subscriber at QoS 1
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-order-sub",
+        "mqtt-test-order",
         topic,
         QoS::AtLeastOnce,
         config.recv_timeout,
     )
     .await?;
-
-    // Publisher sends 5 messages in order
-    let pub_conn = ConnectParams::new("mqtt-test-order-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     for i in 0u16..5 {
         let pub_params = PublishParams::qos1(topic, format!("msg-{i}").into_bytes(), i + 1);
@@ -816,24 +767,13 @@ async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> anyhow::
     )
     .await?;
 
-    let result = match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic && p.retain => TestResult::pass(&ctx),
-        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::fail(
+    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) if p.retain => TestResult::pass(&ctx),
+        Ok(_) => TestResult::fail(
             &ctx,
             "Retained message delivered but Retain flag is 0 (SHOULD be 1)",
         ),
-        Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH with Retain=1", &other),
-        Err(RecvError::Timeout) => TestResult::fail(
-            &ctx,
-            "No retained message delivered to new subscriber (timed out)",
-        ),
-        Err(RecvError::Closed) => TestResult::fail(
-            &ctx,
-            "No retained message delivered to new subscriber (connection closed)",
-        ),
-        Err(RecvError::Other(e)) => {
-            return Err(e);
-        }
+        Err(r) => r,
     };
 
     // Clean up: remove retained message by publishing empty payload with retain.
@@ -942,30 +882,16 @@ async fn retained_replacement(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    let result = match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            if p.payload == b"v2" {
-                TestResult::pass(&ctx)
-            } else {
-                TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Expected retained payload \"v2\", got {:?}",
-                        String::from_utf8_lossy(&p.payload)
-                    ),
-                )
-            }
-        }
-        Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH", &other),
-        Err(RecvError::Timeout) => {
-            TestResult::fail(&ctx, "No retained message delivered (timed out)")
-        }
-        Err(RecvError::Closed) => {
-            TestResult::fail(&ctx, "No retained message delivered (connection closed)")
-        }
-        Err(RecvError::Other(e)) => {
-            return Err(e);
-        }
+    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) if p.payload == b"v2" => TestResult::pass(&ctx),
+        Ok(p) => TestResult::fail(
+            &ctx,
+            format!(
+                "Expected retained payload \"v2\", got {:?}",
+                String::from_utf8_lossy(&p.payload)
+            ),
+        ),
+        Err(r) => r,
     };
 
     // Clean up
@@ -1078,37 +1004,23 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Test
     let (mut sub_client2, _) =
         client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
 
-    match sub_client2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            if let Some(pid) = p.packet_id {
-                sub_client2.send_puback(pid, 0x00).await?;
-            }
-            match p.properties.message_expiry_interval {
-                Some(mei) if mei < 60 => Ok(TestResult::pass(&ctx)),
-                Some(mei) => Ok(TestResult::fail(
-                    &ctx,
-                    format!("MEI not decremented: received {mei}, expected < 60"),
-                )),
-                None => Ok(TestResult::fail(
-                    &ctx,
-                    "No Message Expiry Interval in forwarded PUBLISH",
-                )),
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(
+    let p = match expect_publish(&mut sub_client2, &ctx, topic).await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if let Some(pid) = p.packet_id {
+        sub_client2.send_puback(pid, 0x00).await?;
+    }
+    match p.properties.message_expiry_interval {
+        Some(mei) if mei < 60 => Ok(TestResult::pass(&ctx)),
+        Some(mei) => Ok(TestResult::fail(
             &ctx,
-            "PUBLISH with decremented MEI",
-            &other,
+            format!("MEI not decremented: received {mei}, expected < 60"),
         )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
+        None => Ok(TestResult::fail(
             &ctx,
-            "No message delivered after session resume (timed out)",
+            "No Message Expiry Interval in forwarded PUBLISH",
         )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "No message delivered after session resume (connection closed)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1526,17 +1438,14 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<
     let ctx = PID_REUSE_QOS1;
 
     let topic = "mqtt/test/pub/pid_reuse_q1";
-    let mut sub = client::connect_and_subscribe(
+    let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-pidq1-sub",
+        "mqtt-test-pidq1",
         topic,
         QoS::AtLeastOnce,
         config.recv_timeout,
     )
     .await?;
-
-    let params = ConnectParams::new("mqtt-test-pidq1-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     // First PUBLISH with packet_id=1
     pub_client
@@ -1786,19 +1695,14 @@ async fn user_properties_order(config: TestConfig<'_>) -> anyhow::Result<TestRes
 
     let topic = "mqtt/test/pub/up_order";
 
-    // Subscriber
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-uporder-sub",
+        "mqtt-test-uporder",
         topic,
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    // Publisher
-    let pub_conn = ConnectParams::new("mqtt-test-uporder-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     let ordered_props = vec![
         ("a".to_string(), "1".to_string()),
@@ -1890,25 +1794,10 @@ async fn retained_qos0_stored(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    let result = match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic && !p.payload.is_empty() => {
-            TestResult::pass(&ctx)
-        }
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            TestResult::fail(&ctx, "Retained message delivered but payload was empty")
-        }
-        Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH", &other),
-        Err(RecvError::Timeout) => TestResult::fail(
-            &ctx,
-            "No QoS 0 retained message delivered to new subscriber (timed out, server MAY discard)",
-        ),
-        Err(RecvError::Closed) => TestResult::fail(
-            &ctx,
-            "No QoS 0 retained message delivered to new subscriber (connection closed)",
-        ),
-        Err(RecvError::Other(e)) => {
-            return Err(e);
-        }
+    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) if !p.payload.is_empty() => TestResult::pass(&ctx),
+        Ok(_) => TestResult::fail(&ctx, "Retained message delivered but payload was empty"),
+        Err(r) => r,
     };
 
     // Clean up: remove retained message
@@ -1937,19 +1826,14 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
 
     let topic = "mqtt/test/pub/qos2_nodup";
 
-    // Subscriber at QoS 0 to make counting simple (no ack flow to manage)
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-q2nodup-sub",
+        "mqtt-test-q2nodup",
         topic,
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    // Publisher
-    let pub_conn = ConnectParams::new("mqtt-test-q2nodup-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     // Send QoS 2 PUBLISH
     pub_client
@@ -2098,18 +1982,15 @@ async fn qos1_initial_delivery_dup_zero(config: TestConfig<'_>) -> anyhow::Resul
 
     let topic = "mqtt/test/pub/qos1_dup0";
 
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-q1dup0-sub",
+        "mqtt-test-q1dup0",
         topic,
         QoS::AtLeastOnce,
         config.recv_timeout,
     )
     .await?;
 
-    // Publish QoS 1 from another client
-    let pub_conn = ConnectParams::new("mqtt-test-q1dup0-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"dup-check".to_vec(), 1))
         .await?;
@@ -2277,47 +2158,27 @@ async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> anyhow::Resul
     )
     .await?;
 
-    let result = match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic && p.retain => {
-            if p.payload == b"original-retained" {
-                TestResult::pass(&ctx)
-            } else if p.payload == b"non-retained-update" {
-                TestResult::fail(
-                    &ctx,
-                    "Retained message was replaced by PUBLISH with Retain=0",
-                )
-            } else {
-                TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Unexpected retained payload: {:?}",
-                        String::from_utf8_lossy(&p.payload)
-                    ),
-                )
-            }
-        }
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            // Got a non-retained message — original retained was lost
-            TestResult::fail(
-                &ctx,
-                format!(
-                    "Received non-retained message (payload: {:?}) instead of retained",
-                    String::from_utf8_lossy(&p.payload)
-                ),
-            )
-        }
-        Ok(other) => TestResult::fail_packet(&ctx, "retained PUBLISH", &other),
-        Err(RecvError::Timeout) => TestResult::fail(
+    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) if p.retain && p.payload == b"original-retained" => TestResult::pass(&ctx),
+        Ok(p) if p.retain && p.payload == b"non-retained-update" => TestResult::fail(
             &ctx,
-            "No retained message delivered to new subscriber (timed out)",
+            "Retained message was replaced by PUBLISH with Retain=0",
         ),
-        Err(RecvError::Closed) => TestResult::fail(
+        Ok(p) if p.retain => TestResult::fail(
             &ctx,
-            "No retained message delivered to new subscriber (connection closed)",
+            format!(
+                "Unexpected retained payload: {:?}",
+                String::from_utf8_lossy(&p.payload)
+            ),
         ),
-        Err(RecvError::Other(e)) => {
-            return Err(e);
-        }
+        Ok(p) => TestResult::fail(
+            &ctx,
+            format!(
+                "Received non-retained message (payload: {:?}) instead of retained",
+                String::from_utf8_lossy(&p.payload)
+            ),
+        ),
+        Err(r) => r,
     };
 
     // Clean up: remove retained message
@@ -2346,19 +2207,14 @@ async fn ordered_topic_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult
 
     let topic = "mqtt/test/pub/ordered_qos0";
 
-    // Subscriber at QoS 0
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-ord0-sub",
+        "mqtt-test-ord0",
         topic,
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    // Publisher sends 10 QoS 0 messages in order
-    let pub_conn = ConnectParams::new("mqtt-test-ord0-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     for i in 0u32..10 {
         let params = PublishParams {
@@ -2430,19 +2286,14 @@ async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Res
     let topic = "mqtt/test/pub/content_type_fwd";
     let content_type = "application/octet-stream; charset=utf-8";
 
-    // Subscriber
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-ct-fwd-sub",
+        "mqtt-test-ct-fwd",
         topic,
         QoS::AtLeastOnce,
         config.recv_timeout,
     )
     .await?;
-
-    // Publisher sends with Content Type
-    let pub_conn = ConnectParams::new("mqtt-test-ct-fwd-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     let params = PublishParams {
         topic: topic.to_string(),
@@ -2461,30 +2312,23 @@ async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Res
     // Drain PUBACK
     let _ = pub_client.recv().await;
 
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            if let Some(pid) = p.packet_id {
-                sub_client.send_puback(pid, 0x00).await?;
-            }
-            match p.properties.content_type.as_deref() {
-                Some(ct) if ct == content_type => Ok(TestResult::pass(&ctx)),
-                Some(ct) => Ok(TestResult::fail(
-                    &ctx,
-                    format!("Content Type altered: expected \"{content_type}\", got \"{ct}\""),
-                )),
-                None => Ok(TestResult::fail(
-                    &ctx,
-                    "Content Type property was stripped by server",
-                )),
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No message delivered (timed out)")),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
+    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if let Some(pid) = p.packet_id {
+        sub_client.send_puback(pid, 0x00).await?;
+    }
+    match p.properties.content_type.as_deref() {
+        Some(ct) if ct == content_type => Ok(TestResult::pass(&ctx)),
+        Some(ct) => Ok(TestResult::fail(
             &ctx,
-            "No message delivered (connection closed)",
+            format!("Content Type altered: expected \"{content_type}\", got \"{ct}\""),
         )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        None => Ok(TestResult::fail(
+            &ctx,
+            "Content Type property was stripped by server",
+        )),
     }
 }
 
@@ -2530,33 +2374,9 @@ async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Res
     }
 
     // Receive the forwarded PUBLISH on subscriber — but do NOT send PUBACK
-    let received = loop {
-        match sub_client.recv().await {
-            Ok(Packet::Publish(p)) if p.topic == topic => break p,
-            Ok(Packet::Publish(_)) => continue,
-            Ok(other) => {
-                return Ok(TestResult::fail_packet(
-                    &ctx,
-                    "PUBLISH on subscriber",
-                    &other,
-                ));
-            }
-            Err(RecvError::Timeout) => {
-                return Ok(TestResult::fail(
-                    &ctx,
-                    "No PUBLISH delivered to subscriber (timed out)",
-                ));
-            }
-            Err(RecvError::Closed) => {
-                return Ok(TestResult::fail(
-                    &ctx,
-                    "No PUBLISH delivered to subscriber (connection closed)",
-                ));
-            }
-            Err(RecvError::Other(e)) => {
-                return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
-            }
-        }
+    let received = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
     };
 
     // Disconnect abruptly without PUBACK — message remains unacknowledged
@@ -2573,38 +2393,24 @@ async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Res
         client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
 
     // Broker MUST redeliver the unacknowledged message
-    match sub_client2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            // ACK it this time so the broker cleans up
-            if let Some(pid) = p.packet_id {
-                sub_client2.send_puback(pid, 0x00).await?;
-            }
-            // Verify it's the same message
-            if p.payload == received.payload {
-                Ok(TestResult::pass(&ctx))
-            } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Redelivered payload differs: expected {:?}, got {:?}",
-                        received.payload, p.payload
-                    ),
-                ))
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(
+    let p = match expect_publish(&mut sub_client2, &ctx, topic).await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    // ACK it this time so the broker cleans up
+    if let Some(pid) = p.packet_id {
+        sub_client2.send_puback(pid, 0x00).await?;
+    }
+    // Verify it's the same message
+    if p.payload == received.payload {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
             &ctx,
-            "PUBLISH redelivery after session resume",
-            &other,
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No redelivery after session resume (timed out) — broker did not treat message as unacknowledged",
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "No redelivery after session resume (connection closed)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+            format!(
+                "Redelivered payload differs: expected {:?}, got {:?}",
+                received.payload, p.payload
+            ),
+        ))
     }
 }

@@ -69,6 +69,57 @@ async fn expect_disconnect(client: &mut RawClient, ctx: &TestContext) -> TestRes
     }
 }
 
+/// Expect the broker to reject a malformed CONNECT packet.
+///
+/// For malformed CONNECT packets, the server MUST close the Network Connection
+/// [MQTT-3.1.4-1] and MAY send a CONNACK with Reason Code >= 0x80 before
+/// closing [MQTT-3.1.4-2]. Both parts matter: a CONNACK with an error code
+/// is only the first step — the connection MUST still be closed afterward.
+///
+/// DISCONNECT is not valid here — no MQTT session exists before a successful
+/// CONNACK, so there is nothing to disconnect from.
+///
+/// - Connection closed → pass.
+/// - CONNACK with reason >= 0x80 → wait for connection close (MUST).
+/// - CONNACK with reason 0x00 → fail (broker accepted malformed CONNECT).
+/// - Timeout → fail (broker ignored the malformed packet).
+async fn expect_connect_reject(client: &mut RawClient, ctx: &TestContext) -> TestResult {
+    match client.recv().await {
+        Err(RecvError::Closed) => TestResult::pass(ctx),
+        Err(RecvError::Timeout) => TestResult::fail(ctx, "broker did not disconnect (timed out)"),
+        Err(RecvError::Other(e)) => TestResult::fail(ctx, format!("unexpected error: {e:#}")),
+        Ok(Packet::ConnAck(ack)) if ack.reason_code >= 0x80 => {
+            // Broker rejected — now verify it closes the connection [MQTT-3.1.4-1].
+            match client.recv().await {
+                Err(RecvError::Closed) => TestResult::pass(ctx),
+                Err(RecvError::Timeout) => TestResult::fail(
+                    ctx,
+                    format!(
+                        "Broker sent CONNACK(reason=0x{:02X}) but did not close the connection",
+                        ack.reason_code,
+                    ),
+                ),
+                Err(RecvError::Other(e)) => {
+                    TestResult::fail(ctx, format!("unexpected error after CONNACK: {e:#}"))
+                }
+                Ok(other) => TestResult::fail_packet(
+                    ctx,
+                    "connection close after error CONNACK",
+                    &other,
+                ),
+            }
+        }
+        Ok(Packet::ConnAck(ack)) => TestResult::fail(
+            ctx,
+            format!(
+                "Expected connection close or error CONNACK, got CONNACK(reason=0x{:02X}, session_present={})",
+                ack.reason_code, ack.session_present,
+            ),
+        ),
+        Ok(other) => TestResult::fail_packet(ctx, "connection close or error CONNACK", &other),
+    }
+}
+
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const RESERVED_FLAGS: TestContext = TestContext {
@@ -99,7 +150,7 @@ async fn reserved_connect_flags(config: TestConfig<'_>) -> anyhow::Result<TestRe
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const BAD_REMAINING_LEN: TestContext = TestContext {
@@ -124,7 +175,7 @@ async fn malformed_remaining_length(config: TestConfig<'_>) -> anyhow::Result<Te
     ];
     client.send_raw(bad_packet).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
@@ -173,10 +224,10 @@ async fn publish_topic_alias_zero(config: TestConfig<'_>) -> anyhow::Result<Test
     #[rustfmt::skip]
     let bad_publish: &[u8] = &[
         0x30,                                       // PUBLISH | QoS=0
-        0x0C,                                       // remaining length = 12
-        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/"
-        0x03,                                       // properties length = 3
-        0x23, 0x00, 0x00,                           // Topic Alias = 0
+        0x0B,                                       // remaining length = 11
+        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/" (7)
+        0x03,                                       // properties length = 3 (1)
+        0x23, 0x00, 0x00,                           // Topic Alias = 0 (3)
     ];
     client.send_raw(bad_publish).await?;
 
@@ -229,11 +280,11 @@ async fn subscribe_invalid_qos(config: TestConfig<'_>) -> anyhow::Result<TestRes
     #[rustfmt::skip]
     let bad_subscribe: &[u8] = &[
         0x82,                                               // SUBSCRIBE fixed header
-        0x0C,                                               // remaining length = 12
-        0x00, 0x01,                                         // packet ID = 1
-        0x00,                                               // properties length = 0
-        0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/"
-        0xC0,                                               // options: reserved bits 6-7 set
+        0x0B,                                               // remaining length = 11
+        0x00, 0x01,                                         // packet ID = 1 (2)
+        0x00,                                               // properties length = 0 (1)
+        0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/" (7)
+        0xC0,                                               // options: reserved bits 6-7 set (1)
     ];
     client.send_raw(bad_subscribe).await?;
 
@@ -258,12 +309,12 @@ async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<Te
     #[rustfmt::skip]
     let bad_subscribe: &[u8] = &[
         0x82,                                                           // SUBSCRIBE fixed header
-        0x15,                                                           // remaining length = 21
-        0x00, 0x01,                                                     // packet ID = 1
-        0x00,                                                           // properties length = 0
-        0x00, 0x0E, b'm', b'q', b't', b't', b'/', b'#', b'/', b'i',   // topic "mqtt/#/i"
-        b'n', b'v', b'a', b'l', b'i', b'd',                            // "nvalid"
-        0x00,                                                           // subscription options: QoS 0
+        0x14,                                                           // remaining length = 20
+        0x00, 0x01,                                                     // packet ID = 1 (2)
+        0x00,                                                           // properties length = 0 (1)
+        0x00, 0x0E, b'm', b'q', b't', b't', b'/', b'#', b'/', b'i',   // topic "mqtt/#/i" (10)
+        b'n', b'v', b'a', b'l', b'i', b'd',                            // "nvalid" (6)
+        0x00,                                                           // subscription options: QoS 0 (1)
     ];
     client.send_raw(bad_subscribe).await?;
 
@@ -342,10 +393,10 @@ async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Tes
     #[rustfmt::skip]
     let bad_unsubscribe: &[u8] = &[
         0xA0,                                               // UNSUBSCRIBE with wrong reserved bits
-        0x0C,                                               // remaining length = 12
-        0x00, 0x01,                                         // packet ID = 1
-        0x00,                                               // properties length = 0
-        0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/"
+        0x0A,                                               // remaining length = 10
+        0x00, 0x01,                                         // packet ID = 1 (2)
+        0x00,                                               // properties length = 0 (1)
+        0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/" (7)
     ];
     client.send_raw(bad_unsubscribe).await?;
 
@@ -376,11 +427,11 @@ async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> anyhow::Result<T
     #[rustfmt::skip]
     let bad_publish: &[u8] = &[
         0x30,                                       // PUBLISH | QoS=0
-        0x0C,                                       // remaining length = 12
-        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/"
-        0x03,                                       // properties length = 3
-        0x23,                                       // Topic Alias property ID
-        (bad_alias >> 8) as u8, (bad_alias & 0xFF) as u8,
+        0x0B,                                       // remaining length = 11
+        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/" (7)
+        0x03,                                       // properties length = 3 (1)
+        0x23,                                       // Topic Alias property ID (1)
+        (bad_alias >> 8) as u8, (bad_alias & 0xFF) as u8, // (2)
     ];
     client.send_raw(bad_publish).await?;
 
@@ -491,11 +542,11 @@ async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> anyhow::Re
     #[rustfmt::skip]
     let bad_subscribe: &[u8] = &[
         0x80,                                               // SUBSCRIBE with wrong reserved bits
-        0x0C,                                               // remaining length = 12
-        0x00, 0x01,                                         // packet ID = 1
-        0x00,                                               // properties length = 0
-        0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/"
-        0x00,                                               // subscription options: QoS 0
+        0x0B,                                               // remaining length = 11
+        0x00, 0x01,                                         // packet ID = 1 (2)
+        0x00,                                               // properties length = 0 (1)
+        0x00, 0x05, b'm', b'q', b't', b't', b'/',          // topic filter "mqtt/" (7)
+        0x00,                                               // subscription options: QoS 0 (1)
     ];
     client.send_raw(bad_subscribe).await?;
 
@@ -533,7 +584,7 @@ async fn connect_missing_client_id(config: TestConfig<'_>) -> anyhow::Result<Tes
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 // ── Username / Password ─────────────────────────────────────────────────────
@@ -566,7 +617,7 @@ async fn username_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const UTF8_SURROGATE: TestContext = TestContext {
@@ -660,7 +711,7 @@ async fn will_qos_three(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
@@ -718,7 +769,7 @@ async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 // ── Structural (flag/payload mismatch) ──────────────────────────────────────
@@ -752,7 +803,7 @@ async fn will_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<T
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const USERNAME_FLAG_MISMATCH: TestContext = TestContext {
@@ -787,7 +838,7 @@ async fn username_flag_clear_but_data_present(
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const PASSWORD_FLAG_MISMATCH: TestContext = TestContext {
@@ -823,7 +874,7 @@ async fn password_flag_clear_but_data_present(
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 // ── Structural (invalid UTF-8 in CONNECT fields) ───────────────────────────
@@ -858,7 +909,7 @@ async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestR
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const USERNAME_BAD_UTF8: TestContext = TestContext {
@@ -889,7 +940,7 @@ async fn username_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestRes
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }
 
 const USER_PROP_BAD_UTF8: TestContext = TestContext {
@@ -923,5 +974,5 @@ async fn user_property_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<Te
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client, &ctx).await)
 }

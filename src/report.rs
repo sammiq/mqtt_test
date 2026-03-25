@@ -123,14 +123,22 @@ impl Report {
     fn print_summary(&self, color: bool, elapsed: Duration) {
         let mut must_pass = 0usize;
         let mut must_total = 0usize;
+        let mut must_skip = 0usize;
         let mut should_pass = 0usize;
         let mut should_total = 0usize;
+        let mut should_skip = 0usize;
         let mut may_pass = 0usize;
         let mut may_total = 0usize;
+        let mut may_skip = 0usize;
 
         for suite in &self.suites {
             for r in &suite.results {
                 if matches!(r.outcome, Outcome::Skip(_)) {
+                    match r.ctx.compliance {
+                        Compliance::Must => must_skip += 1,
+                        Compliance::Should => should_skip += 1,
+                        Compliance::May => may_skip += 1,
+                    }
                     continue;
                 }
                 let passed = matches!(r.outcome, Outcome::Pass);
@@ -160,23 +168,33 @@ impl Report {
         println!("\n{}", "=".repeat(60));
         println!("Summary  ({})", HumanDuration(elapsed));
 
-        let fmt_score = |pass: usize, total: usize| -> String {
-            if !color || pass == total {
+        let fmt_score = |pass: usize, total: usize, skip: usize| -> String {
+            let score = if !color || pass == total {
                 format!("{pass}/{total}")
             } else {
                 format!("\x1b[31m{pass}/{total}\x1b[0m")
+            };
+            if skip > 0 {
+                format!("{score} ({skip} skipped)")
+            } else {
+                score
             }
         };
 
         println!(
             "  Required (MUST):       {}",
-            fmt_score(must_pass, must_total)
+            fmt_score(must_pass, must_total, must_skip)
         );
         println!(
             "  Recommended (SHOULD):  {}",
-            fmt_score(should_pass, should_total)
+            fmt_score(should_pass, should_total, should_skip)
         );
-        println!("  Optional (MAY):        {may_pass}/{may_total}");
+        let may_score = format!("{may_pass}/{may_total}");
+        if may_skip > 0 {
+            println!("  Optional (MAY):        {may_score} ({may_skip} skipped)");
+        } else {
+            println!("  Optional (MAY):        {may_score}");
+        }
 
         if must_total > 0 && must_pass == must_total {
             let msg = "Broker satisfies all required MQTT v5 behaviours.";

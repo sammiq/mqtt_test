@@ -28,8 +28,21 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     );
     suite.add(NULL_IN_TOPIC, publish_topic_with_null_char(config));
     suite.add(SUB_WRONG_FIXED, subscribe_wrong_fixed_header_bits(config));
+    suite.add(NO_CLIENT_ID, connect_missing_client_id(config));
     suite.add(USERNAME_TRUNCATED, username_flag_truncated_payload(config));
     suite.add(PASSWORD_TRUNCATED, password_flag_truncated_payload(config));
+    suite.add(WILL_TRUNCATED, will_flag_truncated_payload(config));
+    suite.add(
+        USERNAME_FLAG_MISMATCH,
+        username_flag_clear_but_data_present(config),
+    );
+    suite.add(
+        PASSWORD_FLAG_MISMATCH,
+        password_flag_clear_but_data_present(config),
+    );
+    suite.add(WILL_TOPIC_BAD_UTF8, will_topic_invalid_utf8(config));
+    suite.add(USERNAME_BAD_UTF8, username_invalid_utf8(config));
+    suite.add(USER_PROP_BAD_UTF8, user_property_invalid_utf8(config));
     suite.add(UTF8_SURROGATE, utf8_surrogate_pair_in_topic(config));
     suite.add(PUBACK_BAD_FLAGS, puback_invalid_fixed_header_flags(config));
     suite.add(WILL_QOS_THREE, will_qos_three(config));
@@ -284,7 +297,7 @@ async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<Te
 }
 
 const UNSUB_NO_FILTERS: TestContext = TestContext {
-    refs: &["MQTT-3.10.3-1"],
+    refs: &["MQTT-3.10.3-1", "MQTT-3.10.3-2"],
     description: "UNSUBSCRIBE with no topic filters MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -489,10 +502,44 @@ async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> anyhow::Re
     Ok(expect_disconnect(&mut client, &ctx).await)
 }
 
+// ── Client ID ───────────────────────────────────────────────────────────────
+
+const NO_CLIENT_ID: TestContext = TestContext {
+    refs: &["MQTT-3.1.3-3"],
+    description: "CONNECT with no Client ID in payload MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// The Client Identifier MUST be present and is the first field in the
+/// CONNECT payload [MQTT-3.1.3-3]. A CONNECT whose payload is empty
+/// (remaining length only covers the variable header) is malformed.
+async fn connect_missing_client_id(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = NO_CLIENT_ID;
+
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // CONNECT with an empty payload — no client ID at all.
+    // Remaining length = 11 covers only the variable header.
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT
+        0x0B,                                           // remaining length = 11
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x02,                                           // flags: clean_start=1
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // properties length = 0
+        // no payload — client ID missing
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_disconnect(&mut client, &ctx).await)
+}
+
 // ── Username / Password ─────────────────────────────────────────────────────
 
 const USERNAME_TRUNCATED: TestContext = TestContext {
-    refs: &["MQTT-3.1.3-3"],
+    refs: &["MQTT-3.1.2-17"],
     description: "CONNECT with Username flag set but truncated payload MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -642,7 +689,7 @@ async fn disconnect_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Test
 }
 
 const PASSWORD_TRUNCATED: TestContext = TestContext {
-    refs: &["MQTT-3.1.3-5a"],
+    refs: &["MQTT-3.1.2-19"],
     description: "CONNECT with Password flag set but truncated payload MUST be rejected",
     compliance: Compliance::Must,
 };
@@ -668,6 +715,211 @@ async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
         0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
         0x00, 0x08, b't', b'e', b's', b't',            // username "test" (but length says 8 — overshoots)
         b'u', b's', b'e', b'r',
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_disconnect(&mut client, &ctx).await)
+}
+
+// ── Structural (flag/payload mismatch) ──────────────────────────────────────
+
+const WILL_TRUNCATED: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-9"],
+    description: "CONNECT with Will Flag=1 but missing will fields MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// Will Flag is set but the payload contains only the client ID — no will
+/// properties, will topic, or will payload. The broker MUST reject this as
+/// a malformed packet [MQTT-3.1.2-9].
+async fn will_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = WILL_TRUNCATED;
+
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // CONNECT with Will Flag=1, Clean Start=1, but payload ends after client ID.
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT
+        0x11,                                           // remaining length = 17
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x06,                                           // flags: clean_start=1, will=1
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // properties length = 0
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+        // will properties, will topic, will payload MISSING
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_disconnect(&mut client, &ctx).await)
+}
+
+const USERNAME_FLAG_MISMATCH: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-16"],
+    description: "CONNECT with Username Flag=0 but extra payload data MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// Username Flag is 0 but the remaining length includes extra bytes beyond the
+/// client ID. The server should detect unconsumed payload bytes and reject the
+/// packet as malformed [MQTT-3.1.2-16].
+async fn username_flag_clear_but_data_present(
+    config: TestConfig<'_>,
+) -> anyhow::Result<TestResult> {
+    let ctx = USERNAME_FLAG_MISMATCH;
+
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // CONNECT with Username Flag=0 but remaining length includes 6 extra bytes
+    // after the client ID (looks like a username "user" but flag says none).
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT
+        0x17,                                           // remaining length = 23
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x02,                                           // flags: clean_start=1 (username=0)
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // properties length = 0
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+        0x00, 0x04, b'u', b's', b'e', b'r',            // extra data not indicated by flags
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_disconnect(&mut client, &ctx).await)
+}
+
+const PASSWORD_FLAG_MISMATCH: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-18"],
+    description: "CONNECT with Password Flag=0 but extra payload data MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// Password Flag is 0 but the remaining length includes extra bytes after the
+/// username. The server should detect unconsumed payload bytes and reject the
+/// packet as malformed [MQTT-3.1.2-18].
+async fn password_flag_clear_but_data_present(
+    config: TestConfig<'_>,
+) -> anyhow::Result<TestResult> {
+    let ctx = PASSWORD_FLAG_MISMATCH;
+
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // CONNECT with Username Flag=1, Password Flag=0 but remaining length
+    // includes 6 extra bytes after username (looks like password "pass").
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT
+        0x1D,                                           // remaining length = 29
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x82,                                           // flags: clean_start=1, username=1 (password=0)
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // properties length = 0
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+        0x00, 0x04, b'u', b's', b'e', b'r',            // username "user"
+        0x00, 0x04, b'p', b'a', b's', b's',            // extra data not indicated by flags
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_disconnect(&mut client, &ctx).await)
+}
+
+// ── Structural (invalid UTF-8 in CONNECT fields) ───────────────────────────
+
+const WILL_TOPIC_BAD_UTF8: TestContext = TestContext {
+    refs: &["MQTT-3.1.3-11"],
+    description: "Will Topic containing ill-formed UTF-8 MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// The Will Topic is a UTF-8 Encoded String [MQTT-3.1.3-11]. A topic
+/// containing a UTF-16 surrogate (U+D800) is ill-formed and MUST be rejected.
+async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = WILL_TOPIC_BAD_UTF8;
+
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // CONNECT with Will Flag=1, will topic contains surrogate U+D800 (0xED 0xA0 0x80).
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT
+        0x1A,                                           // remaining length = 26
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x06,                                           // flags: clean_start=1, will=1
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // connect properties length = 0
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+        0x00,                                           // will properties length = 0
+        0x00, 0x03, 0xED, 0xA0, 0x80,                  // will topic: surrogate U+D800
+        0x00, 0x01, b'x',                              // will payload "x"
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_disconnect(&mut client, &ctx).await)
+}
+
+const USERNAME_BAD_UTF8: TestContext = TestContext {
+    refs: &["MQTT-3.1.3-12"],
+    description: "Username containing ill-formed UTF-8 MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// The Username is a UTF-8 Encoded String [MQTT-3.1.3-12]. A username
+/// containing a UTF-16 surrogate (U+D800) is ill-formed and MUST be rejected.
+async fn username_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = USERNAME_BAD_UTF8;
+
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // CONNECT with Username Flag=1, username contains surrogate U+D800.
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT
+        0x16,                                           // remaining length = 22
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x82,                                           // flags: clean_start=1, username=1
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // properties length = 0
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+        0x00, 0x03, 0xED, 0xA0, 0x80,                  // username: surrogate U+D800
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_disconnect(&mut client, &ctx).await)
+}
+
+const USER_PROP_BAD_UTF8: TestContext = TestContext {
+    refs: &["MQTT-1.5.7-1"],
+    description: "User Property with ill-formed UTF-8 key MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// A String Pair's key and value must both be valid UTF-8 [MQTT-1.5.7-1].
+/// Send a CONNECT with a User Property whose key contains surrogate U+D800.
+async fn user_property_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = USER_PROP_BAD_UTF8;
+
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // CONNECT with a User Property (0x26) whose key is ill-formed UTF-8.
+    // Property: 0x26, key_len=3 (surrogate), value_len=1 ("v").
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT
+        0x1A,                                           // remaining length = 26
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x02,                                           // flags: clean_start=1
+        0x00, 0x3C,                                     // keep alive = 60
+        0x09,                                           // properties length = 9
+        0x26,                                           // User Property ID
+        0x00, 0x03, 0xED, 0xA0, 0x80,                  // key: surrogate U+D800
+        0x00, 0x01, b'v',                              // value: "v"
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
     ];
     client.send_raw(bad_connect).await?;
 

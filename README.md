@@ -59,7 +59,8 @@ mqtt_test [OPTIONS] [HOST]
 | `--ca-cert <PATH>` | | CA certificate PEM file for TLS verification (insecure if omitted) |
 | `-t, --timeout-ms <MS>` | `5000` | Timeout in milliseconds for each broker response |
 | `-s, --suite <SUITES>` | all | Run only specific suites (comma-separated) |
-| `--order <ORDER>` | `suite` | Report ordering: `suite` or `requirement` |
+| `--order <ORDER>` | `suite` | Report ordering: `suite`, `requirement`, or `level` |
+| `--failures-only` | | Only show failing tests in the report |
 | `-V, --verbose` | | Show full packet debug output for failed tests |
 | `--debug` | | Enable debug logging |
 | `--trace` | | Enable trace logging (implies --debug) |
@@ -81,18 +82,27 @@ cargo run -- 127.0.0.1 --suite publish,subscribe
 
 # Sort results by spec section instead of test suite
 cargo run -- 127.0.0.1 --order requirement
+
+# Sort results by compliance level (MUST, SHOULD, MAY)
+cargo run -- 127.0.0.1 --order level
+
+# Show only failing tests
+cargo run -- 127.0.0.1 --failures-only
 ```
 
 ### Quick test with Docker
 
-`test-broker-mosquitto.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up. `test-broker-hivemq.sh` does the same with HiveMQ CE (TCP + WebSocket, no TLS):
+`test-broker-mosquitto.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up. `test-broker-hivemq.sh` and `test-broker-emqx.sh` do the same with HiveMQ CE and EMQX Enterprise respectively:
 
 ```sh
 ./test-broker-mosquitto.sh
 ./test-broker-hivemq.sh
+./test-broker-emqx.sh
 ```
 
 ## Sample output
+
+When outputting to a terminal, results are colorized (green for pass, red for fail, dim for skip/unsupported).
 
 ```
 Summary

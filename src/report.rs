@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use clap::ValueEnum;
@@ -12,6 +13,8 @@ pub enum ReportOrder {
     Suite,
     /// Sort all results by MQTT spec requirement number.
     Requirement,
+    /// Sort all results by compliance level (MUST, SHOULD, MAY).
+    Level,
 }
 
 pub struct Report {
@@ -27,32 +30,47 @@ impl Report {
         self.suites.push(suite);
     }
 
-    pub fn print(&self, verbose: bool, order: ReportOrder, elapsed: Duration) {
+    pub fn print(&self, verbose: bool, order: ReportOrder, failures_only: bool, elapsed: Duration) {
+        let color = std::io::stdout().is_terminal();
+
         println!("MQTT v5 Compliance Report");
         println!("{}", "=".repeat(60));
 
         match order {
-            ReportOrder::Suite => self.print_by_suite(verbose),
-            ReportOrder::Requirement => self.print_by_requirement(verbose),
+            ReportOrder::Suite => self.print_by_suite(verbose, failures_only, color),
+            ReportOrder::Requirement => self.print_by_requirement(verbose, failures_only, color),
+            ReportOrder::Level => self.print_by_level(verbose, failures_only, color),
         }
 
-        self.print_summary(elapsed);
+        self.print_summary(color, elapsed);
     }
 
-    fn print_by_suite(&self, verbose: bool) {
+    fn print_by_suite(&self, verbose: bool, failures_only: bool, color: bool) {
         for suite in &self.suites {
+            let results: Vec<_> = suite
+                .results
+                .iter()
+                .filter(|r| !failures_only || is_failure(r))
+                .collect();
+            if failures_only && results.is_empty() {
+                continue;
+            }
             println!("\n{}", suite.name);
             println!("{}", "-".repeat(suite.name.len()));
 
-            for r in &suite.results {
-                println!("  {}", format_result(r, verbose));
+            for r in &results {
+                println!("  {}", format_result(r, verbose, color));
             }
         }
     }
 
-    fn print_by_requirement(&self, verbose: bool) {
-        let mut all_results: Vec<&TestResult> =
-            self.suites.iter().flat_map(|s| &s.results).collect();
+    fn print_by_requirement(&self, verbose: bool, failures_only: bool, color: bool) {
+        let mut all_results: Vec<&TestResult> = self
+            .suites
+            .iter()
+            .flat_map(|s| &s.results)
+            .filter(|r| !failures_only || is_failure(r))
+            .collect();
         all_results.sort_by(|a, b| {
             parse_requirement_key(a.ctx.primary_ref())
                 .cmp(&parse_requirement_key(b.ctx.primary_ref()))
@@ -66,11 +84,43 @@ impl Report {
                 println!("{}", "-".repeat(9 + section.len()));
                 last_section = section;
             }
-            println!("  {}", format_result(r, verbose));
+            println!("  {}", format_result(r, verbose, color));
         }
     }
 
-    fn print_summary(&self, elapsed: Duration) {
+    fn print_by_level(&self, verbose: bool, failures_only: bool, color: bool) {
+        let mut all_results: Vec<&TestResult> = self
+            .suites
+            .iter()
+            .flat_map(|s| &s.results)
+            .filter(|r| !failures_only || is_failure(r))
+            .collect();
+        all_results.sort_by(|a, b| {
+            let level_ord =
+                compliance_order(a.ctx.compliance).cmp(&compliance_order(b.ctx.compliance));
+            level_ord.then_with(|| {
+                parse_requirement_key(a.ctx.primary_ref())
+                    .cmp(&parse_requirement_key(b.ctx.primary_ref()))
+            })
+        });
+
+        let mut last_level = None;
+        for r in &all_results {
+            if last_level != Some(r.ctx.compliance) {
+                let label = match r.ctx.compliance {
+                    Compliance::Must => "MUST",
+                    Compliance::Should => "SHOULD",
+                    Compliance::May => "MAY",
+                };
+                println!("\n{label}");
+                println!("{}", "-".repeat(label.len()));
+                last_level = Some(r.ctx.compliance);
+            }
+            println!("  {}", format_result(r, verbose, color));
+        }
+    }
+
+    fn print_summary(&self, color: bool, elapsed: Duration) {
         let mut must_pass = 0usize;
         let mut must_total = 0usize;
         let mut should_pass = 0usize;
@@ -109,29 +159,66 @@ impl Report {
 
         println!("\n{}", "=".repeat(60));
         println!("Summary  ({})", HumanDuration(elapsed));
-        println!("  Required (MUST):       {must_pass}/{must_total}");
-        println!("  Recommended (SHOULD):  {should_pass}/{should_total}");
+
+        let fmt_score = |pass: usize, total: usize| -> String {
+            if !color || pass == total {
+                format!("{pass}/{total}")
+            } else {
+                format!("\x1b[31m{pass}/{total}\x1b[0m")
+            }
+        };
+
+        println!(
+            "  Required (MUST):       {}",
+            fmt_score(must_pass, must_total)
+        );
+        println!(
+            "  Recommended (SHOULD):  {}",
+            fmt_score(should_pass, should_total)
+        );
         println!("  Optional (MAY):        {may_pass}/{may_total}");
 
         if must_total > 0 && must_pass == must_total {
-            println!("\n  Broker satisfies all required MQTT v5 behaviours.");
+            let msg = "Broker satisfies all required MQTT v5 behaviours.";
+            if color {
+                println!("\n  \x1b[32m{msg}\x1b[0m");
+            } else {
+                println!("\n  {msg}");
+            }
         } else if must_total > 0 {
-            println!(
-                "\n  Broker has {} required compliance failure(s).",
-                must_total - must_pass
-            );
+            let count = must_total - must_pass;
+            let msg = format!("Broker has {count} required compliance failure(s).");
+            if color {
+                println!("\n  \x1b[31m{msg}\x1b[0m");
+            } else {
+                println!("\n  {msg}");
+            }
         }
     }
 }
 
-fn format_result(r: &TestResult, verbose: bool) -> String {
+/// Returns true if the result is a failure (not pass, not skip).
+fn is_failure(r: &TestResult) -> bool {
+    matches!(r.outcome, Outcome::Fail { .. })
+}
+
+/// Ordering value for compliance levels: MUST first, then SHOULD, then MAY.
+fn compliance_order(c: Compliance) -> u8 {
+    match c {
+        Compliance::Must => 0,
+        Compliance::Should => 1,
+        Compliance::May => 2,
+    }
+}
+
+fn format_result(r: &TestResult, verbose: bool, color: bool) -> String {
     let level = match r.ctx.compliance {
         Compliance::Must => "MUST  ",
         Compliance::Should => "SHOULD",
         Compliance::May => "MAY   ",
     };
     let is_may = r.ctx.compliance == Compliance::May;
-    let (status, detail) = match &r.outcome {
+    let (status_text, detail) = match &r.outcome {
         Outcome::Pass => (if is_may { " YES" } else { "PASS" }, String::new()),
         Outcome::Fail {
             message,
@@ -145,6 +232,16 @@ fn format_result(r: &TestResult, verbose: bool) -> String {
             (if is_may { "  NO" } else { "FAIL" }, format!(" — {msg}"))
         }
         Outcome::Skip(msg) => ("SKIP", format!(" — {msg}")),
+    };
+    let status = if color {
+        match &r.outcome {
+            Outcome::Pass => format!("\x1b[32m{status_text}\x1b[0m"),
+            Outcome::Fail { .. } if is_may => format!("\x1b[90m{status_text}\x1b[0m"),
+            Outcome::Fail { .. } => format!("\x1b[31m{status_text}\x1b[0m"),
+            Outcome::Skip(_) => format!("\x1b[90m{status_text}\x1b[0m"),
+        }
+    } else {
+        status_text.to_string()
     };
     let refs_str = r.ctx.refs.join(", ");
     format!(
@@ -274,7 +371,7 @@ mod tests {
             compliance: Compliance::Must,
         };
         let r = TestResult::pass(&ctx);
-        let s = format_result(&r, false);
+        let s = format_result(&r, false, false);
         assert!(s.contains("PASS"));
         assert!(s.contains("MUST"));
         assert!(s.contains("MQTT-3.1.2-4"));
@@ -289,7 +386,7 @@ mod tests {
             compliance: Compliance::Must,
         };
         let r = TestResult::fail(&ctx, "bad thing");
-        let s = format_result(&r, false);
+        let s = format_result(&r, false, false);
         assert!(s.contains("FAIL"));
         assert!(s.contains("bad thing"));
     }
@@ -302,7 +399,7 @@ mod tests {
             compliance: Compliance::May,
         };
         let r = TestResult::pass(&ctx);
-        let s = format_result(&r, false);
+        let s = format_result(&r, false, false);
         assert!(s.contains("YES"));
         assert!(s.contains("MAY"));
     }
@@ -315,7 +412,7 @@ mod tests {
             compliance: Compliance::May,
         };
         let r = TestResult::fail(&ctx, "not supported");
-        let s = format_result(&r, false);
+        let s = format_result(&r, false, false);
         assert!(s.contains("NO"));
     }
 
@@ -327,7 +424,7 @@ mod tests {
             compliance: Compliance::Must,
         };
         let r = TestResult::skip(&ctx, "prereq not met");
-        let s = format_result(&r, false);
+        let s = format_result(&r, false, false);
         assert!(s.contains("SKIP"));
         assert!(s.contains("prereq not met"));
     }
@@ -340,8 +437,8 @@ mod tests {
             compliance: Compliance::Must,
         };
         let r = TestResult::fail_verbose(&ctx, "short", "long detailed message");
-        let short = format_result(&r, false);
-        let long = format_result(&r, true);
+        let short = format_result(&r, false, false);
+        let long = format_result(&r, true, false);
         assert!(short.contains("short"));
         assert!(!short.contains("long detailed"));
         assert!(long.contains("long detailed message"));

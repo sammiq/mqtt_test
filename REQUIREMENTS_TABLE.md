@@ -7,8 +7,8 @@ Generated: 2026-03-24
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested, passing) | 174 |
-| Structural (codec/format, implicitly covered) | 37 |
+| Implemented (tested) | 182 |
+| Structural (codec/format, implicitly covered) | 29 |
 | Client (client-side obligation, not server-testable) | 26 |
 | Not tested (with explanation) | 19 |
 
@@ -22,7 +22,7 @@ Generated: 2026-03-24
 | MQTT-1.5.4-2 | MUST | Implemented | UTF-8 strings must not include null character U+0000 |
 | MQTT-1.5.4-3 | MUST | Structural | BOM U+FEFF must not be stripped by receiver. Implicitly handled by codec passing bytes through unchanged. |
 | MQTT-1.5.5-1 | MUST | Implemented | Variable Byte Integer must use minimum bytes |
-| MQTT-1.5.7-1 | MUST | Structural | String Pair both strings must be valid UTF-8. Enforced by codec encoding. |
+| MQTT-1.5.7-1 | MUST | Implemented | String Pair both strings must be valid UTF-8 |
 
 ## Section 2 — MQTT Control Packet Format (Headers)
 
@@ -50,16 +50,16 @@ Generated: 2026-03-24
 | MQTT-3.1.2-6 | MUST | Implemented | Clean Start=0 with no session: create new |
 | MQTT-3.1.2-7 | MUST | Structural | Will Flag=1: Will Message stored on Server. Verified indirectly by will publish and will delay tests. |
 | MQTT-3.1.2-8 | MUST | Implemented | Will Message published after connection closed unexpectedly |
-| MQTT-3.1.2-9 | MUST | Structural | Will Flag=1: Will fields must be present in Payload. Enforced by codec encoding. |
+| MQTT-3.1.2-9 | MUST | Implemented | Will Flag=1: Will fields must be present in Payload |
 | MQTT-3.1.2-10 | MUST | Implemented | Will Message removed once published or on clean DISCONNECT |
 | MQTT-3.1.2-11 | MUST | Implemented | Will Flag=0: Will QoS must be 0 |
 | MQTT-3.1.2-12 | MUST | Implemented | Will QoS=3 is invalid/malformed |
 | MQTT-3.1.2-13 | MUST | Implemented | Will Flag=0: Will Retain must be 0 |
 | MQTT-3.1.2-14 | MUST | Implemented | Will Flag=1, Will Retain=0: publish as non-retained |
 | MQTT-3.1.2-15 | MUST | Implemented | Will Flag=1, Will Retain=1: publish as retained |
-| MQTT-3.1.2-16 | MUST | Structural | Username Flag=0: Username must not be in Payload. Enforced by codec encoding. |
-| MQTT-3.1.2-17 | MUST | Structural | Username Flag=1: Username must be in Payload. Enforced by codec encoding. |
-| MQTT-3.1.2-18 | MUST | Structural | Password Flag=0: Password must not be in Payload. Enforced by codec encoding. |
+| MQTT-3.1.2-16 | MUST | Implemented | Username Flag=0: Username must not be in Payload |
+| MQTT-3.1.2-17 | MUST | Implemented | Username Flag=1: Username must be in Payload |
+| MQTT-3.1.2-18 | MUST | Implemented | Password Flag=0: Password must not be in Payload |
 | MQTT-3.1.2-19 | MUST | Implemented | Password Flag=1: Password must be in Payload |
 | MQTT-3.1.2-20 | MUST | Client | Client must send PINGREQ within Keep Alive. Client-side obligation. |
 | MQTT-3.1.2-21 | MUST | Client | Client must use Server Keep Alive if returned. Client-side obligation. |
@@ -82,8 +82,8 @@ Generated: 2026-03-24
 | MQTT-3.1.3-8 | MUST | Implemented | Server rejecting ClientID: may respond 0x85, must close connection |
 | MQTT-3.1.3-9 | MUST | Implemented | New connection before Will Delay passes: must not send Will Message |
 | MQTT-3.1.3-10 | MUST | Implemented | Server must maintain order of User Properties in Will Message |
-| MQTT-3.1.3-11 | MUST | Structural | Will Topic must be UTF-8 Encoded String. Enforced by codec encoding. |
-| MQTT-3.1.3-12 | MUST | Structural | Username must be UTF-8 Encoded String. Enforced by codec encoding. |
+| MQTT-3.1.3-11 | MUST | Implemented | Will Topic must be UTF-8 Encoded String |
+| MQTT-3.1.3-12 | MUST | Implemented | Username must be UTF-8 Encoded String |
 | MQTT-3.1.4-1 | MUST | Implemented | Server must validate CONNECT format and close connection if invalid |
 | MQTT-3.1.4-2 | MUST | Implemented | Validation failure: Server must close connection |
 | MQTT-3.1.4-3 | MUST | Implemented | Duplicate ClientID: Server must send DISCONNECT 0x8E and close old connection |
@@ -235,7 +235,7 @@ Generated: 2026-03-24
 |-------------|-------|--------|-------------|
 | MQTT-3.10.1-1 | MUST | Implemented | UNSUBSCRIBE fixed header bits must be 0010 |
 | MQTT-3.10.3-1 | MUST | Implemented | UNSUBSCRIBE Topic Filters must be UTF-8 |
-| MQTT-3.10.3-2 | MUST | Structural | UNSUBSCRIBE must contain at least one Topic Filter. Enforced by codec encoding. |
+| MQTT-3.10.3-2 | MUST | Implemented | UNSUBSCRIBE must contain at least one Topic Filter |
 | MQTT-3.10.4-1 | MUST | Implemented | Matching filter: delete subscription |
 | MQTT-3.10.4-2 | MUST | Implemented | Stop adding new messages for unsubscribed filter |
 | MQTT-3.10.4-3 | MUST | Implemented | Complete delivery of in-flight QoS 1/2 messages |

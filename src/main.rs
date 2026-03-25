@@ -86,9 +86,13 @@ struct Args {
     #[arg(short, long, value_delimiter = ',')]
     suite: Option<Vec<SuiteName>>,
 
-    /// Report ordering: "suite" (default) groups by test suite, "requirement" sorts by spec section
+    /// Report ordering: "suite" (default) groups by test suite, "requirement" sorts by spec section, "level" sorts by compliance level
     #[arg(long, default_value = "suite")]
     order: ReportOrder,
+
+    /// Only show failing tests in the report
+    #[arg(long)]
+    failures_only: bool,
 
     /// Path to CA certificate PEM file for TLS verification (omit for insecure)
     #[arg(long)]
@@ -228,5 +232,5 @@ async fn main() {
     let elapsed = start.elapsed();
 
     println!();
-    report.print(args.verbose, args.order, elapsed);
+    report.print(args.verbose, args.order, args.failures_only, elapsed);
 }

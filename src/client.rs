@@ -124,13 +124,11 @@ impl AsyncWrite for Transport {
 
 /// TLS configuration for connecting to a broker over TLS.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct TlsConfig {
     pub connector: tokio_rustls::TlsConnector,
     pub server_name: rustls_pki_types::ServerName<'static>,
 }
 
-#[allow(dead_code)]
 impl TlsConfig {
     /// Build a TLS config from optional cert paths.
     ///
@@ -179,7 +177,6 @@ impl TlsConfig {
 
 /// Certificate verifier that accepts any certificate (for `--insecure`).
 #[derive(Debug)]
-#[allow(dead_code)]
 struct InsecureVerifier;
 
 impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
@@ -283,21 +280,6 @@ impl RawClient {
         Ok((client, upgrade_result))
     }
 
-    /// Send raw bytes directly to the underlying TCP stream, bypassing
-    /// WebSocket framing. Used for testing invalid frame scenarios.
-    #[allow(dead_code)]
-    pub async fn send_raw_tcp(&mut self, bytes: &[u8]) -> Result<()> {
-        match &mut self.stream {
-            Transport::WebSocket(ws) => {
-                ws.tcp
-                    .write_all(bytes)
-                    .await
-                    .context("raw TCP write failed")?;
-                Ok(())
-            }
-            _ => bail!("send_raw_tcp only supported on WebSocket transport"),
-        }
-    }
 
     // ── Typed sends ──────────────────────────────────────────────────────────
 
@@ -310,7 +292,6 @@ impl RawClient {
     }
 
     /// Send PUBACK for a received QoS-1 PUBLISH.
-    #[allow(dead_code)]
     pub async fn send_puback(&mut self, packet_id: u16, reason_code: u8) -> Result<()> {
         self.send_raw(&codec::encode_pub_response(4, packet_id, reason_code))
             .await
@@ -352,7 +333,6 @@ impl RawClient {
         self.send_raw(&codec::encode_disconnect(reason_code)).await
     }
 
-    #[allow(dead_code)]
     pub async fn send_disconnect_with_properties(
         &mut self,
         reason_code: u8,
@@ -365,7 +345,6 @@ impl RawClient {
         .await
     }
 
-    #[allow(dead_code)]
     pub async fn send_auth(&mut self, reason_code: u8, properties: &Properties) -> Result<()> {
         self.send_raw(&codec::encode_auth(reason_code, properties))
             .await
@@ -505,7 +484,6 @@ pub async fn connect_tls(
 }
 
 /// Convenience: open WebSocket, send CONNECT, return the client, CONNACK, and upgrade result.
-#[allow(dead_code)]
 pub async fn connect_ws(
     addr: &str,
     host: &str,

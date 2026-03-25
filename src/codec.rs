@@ -494,7 +494,6 @@ pub struct ConnAck {
 
 /// A received PUBLISH packet [MQTT-3.3].
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Publish {
     pub dup: bool,
     pub qos: QoS,
@@ -569,10 +568,10 @@ impl PublishParams {
 
 /// A received acknowledgement (PUBACK / PUBREC / PUBREL / PUBCOMP).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct PubAck {
     pub packet_id: u16,
     pub reason_code: u8,
+    #[allow(dead_code)]
     pub properties: Properties,
 }
 
@@ -612,10 +611,10 @@ impl SubscribeParams {
 
 /// A received SUBACK packet [MQTT-3.9].
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SubAck {
     pub packet_id: u16,
     pub reason_codes: Vec<u8>,
+    #[allow(dead_code)]
     pub properties: Properties,
 }
 
@@ -639,16 +638,15 @@ impl UnsubscribeParams {
 
 /// A received UNSUBACK packet [MQTT-3.11].
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct UnsubAck {
     pub packet_id: u16,
     pub reason_codes: Vec<u8>,
+    #[allow(dead_code)]
     pub properties: Properties,
 }
 
 /// A received DISCONNECT packet [MQTT-3.14].
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Disconnect {
     pub reason_code: u8,
     pub properties: Properties,
@@ -656,7 +654,6 @@ pub struct Disconnect {
 
 /// All packets that can be received from a broker.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Packet {
     ConnAck(ConnAck),
     Publish(Publish),

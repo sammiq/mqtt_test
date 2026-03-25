@@ -23,7 +23,6 @@ pub struct TestConfig<'a> {
 
 /// How the MQTT v5 specification describes a behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Compliance {
     /// The spec says MUST — non-compliance is a protocol violation.
     Must,

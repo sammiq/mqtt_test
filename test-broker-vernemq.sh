@@ -44,11 +44,15 @@ docker run -d --name "$CONTAINER_NAME" \
     -e DOCKER_VERNEMQ_LISTENER__WS__DEFAULT=0.0.0.0:8083 \
     vernemq/vernemq:latest
 
-# Wait for VerneMQ to be fully ready
+# Wait for VerneMQ MQTT listener to be fully ready
+# (vernemq ping returns "pong" once the Erlang VM is up, before listeners are bound)
 echo "Waiting for VerneMQ to accept connections..."
 for i in $(seq 1 60); do
-    if docker exec "$CONTAINER_NAME" vernemq ping 2>/dev/null | grep -q "pong"; then
-        break
+    if docker exec "$CONTAINER_NAME" vmq-admin listener show 2>/dev/null | grep -q "mqtt.*running"; then
+        # Listener is running inside the container — verify port is reachable from host
+        if nc -z 127.0.0.1 "$PORT" 2>/dev/null; then
+            break
+        fi
     fi
     sleep 1
 done

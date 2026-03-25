@@ -263,11 +263,11 @@ async fn invalid_qos3(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     #[rustfmt::skip]
     let bad_publish: &[u8] = &[
         0x36,                                       // PUBLISH | QoS=3
-        0x0C,                                       // remaining length = 12
-        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/"
-        0x00, 0x01,                                 // packet ID = 1
-        0x00,                                       // properties length = 0
-        0x00,                                       // payload (1 byte)
+        0x0B,                                       // remaining length = 11
+        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/" (7)
+        0x00, 0x01,                                 // packet ID = 1 (2)
+        0x00,                                       // properties length = 0 (1)
+        0x00,                                       // payload (1)
     ];
     client.send_raw(bad_publish).await?;
 
@@ -304,10 +304,10 @@ async fn dup_on_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     #[rustfmt::skip]
     let bad_publish: &[u8] = &[
         0x38,                                       // PUBLISH | DUP=1 | QoS=0
-        0x0A,                                       // remaining length = 10
-        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/"
-        0x00,                                       // properties length = 0
-        0x00,                                       // payload (1 byte)
+        0x09,                                       // remaining length = 9
+        0x00, 0x05, b'm', b'q', b't', b't', b'/',  // topic "mqtt/" (7)
+        0x00,                                       // properties length = 0 (1)
+        0x00,                                       // payload (1)
     ];
     client.send_raw(bad_publish).await?;
 

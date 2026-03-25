@@ -39,6 +39,7 @@ cargo clippy   # should produce zero warnings
 ./test-broker-mosquitto.sh  # spins up mosquitto in Docker, runs full suite (TCP + TLS + WebSocket)
 ./test-broker-hivemq.sh     # spins up HiveMQ CE in Docker, runs full suite (TCP + TLS + WebSocket)
 ./test-broker-emqx.sh       # spins up EMQX Enterprise in Docker, runs full suite (TCP + TLS + WebSocket)
+./test-broker-vernemq.sh    # spins up VerneMQ in Docker, runs full suite (TCP + TLS + WebSocket)
 ```
 
 ## Conventions
@@ -57,5 +58,6 @@ cargo clippy   # should produce zero warnings
 - `test-broker-mosquitto.sh` runs a single pass with TCP (port 1883), TLS transport (port 8883), and WebSocket (port 8083)
 - `test-broker-hivemq.sh` runs HiveMQ CE with TCP (port 1884), TLS (port 8884), and WebSocket (port 8084)
 - `test-broker-emqx.sh` runs EMQX Enterprise with TCP (port 1885), TLS (port 8885), and WebSocket (port 8085)
+- `test-broker-vernemq.sh` runs VerneMQ with TCP (port 1886), TLS (port 8886), and WebSocket (port 8086)
 - When matching `recv()` results in tests: `RecvError::Closed` = broker cleanly closed (pass for "expect disconnect" tests), `RecvError::Timeout` = broker didn't respond (fail for "expect disconnect", pass for "expect no message"), `RecvError::Other` = I/O error like connection reset (always fail — prevents false passes when broker isn't ready)
 - Tests that use `RawClient::connect_tcp` directly (pre-CONNECT malformed packet tests) rely on `RecvError::Other` catching connection resets from unready brokers; tests that go through `client::connect()` are already protected by the CONNACK handshake

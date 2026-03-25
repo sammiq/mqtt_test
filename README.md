@@ -26,7 +26,7 @@ See [REQUIREMENTS_TABLE.md](REQUIREMENTS_TABLE.md) for a full mapping of every n
 
 - Rust (edition 2024)
 - An MQTT v5 broker to test against
-- Docker (optional, for `test-broker-mosquitto.sh` / `test-broker-hivemq.sh`)
+- Docker (optional, for broker test scripts)
 
 ## Building
 
@@ -92,12 +92,13 @@ cargo run -- 127.0.0.1 --failures-only
 
 ### Quick test with Docker
 
-`test-broker-mosquitto.sh` spins up a Mosquitto container with TCP, TLS, and WebSocket, runs the full suite, and cleans up. `test-broker-hivemq.sh` and `test-broker-emqx.sh` do the same with HiveMQ CE and EMQX Enterprise respectively:
+Each script spins up a broker container with TCP, TLS, and WebSocket, runs the full suite, and cleans up:
 
 ```sh
-./test-broker-mosquitto.sh
-./test-broker-hivemq.sh
-./test-broker-emqx.sh
+./test-broker-mosquitto.sh   # Eclipse Mosquitto
+./test-broker-hivemq.sh      # HiveMQ CE
+./test-broker-emqx.sh        # EMQX Enterprise
+./test-broker-vernemq.sh     # VerneMQ
 ```
 
 ## Sample output

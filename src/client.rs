@@ -280,7 +280,6 @@ impl RawClient {
         Ok((client, upgrade_result))
     }
 
-
     // ── Typed sends ──────────────────────────────────────────────────────────
 
     pub async fn send_connect(&mut self, params: &ConnectParams) -> Result<()> {

@@ -7,10 +7,10 @@ Generated: 2026-03-24
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested) | 182 |
+| Implemented (tested) | 183 |
 | Structural (codec/format, implicitly covered) | 29 |
 | Client (client-side obligation, not server-testable) | 26 |
-| Not tested (with explanation) | 19 |
+| Not tested (with explanation) | 18 |
 
 ---
 
@@ -301,7 +301,7 @@ Generated: 2026-03-24
 | MQTT-4.3.1-1 | MUST | Implemented | QoS 0: send PUBLISH with QoS=0, DUP=0 |
 | MQTT-4.3.2-1 | MUST | Implemented | QoS 1: assign unused Packet Identifier |
 | MQTT-4.3.2-2 | MUST | Implemented | QoS 1: send PUBLISH with QoS=1, DUP=0 |
-| MQTT-4.3.2-3 | N/A | N/A | Reference to section 4.4 |
+| MQTT-4.3.2-3 | MUST | Implemented | QoS 1: PUBLISH unacknowledged until PUBACK received |
 | MQTT-4.3.2-4 | MUST | Structural | QoS 1 receiver must respond with PUBACK. Verified implicitly by all QoS 1 tests. |
 | MQTT-4.3.2-5 | MUST | Structural | After PUBACK, treat same Packet ID as new. Implicitly tested by sequential QoS 1 publishes. |
 | MQTT-4.3.3-1 | MUST | Implemented | QoS 2: assign unused Packet Identifier |

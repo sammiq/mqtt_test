@@ -60,6 +60,10 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
         CONTENT_TYPE_FORWARDED,
         content_type_forwarded_unaltered(config),
     );
+    suite.add(
+        QOS1_UNACKNOWLEDGED,
+        qos1_unacknowledged_until_puback(config),
+    );
 
     suite
 }
@@ -2479,6 +2483,127 @@ async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Res
         Err(RecvError::Closed) => Ok(TestResult::fail(
             &ctx,
             "No message delivered (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+    }
+}
+
+// ── QoS 1 unacknowledged until PUBACK ───────────────────────────────────────
+
+const QOS1_UNACKNOWLEDGED: TestContext = TestContext {
+    refs: &["MQTT-4.3.2-3"],
+    description: "QoS 1 PUBLISH MUST be treated as unacknowledged until PUBACK received",
+    compliance: Compliance::Must,
+};
+
+/// The server MUST treat a QoS 1 PUBLISH as "unacknowledged" until it has
+/// received the corresponding PUBACK from the receiver [MQTT-4.3.2-3].
+///
+/// Test: subscribe QoS 1 with a persistent session, receive a forwarded
+/// PUBLISH but withhold PUBACK, disconnect abruptly, then reconnect — the
+/// broker must redeliver the message.
+async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+    let ctx = QOS1_UNACKNOWLEDGED;
+
+    let topic = "mqtt/test/pub/qos1_unack";
+
+    // Connect subscriber with a persistent session, subscribe QoS 1
+    let mut sub_params = ConnectParams::new("mqtt-test-qos1-unack-sub");
+    sub_params.clean_start = false;
+    sub_params.properties.session_expiry_interval = Some(300);
+    let (mut sub_client, _) =
+        client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+    let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+    sub_client.send_subscribe(&sub).await?;
+    sub_client.recv().await?; // SUBACK
+
+    // Publish QoS 1 from a separate client
+    let pub_conn = ConnectParams::new("mqtt-test-qos1-unack-pub");
+    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+    let pub_params = PublishParams::qos1(topic, b"unack-test".to_vec(), 1);
+    pub_client.send_publish(&pub_params).await?;
+    // Drain publisher PUBACK
+    for _ in 0..5 {
+        if let Ok(Packet::PubAck(_)) = pub_client.recv().await {
+            break;
+        }
+    }
+
+    // Receive the forwarded PUBLISH on subscriber — but do NOT send PUBACK
+    let received = loop {
+        match sub_client.recv().await {
+            Ok(Packet::Publish(p)) if p.topic == topic => break p,
+            Ok(Packet::Publish(_)) => continue,
+            Ok(other) => {
+                return Ok(TestResult::fail_packet(
+                    &ctx,
+                    "PUBLISH on subscriber",
+                    &other,
+                ));
+            }
+            Err(RecvError::Timeout) => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "No PUBLISH delivered to subscriber (timed out)",
+                ));
+            }
+            Err(RecvError::Closed) => {
+                return Ok(TestResult::fail(
+                    &ctx,
+                    "No PUBLISH delivered to subscriber (connection closed)",
+                ));
+            }
+            Err(RecvError::Other(e)) => {
+                return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
+            }
+        }
+    };
+
+    // Disconnect abruptly without PUBACK — message remains unacknowledged
+    drop(sub_client.into_raw());
+
+    // Small delay to let broker process the disconnect
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Reconnect with same client ID and persistent session
+    let mut sub_params2 = ConnectParams::new("mqtt-test-qos1-unack-sub");
+    sub_params2.clean_start = false;
+    sub_params2.properties.session_expiry_interval = Some(300);
+    let (mut sub_client2, _) =
+        client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
+
+    // Broker MUST redeliver the unacknowledged message
+    match sub_client2.recv().await {
+        Ok(Packet::Publish(p)) if p.topic == topic => {
+            // ACK it this time so the broker cleans up
+            if let Some(pid) = p.packet_id {
+                sub_client2.send_puback(pid, 0x00).await?;
+            }
+            // Verify it's the same message
+            if p.payload == received.payload {
+                Ok(TestResult::pass(&ctx))
+            } else {
+                Ok(TestResult::fail(
+                    &ctx,
+                    format!(
+                        "Redelivered payload differs: expected {:?}, got {:?}",
+                        received.payload, p.payload
+                    ),
+                ))
+            }
+        }
+        Ok(other) => Ok(TestResult::fail_packet(
+            &ctx,
+            "PUBLISH redelivery after session resume",
+            &other,
+        )),
+        Err(RecvError::Timeout) => Ok(TestResult::fail(
+            &ctx,
+            "No redelivery after session resume (timed out) — broker did not treat message as unacknowledged",
+        )),
+        Err(RecvError::Closed) => Ok(TestResult::fail(
+            &ctx,
+            "No redelivery after session resume (connection closed)",
         )),
         Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
     }

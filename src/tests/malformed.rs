@@ -102,11 +102,9 @@ async fn expect_connect_reject(client: &mut RawClient, ctx: &TestContext) -> Tes
                 Err(RecvError::Other(e)) => {
                     TestResult::fail(ctx, format!("unexpected error after CONNACK: {e:#}"))
                 }
-                Ok(other) => TestResult::fail_packet(
-                    ctx,
-                    "connection close after error CONNACK",
-                    &other,
-                ),
+                Ok(other) => {
+                    TestResult::fail_packet(ctx, "connection close after error CONNACK", &other)
+                }
             }
         }
         Ok(Packet::ConnAck(ack)) => TestResult::fail(

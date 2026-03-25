@@ -47,7 +47,7 @@ cargo clippy   # should produce zero warnings
 - After making changes to code, always run existing tests and look to add tests for missing cases
 - NEVER commit changes, unless you have asked explicitly to do so
 - Ensure any relevant information in CLAUDE.md is correct after making changes
-- Use `#[allow(dead_code)]` for public API surface not yet consumed (codec structs, client methods) rather than removing it
+- Only use `#[allow(dead_code)]` on the specific item that triggers a warning (field, method, function) — not on entire structs/enums/impl blocks. Remove annotations once the item is consumed. Periodically audit by removing all annotations and running `cargo check`.
 - QoS enum variants use standard MQTT naming (AtMostOnce, AtLeastOnce, ExactlyOnce)
 - Prefer struct initialization syntax over field reassignment after Default::default()
 - `TestConfig` is `Copy` — passed by value everywhere; no `&` or `*` needed

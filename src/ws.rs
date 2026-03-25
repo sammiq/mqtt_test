@@ -14,7 +14,6 @@ use tokio::net::TcpStream;
 // ── Upgrade handshake ────────────────────────────────────────────────────────
 
 /// Result of the WebSocket HTTP upgrade handshake.
-#[allow(dead_code)]
 pub struct WsUpgradeResult {
     /// The subprotocol returned by the server in `Sec-WebSocket-Protocol`.
     pub subprotocol: Option<String>,

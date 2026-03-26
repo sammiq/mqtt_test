@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::client::expect_publish;
 use crate::client::{self, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions, SubscribeParams,
@@ -616,31 +617,13 @@ async fn retain_as_published(config: TestConfig<'_>) -> anyhow::Result<TestResul
     sub_client.send_subscribe(&sub).await?;
     sub_client.recv().await?; // SUBACK
 
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rap" => {
-            if p.retain {
-                Ok(TestResult::pass(&ctx))
-            } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    "Received PUBLISH but retain flag was cleared",
-                ))
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(
+    match expect_publish(&mut sub_client, &ctx, "mqtt/test/sub/rap").await {
+        Ok(p) if p.retain => Ok(TestResult::pass(&ctx)),
+        Ok(_) => Ok(TestResult::fail(
             &ctx,
-            "PUBLISH on topic \"mqtt/test/sub/rap\"",
-            &other,
+            "Received PUBLISH but retain flag was cleared",
         )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering retained message",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No retained message delivered to subscriber",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(r) => Ok(r),
     }
 }
 
@@ -693,30 +676,8 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     sub_client.recv().await?; // SUBACK
 
     // Should receive retained message on first subscribe
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => {}
-        Ok(other) => {
-            return Ok(TestResult::fail_packet(
-                &ctx,
-                "retained PUBLISH on first subscription",
-                &other,
-            ));
-        }
-        Err(RecvError::Closed) => {
-            return Ok(TestResult::fail(
-                &ctx,
-                "broker closed connection before delivering retained message on first subscription",
-            ));
-        }
-        Err(RecvError::Timeout) => {
-            return Ok(TestResult::fail(
-                &ctx,
-                "No retained message on first subscription",
-            ));
-        }
-        Err(RecvError::Other(e)) => {
-            return Err(e);
-        }
+    if let Err(r) = expect_publish(&mut sub_client, &ctx, "mqtt/test/sub/rh1").await {
+        return Ok(r);
     }
 
     // Subscribe again on same connection (not a new subscription)
@@ -925,31 +886,20 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Re
     }
 
     // Subscriber should receive at QoS 1 (the higher of the two)
-    match client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/overlap/exact" => {
-            if let Some(pid) = p.packet_id {
-                client.send_puback(pid, 0x00).await?;
-            }
-            if p.qos == QoS::AtLeastOnce {
-                Ok(TestResult::pass(&ctx))
-            } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!("Delivered at {:?}, expected AtLeastOnce", p.qos),
-                ))
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(
+    let p = match expect_publish(&mut client, &ctx, "mqtt/test/sub/overlap/exact").await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if let Some(pid) = p.packet_id {
+        client.send_puback(pid, 0x00).await?;
+    }
+    if p.qos == QoS::AtLeastOnce {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
             &ctx,
-            "PUBLISH on overlap/exact",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering message",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No message delivered")),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+            format!("Delivered at {:?}, expected AtLeastOnce", p.qos),
+        ))
     }
 }
 
@@ -1062,37 +1012,21 @@ const MULTI_LEVEL_TOPIC: TestContext = TestContext {
 async fn multi_level_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = MULTI_LEVEL_TOPIC;
 
-    let mut sub = client::connect_and_subscribe(
+    let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-multi-level-sub",
+        "mqtt-test-multi-level",
         "mqtt/test/deep/#",
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
 
-    let params = ConnectParams::new("mqtt-test-multi-level-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
-
     let publish = PublishParams::qos0("mqtt/test/deep/a/b/c/d", b"deep".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match sub.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/deep/a/b/c/d" => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH matching a/b/#",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering message for deep topic hierarchy",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message received for deep topic hierarchy",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+    match expect_publish(&mut sub, &ctx, "mqtt/test/deep/a/b/c/d").await {
+        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Err(r) => Ok(r),
     }
 }
 
@@ -1106,17 +1040,14 @@ const WILDCARD_MIDDLE: TestContext = TestContext {
 async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = WILDCARD_MIDDLE;
 
-    let mut sub = client::connect_and_subscribe(
+    let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-wc-mid-sub",
+        "mqtt-test-wc-mid",
         "mqtt/test/wc/+/end",
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    let params = ConnectParams::new("mqtt-test-wc-mid-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     // Should match
     let p1 = PublishParams::qos0("mqtt/test/wc/any/end", b"match".to_vec());
@@ -1126,35 +1057,19 @@ async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<TestRes
     let p2 = PublishParams::qos0("mqtt/test/wc/any/extra/end", b"no-match".to_vec());
     pub_client.send_publish(&p2).await?;
 
-    match sub.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/wc/any/end" => {
-            // Verify no second message arrives (the non-matching one)
-            match sub.recv_with_timeout(Duration::from_millis(500)).await {
-                Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)), // No extra message — correct
-                Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-                Err(RecvError::Other(e)) => {
-                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
-                }
-                Ok(Packet::Publish(p2)) if p2.topic == "mqtt/test/wc/any/extra/end" => Ok(
-                    TestResult::fail(&ctx, "'+' wildcard matched across multiple levels"),
-                ),
-                _ => Ok(TestResult::pass(&ctx)),
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH matching a/+/c",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering wildcard match",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message received for wildcard match",
-        )),
+    if let Err(r) = expect_publish(&mut sub, &ctx, "mqtt/test/wc/any/end").await {
+        return Ok(r);
+    }
+
+    // Verify no second message arrives (the non-matching one)
+    match sub.recv_with_timeout(Duration::from_millis(500)).await {
+        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
         Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p2)) if p2.topic == "mqtt/test/wc/any/extra/end" => Ok(
+            TestResult::fail(&ctx, "'+' wildcard matched across multiple levels"),
+        ),
+        _ => Ok(TestResult::pass(&ctx)),
     }
 }
 
@@ -1257,37 +1172,21 @@ const EMPTY_TOPIC_LEVEL: TestContext = TestContext {
 async fn empty_topic_level(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = EMPTY_TOPIC_LEVEL;
 
-    let mut sub = client::connect_and_subscribe(
+    let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-empty-level-sub",
+        "mqtt-test-empty-level",
         "mqtt/test//empty",
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
 
-    let params = ConnectParams::new("mqtt-test-empty-level-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
-
     let publish = PublishParams::qos0("mqtt/test//empty", b"empty-level".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match sub.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test//empty" => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH on topic with empty level",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering topic with empty level",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message received for topic with empty level",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+    match expect_publish(&mut sub, &ctx, "mqtt/test//empty").await {
+        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Err(r) => Ok(r),
     }
 }
 
@@ -1303,17 +1202,14 @@ const CASE_SENSITIVE: TestContext = TestContext {
 async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = CASE_SENSITIVE;
 
-    let mut sub = client::connect_and_subscribe(
+    let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-case-sub",
+        "mqtt-test-case",
         "mqtt/Test/CASE",
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    let params = ConnectParams::new("mqtt-test-case-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     // Publish with different case — should NOT match
     pub_client
@@ -1341,22 +1237,9 @@ async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResu
         ))
         .await?;
 
-    match sub.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/Test/CASE" => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH on \"mqtt/Test/CASE\"",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering exact-case topic",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message received for exact-case topic",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+    match expect_publish(&mut sub, &ctx, "mqtt/Test/CASE").await {
+        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Err(r) => Ok(r),
     }
 }
 
@@ -1372,17 +1255,14 @@ const EXACT_CHAR: TestContext = TestContext {
 async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     let ctx = EXACT_CHAR;
 
-    let mut sub = client::connect_and_subscribe(
+    let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-exact-sub",
+        "mqtt-test-exact",
         "mqtt/exact/match",
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    let params = ConnectParams::new("mqtt-test-exact-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     // Publish with one character different — should NOT match
     pub_client
@@ -1407,22 +1287,9 @@ async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
         .send_publish(&PublishParams::qos0("mqtt/exact/match", b"exact".to_vec()))
         .await?;
 
-    match sub.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/exact/match" => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH on \"mqtt/exact/match\"",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering exact-match topic",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message received for exact-match topic",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+    match expect_publish(&mut sub, &ctx, "mqtt/exact/match").await {
+        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Err(r) => Ok(r),
     }
 }
 
@@ -1440,17 +1307,14 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
     let ctx = LEVEL_SEPARATOR_DISTINCT;
 
     // Subscriber 1: subscribe to "mqtt/test/sep/a/b"
-    let mut sub1 = client::connect_and_subscribe(
+    let (mut sub1, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-sep-sub1",
+        "mqtt-test-sep",
         "mqtt/test/sep/a/b",
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    let params = ConnectParams::new("mqtt-test-sep-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     // Publish to "mqtt/test/sep/a//b" (extra empty level) — should NOT match sub1
     pub_client
@@ -1478,30 +1342,8 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match sub1.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a/b" => {}
-        Ok(other) => {
-            return Ok(TestResult::fail_packet(
-                &ctx,
-                "PUBLISH on \"mqtt/test/sep/a/b\"",
-                &other,
-            ));
-        }
-        Err(RecvError::Closed) => {
-            return Ok(TestResult::fail(
-                &ctx,
-                "broker closed connection before delivering \"mqtt/test/sep/a/b\"",
-            ));
-        }
-        Err(RecvError::Timeout) => {
-            return Ok(TestResult::fail(
-                &ctx,
-                "No message received for \"mqtt/test/sep/a/b\"",
-            ));
-        }
-        Err(RecvError::Other(e)) => {
-            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
-        }
+    if let Err(r) = expect_publish(&mut sub1, &ctx, "mqtt/test/sep/a/b").await {
+        return Ok(r);
     }
 
     // Subscriber 2: subscribe to "mqtt/test/sep/a//b" and verify it matches
@@ -1521,22 +1363,9 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match sub2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a//b" => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH on \"mqtt/test/sep/a//b\"",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering \"mqtt/test/sep/a//b\"",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No message received for \"mqtt/test/sep/a//b\"",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+    match expect_publish(&mut sub2, &ctx, "mqtt/test/sep/a//b").await {
+        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Err(r) => Ok(r),
     }
 }
 
@@ -1560,19 +1389,14 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
 
     let topic = "mqtt/test/unsub/stop";
 
-    // Use two clients: one subscriber, one publisher
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-unsub-stop-sub",
+        "mqtt-test-unsub-stop",
         topic,
         QoS::AtMostOnce,
         config.recv_timeout,
     )
     .await?;
-
-    let pub_params = ConnectParams::new("mqtt-test-unsub-stop-pub");
-    let (mut pub_client, _) =
-        client::connect(config.addr, &pub_params, config.recv_timeout).await?;
 
     // Step 1: Verify delivery works before unsubscribe
     pub_client
@@ -1770,26 +1594,8 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
     sub_client.recv().await?; // SUBACK
 
     // Must receive the retained message
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {}
-        Ok(other) => {
-            return Ok(TestResult::fail_packet(&ctx, "retained PUBLISH", &other));
-        }
-        Err(RecvError::Closed) => {
-            return Ok(TestResult::fail(
-                &ctx,
-                "broker closed connection before delivering retained message with retain_handling=0",
-            ));
-        }
-        Err(RecvError::Timeout) => {
-            return Ok(TestResult::fail(
-                &ctx,
-                "No retained message delivered on subscribe with retain_handling=0",
-            ));
-        }
-        Err(RecvError::Other(e)) => {
-            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
-        }
+    if let Err(r) = expect_publish(&mut sub_client, &ctx, topic).await {
+        return Ok(r);
     }
 
     // Re-subscribe on the same connection — retain_handling=0 means resend again
@@ -1809,22 +1615,9 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
     sub_client.recv().await?; // SUBACK
 
     // Must receive retained message again
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "retained PUBLISH on re-sub",
-            &other,
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
-            "broker closed connection before delivering retained message on re-subscription",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No retained message on re-subscription with retain_handling=0",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+    match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Err(r) => Ok(r),
     }
 }
 
@@ -1842,10 +1635,9 @@ async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<Te
 
     let topic = "mqtt/test/sub/qos1to0";
 
-    // Subscriber at QoS 0
-    let mut sub_client = client::connect_and_subscribe(
+    let (mut sub_client, mut pub_client) = client::sub_pub_pair(
         config.addr,
-        "mqtt-test-dg10-sub",
+        "mqtt-test-dg10",
         topic,
         QoS::AtMostOnce,
         config.recv_timeout,
@@ -1853,8 +1645,6 @@ async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<Te
     .await?;
 
     // Publisher sends QoS 1
-    let pub_conn = ConnectParams::new("mqtt-test-dg10-pub");
-    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"dg-test".to_vec(), 1))
         .await?;
@@ -1863,27 +1653,20 @@ async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<Te
     let _ = pub_client.recv().await;
 
     // Subscriber should receive at QoS 0 (no packet_id)
-    match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => {
-            if p.qos == QoS::AtMostOnce {
-                Ok(TestResult::pass(&ctx))
-            } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Delivered at {:?}, expected AtMostOnce (QoS 1 pub, QoS 0 sub)",
-                        p.qos
-                    ),
-                ))
-            }
-        }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
+    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if p.qos == QoS::AtMostOnce {
+        Ok(TestResult::pass(&ctx))
+    } else {
+        Ok(TestResult::fail(
             &ctx,
-            "broker closed connection before delivering message",
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No message delivered to subscriber")),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+            format!(
+                "Delivered at {:?}, expected AtMostOnce (QoS 1 pub, QoS 0 sub)",
+                p.qos
+            ),
+        ))
     }
 }
 

@@ -21,8 +21,10 @@ use tokio_rustls::rustls;
 use tokio_rustls::rustls::pki_types as rustls_pki_types;
 
 use crate::codec::{
-    self, ConnectParams, Packet, Properties, PublishParams, SubscribeParams, UnsubscribeParams,
+    self, ConnectParams, Packet, Properties, Publish, PublishParams, SubscribeParams,
+    UnsubscribeParams,
 };
+use crate::types::{TestContext, TestResult};
 
 // ── RecvError ────────────────────────────────────────────────────────────────
 
@@ -447,6 +449,18 @@ impl Drop for AutoDisconnect {
     }
 }
 
+/// Send CONNECT on an already-opened client and return (AutoDisconnect, CONNACK).
+async fn handshake(
+    mut client: RawClient,
+    params: &ConnectParams,
+) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
+    client.send_connect(params).await?;
+    match client.recv().await? {
+        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
+        other => bail!("expected CONNACK, got {other}"),
+    }
+}
+
 /// Convenience: open TCP, send CONNECT, return the client and the CONNACK.
 ///
 /// Most tests call this rather than managing the handshake themselves.
@@ -456,13 +470,8 @@ pub async fn connect(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
     debug!(addr, client_id = %params.client_id, "CONNECT");
-    let mut client = RawClient::connect_tcp(addr, recv_timeout).await?;
-    client.send_connect(params).await?;
-
-    match client.recv().await? {
-        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
-        other => bail!("expected CONNACK, got {other}"),
-    }
+    let client = RawClient::connect_tcp(addr, recv_timeout).await?;
+    handshake(client, params).await
 }
 
 /// Convenience: open TLS, send CONNECT, return the client and the CONNACK.
@@ -473,13 +482,8 @@ pub async fn connect_tls(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (TLS)");
-    let mut client = RawClient::connect_tls(addr, tls, recv_timeout).await?;
-    client.send_connect(params).await?;
-
-    match client.recv().await? {
-        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack)),
-        other => bail!("expected CONNACK, got {other}"),
-    }
+    let client = RawClient::connect_tls(addr, tls, recv_timeout).await?;
+    handshake(client, params).await
 }
 
 /// Convenience: open WebSocket, send CONNECT, return the client, CONNACK, and upgrade result.
@@ -491,13 +495,9 @@ pub async fn connect_ws(
     recv_timeout: Duration,
 ) -> Result<(AutoDisconnect, crate::codec::ConnAck, WsUpgradeResult)> {
     debug!(addr, client_id = %params.client_id, "CONNECT (WebSocket)");
-    let (mut client, upgrade) = RawClient::connect_ws(addr, host, path, recv_timeout).await?;
-    client.send_connect(params).await?;
-
-    match client.recv().await? {
-        Packet::ConnAck(connack) => Ok((AutoDisconnect(Some(client)), connack, upgrade)),
-        other => bail!("expected CONNACK, got {other}"),
-    }
+    let (client, upgrade) = RawClient::connect_ws(addr, host, path, recv_timeout).await?;
+    let (auto, connack) = handshake(client, params).await?;
+    Ok((auto, connack, upgrade))
 }
 
 /// Convenience: connect with a simple client ID, subscribe to one topic,
@@ -517,4 +517,60 @@ pub async fn connect_and_subscribe(
     client.recv().await?; // SUBACK
 
     Ok(client)
+}
+
+/// Convenience: create a subscriber + publisher pair for a given topic.
+///
+/// Builds client IDs by appending `-sub` and `-pub` to `id_prefix`.
+/// The subscriber connects, subscribes at the given QoS, and consumes the
+/// SUBACK. The publisher connects with a plain `ConnectParams`. Returns
+/// `(subscriber, publisher)` — both wrapped in `AutoDisconnect`.
+pub async fn sub_pub_pair(
+    addr: &str,
+    id_prefix: &str,
+    topic: &str,
+    sub_qos: codec::QoS,
+    recv_timeout: Duration,
+) -> Result<(AutoDisconnect, AutoDisconnect)> {
+    let sub_id = format!("{id_prefix}-sub");
+    let pub_id = format!("{id_prefix}-pub");
+    let sub = connect_and_subscribe(addr, &sub_id, topic, sub_qos, recv_timeout).await?;
+    let pub_params = ConnectParams::new(&pub_id);
+    let (pub_client, _) = connect(addr, &pub_params, recv_timeout).await?;
+    Ok((sub, pub_client))
+}
+
+/// Receive the next packet and expect a PUBLISH on `topic`.
+///
+/// Returns `Ok(publish)` when a PUBLISH with a matching topic arrives.
+/// Returns `Err(TestResult)` with an appropriate failure for:
+/// - wrong packet type / topic mismatch
+/// - `RecvError::Timeout` (broker did not deliver)
+/// - `RecvError::Closed` (broker disconnected)
+/// - `RecvError::Other` (I/O error)
+///
+/// Callers inspect the returned [`Publish`] for test-specific assertions
+/// and only need to handle the success path.
+pub async fn expect_publish(
+    client: &mut RawClient,
+    ctx: &TestContext,
+    topic: &str,
+) -> Result<Publish, TestResult> {
+    match client.recv().await {
+        Ok(Packet::Publish(p)) if p.topic == topic => Ok(p),
+        Ok(other) => Err(TestResult::fail_packet(
+            ctx,
+            &format!("PUBLISH on topic \"{topic}\""),
+            &other,
+        )),
+        Err(RecvError::Timeout) => Err(TestResult::fail(
+            ctx,
+            format!("no message on topic \"{topic}\" (timed out)"),
+        )),
+        Err(RecvError::Closed) => Err(TestResult::fail(
+            ctx,
+            format!("no message on topic \"{topic}\" (connection closed)"),
+        )),
+        Err(RecvError::Other(e)) => Err(TestResult::fail(ctx, format!("unexpected error: {e:#}"))),
+    }
 }

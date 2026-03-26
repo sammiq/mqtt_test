@@ -8,8 +8,8 @@ use crate::client::{self, RawClient, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams, WillParams,
 };
-use crate::helpers::{expect_disconnect, expect_suback};
-use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
+use crate::helpers::{expect_connack_success, expect_disconnect, expect_suback};
+use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("CONNECT / CONNACK");
@@ -85,14 +85,7 @@ async fn basic_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-basic-connect");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x} (expected 0x00)",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const CLEAN_START_TRUE: TestContext = TestContext {
@@ -156,12 +149,7 @@ async fn zero_length_client_id(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    match connack.reason_code {
-        0x00 => Ok(Outcome::Pass),
-        code => Ok(Outcome::fail(format!(
-            "CONNACK reason code {code:#04x}; broker rejected empty client ID"
-        ))),
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const ZERO_LEN_NO_CLEAN: TestContext = TestContext {
@@ -267,14 +255,7 @@ async fn session_expiry_interval_accepted(config: TestConfig<'_>) -> Result<Outc
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x}",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const RECEIVE_MAX: TestContext = TestContext {
@@ -290,14 +271,7 @@ async fn receive_maximum_accepted(config: TestConfig<'_>) -> Result<Outcome> {
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x}",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const MAX_PACKET_SIZE: TestContext = TestContext {
@@ -313,14 +287,7 @@ async fn maximum_packet_size_accepted(config: TestConfig<'_>) -> Result<Outcome>
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x}",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const SERVER_KEEP_ALIVE: TestContext = TestContext {
@@ -1042,14 +1009,7 @@ async fn acceptable_client_id_chars(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new(client_id);
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "Broker rejected 23-char alphanumeric client ID (reason {:#04x})",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const FLOW_CONTROL: TestContext = TestContext {
@@ -1289,14 +1249,7 @@ async fn username_password_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     params.password = Some(b"testpass".to_vec());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x} (expected 0x00)",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const PASSWORD_NO_USERNAME: TestContext = TestContext {
@@ -1312,14 +1265,7 @@ async fn password_without_username(config: TestConfig<'_>) -> Result<Outcome> {
     params.password = Some(b"testpass".to_vec());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x} — broker rejected password without username",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const EMPTY_USERNAME: TestContext = TestContext {
@@ -1335,14 +1281,7 @@ async fn empty_username(config: TestConfig<'_>) -> Result<Outcome> {
     params.username = Some(String::new());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x} (expected 0x00)",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const USERNAME_ONLY: TestContext = TestContext {
@@ -1357,14 +1296,7 @@ async fn username_only(config: TestConfig<'_>) -> Result<Outcome> {
     params.username = Some("testuser".into());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::fail(format!(
-            "CONNACK reason code {:#04x} (expected 0x00)",
-            connack.reason_code
-        )))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 // ── Will Retain=0 → non-retained ────────────────────────────────────────

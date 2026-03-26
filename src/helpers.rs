@@ -4,8 +4,25 @@
 //! individual test functions only need to handle the success path.
 
 use crate::client::{RawClient, RecvError};
-use crate::codec::{Packet, Publish, PublishParams, SubAck};
+use crate::codec::{ConnAck, Packet, Publish, PublishParams, SubAck};
 use crate::types::Outcome;
+
+/// Check that a CONNACK indicates success (reason code 0x00).
+///
+/// Returns `Ok(connack)` when the reason code is 0x00, allowing callers
+/// to inspect further properties.  Returns `Err(Outcome)` otherwise.
+///
+/// This is a pure check — no I/O — unlike the async `expect_*` helpers.
+pub fn expect_connack_success(connack: ConnAck) -> Result<ConnAck, Outcome> {
+    if connack.reason_code == 0x00 {
+        Ok(connack)
+    } else {
+        Err(Outcome::fail(format!(
+            "CONNACK reason code {:#04x} (expected 0x00)",
+            connack.reason_code
+        )))
+    }
+}
 
 /// Receive the next packet and expect a PUBLISH on `topic`.
 ///

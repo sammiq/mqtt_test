@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillParams};
+use crate::helpers::expect_disconnect;
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
@@ -52,15 +53,7 @@ async fn server_closes_after_disconnect(config: TestConfig<'_>) -> anyhow::Resul
     client.send_disconnect(0x00).await?;
 
     // After DISCONNECT, any further recv should fail (connection closed)
-    match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
-        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
-        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(Outcome::fail_packet(
-            "connection close after DISCONNECT",
-            &other,
-        )),
-    }
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const DISCONNECT_WITH_WILL: TestContext = TestContext {

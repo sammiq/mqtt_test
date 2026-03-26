@@ -7,6 +7,7 @@
 
 use crate::client::{self, RawClient, RecvError};
 use crate::codec::{ConnectParams, Packet};
+use crate::helpers::{expect_connect_reject, expect_disconnect};
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
@@ -49,65 +50,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(DISCONNECT_BAD_RESERVED, disconnect_reserved_bits(config));
 
     suite
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Expect the broker to either send DISCONNECT or close the connection.
-///
-/// - Connection closed → pass (broker rejected the packet).
-/// - DISCONNECT packet → pass.
-/// - Timeout → fail (broker ignored the malformed packet).
-/// - Other error → fail (unexpected).
-async fn expect_disconnect(client: &mut RawClient) -> Outcome {
-    match client.recv().await {
-        Err(RecvError::Closed) => Outcome::Pass,
-        Err(RecvError::Timeout) => Outcome::fail("broker did not disconnect (timed out)"),
-        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
-        Ok(Packet::Disconnect(_)) => Outcome::Pass,
-        Ok(other) => Outcome::fail_packet("disconnect or connection close", &other),
-    }
-}
-
-/// Expect the broker to reject a malformed CONNECT packet.
-///
-/// For malformed CONNECT packets, the server MUST close the Network Connection
-/// [MQTT-3.1.4-1] and MAY send a CONNACK with Reason Code >= 0x80 before
-/// closing [MQTT-3.1.4-2]. Both parts matter: a CONNACK with an error code
-/// is only the first step — the connection MUST still be closed afterward.
-///
-/// DISCONNECT is not valid here — no MQTT session exists before a successful
-/// CONNACK, so there is nothing to disconnect from.
-///
-/// - Connection closed → pass.
-/// - CONNACK with reason >= 0x80 → wait for connection close (MUST).
-/// - CONNACK with reason 0x00 → fail (broker accepted malformed CONNECT).
-/// - Timeout → fail (broker ignored the malformed packet).
-async fn expect_connect_reject(client: &mut RawClient) -> Outcome {
-    match client.recv().await {
-        Err(RecvError::Closed) => Outcome::Pass,
-        Err(RecvError::Timeout) => Outcome::fail("broker did not disconnect (timed out)"),
-        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
-        Ok(Packet::ConnAck(ack)) if ack.reason_code >= 0x80 => {
-            // Broker rejected — now verify it closes the connection [MQTT-3.1.4-1].
-            match client.recv().await {
-                Err(RecvError::Closed) => Outcome::Pass,
-                Err(RecvError::Timeout) => Outcome::fail(format!(
-                    "Broker sent CONNACK(reason=0x{:02X}) but did not close the connection",
-                    ack.reason_code,
-                )),
-                Err(RecvError::Other(e)) => {
-                    Outcome::fail(format!("unexpected error after CONNACK: {e:#}"))
-                }
-                Ok(other) => Outcome::fail_packet("connection close after error CONNACK", &other),
-            }
-        }
-        Ok(Packet::ConnAck(ack)) => Outcome::fail(format!(
-            "Expected connection close or error CONNACK, got CONNACK(reason=0x{:02X}, session_present={})",
-            ack.reason_code, ack.session_present,
-        )),
-        Ok(other) => Outcome::fail_packet("connection close or error CONNACK", &other),
-    }
 }
 
 // ── MUST ─────────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ use crate::client::{self, RawClient, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams, WillParams,
 };
+use crate::helpers::expect_disconnect;
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
@@ -407,12 +408,7 @@ async fn duplicate_connect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     client.send_connect(&params).await?;
 
     // Broker must either send DISCONNECT or close the connection.
-    match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
-        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
-        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(Outcome::fail_packet("disconnect", &other)),
-    }
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const INVALID_PROTO_NAME: TestContext = TestContext {
@@ -439,12 +435,7 @@ async fn invalid_protocol_name(config: TestConfig<'_>) -> anyhow::Result<Outcome
     ];
     client.send_raw(bad_connect).await?;
 
-    match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
-        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
-        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(Outcome::fail_packet("connection close", &other)),
-    }
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const INVALID_PROTO_VER: TestContext = TestContext {

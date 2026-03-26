@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use crate::client::expect_publish;
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
+use crate::helpers::{expect_disconnect, expect_publish};
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
@@ -239,12 +239,7 @@ async fn invalid_qos3(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     ];
     client.send_raw(bad_publish).await?;
 
-    match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
-        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
-        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(Outcome::fail_packet("disconnect (malformed QoS=3)", &other)),
-    }
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const DUP_QOS0: TestContext = TestContext {
@@ -1140,12 +1135,7 @@ async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> anyhow::Resul
     client2.send_publish(&p2).await?;
 
     // Server should disconnect or send DISCONNECT — alias mapping was reset
-    match client2.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
-        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
-        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(Outcome::fail_packet("disconnect (alias reset)", &other)),
-    }
+    Ok(expect_disconnect(&mut client2).await)
 }
 
 // ── Receive Maximum flow control ────────────────────────────────────────────

@@ -2,12 +2,12 @@
 
 use std::time::Duration;
 
-use crate::client::expect_publish;
 use crate::client::{self, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions, SubscribeParams,
     UnsubscribeParams,
 };
+use crate::helpers::expect_publish;
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {

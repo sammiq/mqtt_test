@@ -275,14 +275,15 @@ fn requirement_section(id: &str) -> String {
 pub async fn run_test(
     ctx: TestContext,
     pb: &ProgressBar,
-    fut: impl std::future::Future<Output = anyhow::Result<TestResult>>,
+    fut: impl std::future::Future<Output = anyhow::Result<Outcome>>,
 ) -> TestResult {
     tracing::debug!(id = ctx.primary_ref(), ctx.description, "running test");
     pb.set_message(ctx.primary_ref());
-    let result = match fut.await {
-        Ok(r) => r,
-        Err(e) => TestResult::fail(&ctx, format!("test error: {e:#}")),
+    let outcome = match fut.await {
+        Ok(o) => o,
+        Err(e) => Outcome::fail(format!("test error: {e:#}")),
     };
+    let result = TestResult { ctx, outcome };
     tracing::debug!(id = ctx.primary_ref(), outcome = ?result.outcome, "test complete");
 
     let is_may = ctx.compliance == Compliance::May;
@@ -358,7 +359,10 @@ mod tests {
             description: "Test desc",
             compliance: Compliance::Must,
         };
-        let r = TestResult::pass(&ctx);
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::Pass,
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("PASS"));
         assert!(s.contains("MUST"));
@@ -373,7 +377,10 @@ mod tests {
             description: "Test desc",
             compliance: Compliance::Must,
         };
-        let r = TestResult::fail(&ctx, "bad thing");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::fail("bad thing"),
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("FAIL"));
         assert!(s.contains("bad thing"));
@@ -386,7 +393,10 @@ mod tests {
             description: "Optional feature",
             compliance: Compliance::May,
         };
-        let r = TestResult::pass(&ctx);
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::Pass,
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("YES"));
         assert!(s.contains("MAY"));
@@ -399,7 +409,10 @@ mod tests {
             description: "Optional feature",
             compliance: Compliance::May,
         };
-        let r = TestResult::fail(&ctx, "not supported");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::fail("not supported"),
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("NO"));
     }
@@ -411,7 +424,10 @@ mod tests {
             description: "Test",
             compliance: Compliance::Must,
         };
-        let r = TestResult::skip(&ctx, "prereq not met");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::skip("prereq not met"),
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("SKIP"));
         assert!(s.contains("prereq not met"));
@@ -424,7 +440,10 @@ mod tests {
             description: "Test",
             compliance: Compliance::Must,
         };
-        let r = TestResult::fail_verbose(&ctx, "short", "long detailed message");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::fail_verbose("short", "long detailed message"),
+        };
         let short = format_result(&r, false, false);
         let long = format_result(&r, true, false);
         assert!(short.contains("short"));

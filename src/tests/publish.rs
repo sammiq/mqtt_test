@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::client::expect_publish;
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("PUBLISH");
@@ -78,9 +78,7 @@ const QOS0: TestContext = TestContext {
 };
 
 /// QoS 0 PUBLISH MUST be accepted without error.
-async fn qos0_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS0;
-
+async fn qos0_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = client::connect_and_subscribe(
         config.addr,
         "mqtt-test-qos0-pub",
@@ -94,9 +92,8 @@ async fn qos0_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_publish(&pub_params).await?;
 
     match client.recv().await? {
-        Packet::Publish(p) if p.topic == "mqtt/test/pub/qos0" => Ok(TestResult::pass(&ctx)),
-        other => Ok(TestResult::fail_packet(
-            &ctx,
+        Packet::Publish(p) if p.topic == "mqtt/test/pub/qos0" => Ok(Outcome::Pass),
+        other => Ok(Outcome::fail_packet(
             "PUBLISH on topic \"mqtt/test/pub/qos0\"",
             &other,
         )),
@@ -110,9 +107,7 @@ const QOS1: TestContext = TestContext {
 };
 
 /// QoS 1 PUBLISH MUST receive a PUBACK [MQTT-4.3.2-1].
-async fn qos1_gets_puback(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS1;
-
+async fn qos1_gets_puback(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos1-pub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -122,19 +117,16 @@ async fn qos1_gets_puback(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
     for _ in 0..5 {
         match client.recv().await? {
             Packet::PubAck(ack) if ack.packet_id == 1 => {
-                return Ok(TestResult::pass(&ctx));
+                return Ok(Outcome::Pass);
             }
             Packet::Publish(_) => {} // may receive own loopback — ignore
             other => {
-                return Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other));
+                return Ok(Outcome::fail_packet("PUBACK(1)", &other));
             }
         }
     }
 
-    Ok(TestResult::fail(
-        &ctx,
-        "PUBACK not received within packet limit",
-    ))
+    Ok(Outcome::fail("PUBACK not received within packet limit"))
 }
 
 const QOS1_DELIVERY: TestContext = TestContext {
@@ -145,9 +137,7 @@ const QOS1_DELIVERY: TestContext = TestContext {
 
 /// QoS 1 message published to a QoS 1 subscription SHOULD be delivered at
 /// QoS 1 with the same packet payload [MQTT-4.3.2-2].
-async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS1_DELIVERY;
-
+async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/qos1_delivery";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -170,7 +160,7 @@ async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     }
 
     // Subscriber should receive at QoS 1
-    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+    let p = match expect_publish(&mut sub_client, topic).await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
@@ -178,12 +168,12 @@ async fn qos1_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         sub_client.send_puback(pid, 0x00).await?;
     }
     if p.qos == QoS::AtLeastOnce {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Delivered at {:?}, expected AtLeastOnce", p.qos),
-        ))
+        Ok(Outcome::fail(format!(
+            "Delivered at {:?}, expected AtLeastOnce",
+            p.qos
+        )))
     }
 }
 
@@ -194,9 +184,7 @@ const QOS2: TestContext = TestContext {
 };
 
 /// QoS 2 PUBLISH MUST go through full PUBREC → PUBREL → PUBCOMP flow [MQTT-4.3.3-1].
-async fn qos2_full_flow(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS2;
-
+async fn qos2_full_flow(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos2-pub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -210,24 +198,21 @@ async fn qos2_full_flow(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
                 match client.recv().await? {
                     Packet::PubComp(comp) if comp.packet_id == 2 => {
-                        return Ok(TestResult::pass(&ctx));
+                        return Ok(Outcome::Pass);
                     }
                     other => {
-                        return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(2)", &other));
+                        return Ok(Outcome::fail_packet("PUBCOMP(2)", &other));
                     }
                 }
             }
             Packet::Publish(_) => {} // loopback — ignore
             other => {
-                return Ok(TestResult::fail_packet(&ctx, "PUBREC(2)", &other));
+                return Ok(Outcome::fail_packet("PUBREC(2)", &other));
             }
         }
     }
 
-    Ok(TestResult::fail(
-        &ctx,
-        "PUBREC not received within packet limit",
-    ))
+    Ok(Outcome::fail("PUBREC not received within packet limit"))
 }
 
 const INVALID_QOS3: TestContext = TestContext {
@@ -237,9 +222,7 @@ const INVALID_QOS3: TestContext = TestContext {
 };
 
 /// QoS value of 3 (0b11) is malformed — server MUST close the connection [MQTT-3.3.1-4].
-async fn invalid_qos3(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = INVALID_QOS3;
-
+async fn invalid_qos3(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos3");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -257,17 +240,10 @@ async fn invalid_qos3(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_raw(bad_publish).await?;
 
     match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "disconnect (malformed QoS=3)",
-            &other,
-        )),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("disconnect (malformed QoS=3)", &other)),
     }
 }
 
@@ -278,9 +254,7 @@ const DUP_QOS0: TestContext = TestContext {
 };
 
 /// DUP=1 with QoS=0 is a protocol error — server MUST close the connection [MQTT-3.3.1-2].
-async fn dup_on_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DUP_QOS0;
-
+async fn dup_on_qos0(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-dup-qos0");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -297,24 +271,16 @@ async fn dup_on_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_raw(bad_publish).await?;
 
     match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(_)) => {
             // Some brokers may silently accept and forward — this is non-compliant
-            Ok(TestResult::fail(
-                &ctx,
+            Ok(Outcome::fail(
                 "Broker accepted PUBLISH with DUP=1 and QoS=0 (should disconnect)",
             ))
         }
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "disconnect (DUP=1, QoS=0)",
-            &other,
-        )),
+        Ok(other) => Ok(Outcome::fail_packet("disconnect (DUP=1, QoS=0)", &other)),
     }
 }
 
@@ -327,9 +293,7 @@ const QOS_DOWNGRADE: TestContext = TestContext {
 /// Server MUST deliver at the lower of the publisher's QoS and the subscriber's
 /// maximum QoS [MQTT-4.3.1-1]. Publishing QoS 2 to a QoS 0 subscription must
 /// deliver at QoS 0.
-async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS_DOWNGRADE;
-
+async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/qos_downgrade";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -357,20 +321,17 @@ async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> anyhow::Result<Tes
     }
 
     // Subscriber should receive at QoS 0 (no packet_id field)
-    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+    let p = match expect_publish(&mut sub_client, topic).await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
     if p.qos == QoS::AtMostOnce {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Message delivered at {:?}, expected AtMostOnce (subscription QoS 0)",
-                p.qos
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Message delivered at {:?}, expected AtMostOnce (subscription QoS 0)",
+            p.qos
+        )))
     }
 }
 
@@ -383,9 +344,7 @@ const RETAIN: TestContext = TestContext {
 };
 
 /// Retain flag is accepted and message is stored [MQTT-3.3.1-5].
-async fn retain_flag_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN;
-
+async fn retain_flag_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-retain-pub");
     let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -401,15 +360,14 @@ async fn retain_flag_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    let p = match expect_publish(&mut sub_client, &ctx, "mqtt/test/pub/retain").await {
+    let p = match expect_publish(&mut sub_client, "mqtt/test/pub/retain").await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
     if p.retain {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Received PUBLISH but retain flag not set on delivery",
         ))
     }
@@ -422,15 +380,12 @@ const TOPIC_ALIAS: TestContext = TestContext {
 };
 
 /// Topic Alias is accepted in PUBLISH [MQTT-3.3.2-11].
-async fn topic_alias_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TOPIC_ALIAS;
-
+async fn topic_alias_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-topic-alias");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.properties.topic_alias_maximum == Some(0) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker reported Topic Alias Maximum = 0 (not supported)",
         ));
     }
@@ -454,25 +409,22 @@ async fn topic_alias_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResu
     for _ in 0..5 {
         match client.recv().await? {
             Packet::PubAck(ack) if ack.packet_id == 1 => {
-                return Ok(TestResult::pass(&ctx));
+                return Ok(Outcome::Pass);
             }
             Packet::Disconnect(d) => {
-                return Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Broker disconnected with reason code {:#04x}",
-                        d.reason_code
-                    ),
-                ));
+                return Ok(Outcome::fail(format!(
+                    "Broker disconnected with reason code {:#04x}",
+                    d.reason_code
+                )));
             }
             Packet::Publish(_) => {} // loopback
             other => {
-                return Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other));
+                return Ok(Outcome::fail_packet("PUBACK(1)", &other));
             }
         }
     }
 
-    Ok(TestResult::fail(&ctx, "No PUBACK received"))
+    Ok(Outcome::fail("No PUBACK received"))
 }
 
 // ── Property forwarding ─────────────────────────────────────────────────────
@@ -480,12 +432,11 @@ async fn topic_alias_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResu
 /// Helper: subscribe, publish with custom properties, verify a property is preserved.
 async fn property_forwarding_test(
     config: TestConfig<'_>,
-    ctx: TestContext,
     topic: &'static str,
     props: Properties,
     check: fn(&Properties) -> bool,
     check_description: &'static str,
-) -> anyhow::Result<TestResult> {
+) -> anyhow::Result<Outcome> {
     let mut client = client::connect_and_subscribe(
         config.addr,
         &format!("mqtt-test-{topic}"),
@@ -509,16 +460,14 @@ async fn property_forwarding_test(
     match client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {
             if check(&p.properties) {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!("Property not preserved: {check_description}"),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Property not preserved: {check_description}"
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
+        other => Ok(Outcome::fail_packet(
             &format!("PUBLISH on topic \"{topic}\""),
             &other,
         )),
@@ -532,14 +481,13 @@ const PFI: TestContext = TestContext {
 };
 
 /// Payload Format Indicator SHOULD be forwarded unchanged [MQTT-3.3.2-7].
-async fn payload_format_indicator_preserved(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+async fn payload_format_indicator_preserved(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let props = Properties {
         payload_format_indicator: Some(1),
         ..Properties::default()
     };
     property_forwarding_test(
         config,
-        PFI,
         "mqtt/test/pub/pfi",
         props,
         |p| p.payload_format_indicator == Some(1),
@@ -555,14 +503,13 @@ const MEI: TestContext = TestContext {
 };
 
 /// Message Expiry Interval MUST be present in forwarded PUBLISH [MQTT-3.3.2-8].
-async fn message_expiry_interval_present(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+async fn message_expiry_interval_present(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let props = Properties {
         message_expiry_interval: Some(3600),
         ..Properties::default()
     };
     property_forwarding_test(
         config,
-        MEI,
         "mqtt/test/pub/mei",
         props,
         |p| p.message_expiry_interval.is_some(),
@@ -578,14 +525,13 @@ const CONTENT_TYPE: TestContext = TestContext {
 };
 
 /// Content Type SHOULD be forwarded unchanged [MQTT-3.3.2-12].
-async fn content_type_preserved(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+async fn content_type_preserved(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let props = Properties {
         content_type: Some("application/json".to_string()),
         ..Properties::default()
     };
     property_forwarding_test(
         config,
-        CONTENT_TYPE,
         "mqtt/test/pub/ct",
         props,
         |p| p.content_type.as_deref() == Some("application/json"),
@@ -601,14 +547,13 @@ const RESPONSE_TOPIC: TestContext = TestContext {
 };
 
 /// Response Topic SHOULD be forwarded unchanged [MQTT-3.3.2-13].
-async fn response_topic_preserved(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+async fn response_topic_preserved(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let props = Properties {
         response_topic: Some("mqtt/test/pub/reply".to_string()),
         ..Properties::default()
     };
     property_forwarding_test(
         config,
-        RESPONSE_TOPIC,
         "mqtt/test/pub/rt",
         props,
         |p| p.response_topic.as_deref() == Some("mqtt/test/pub/reply"),
@@ -624,14 +569,13 @@ const CORRELATION_DATA: TestContext = TestContext {
 };
 
 /// Correlation Data SHOULD be forwarded unchanged [MQTT-3.3.2-14].
-async fn correlation_data_preserved(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+async fn correlation_data_preserved(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let props = Properties {
         correlation_data: Some(b"corr-123".to_vec()),
         ..Properties::default()
     };
     property_forwarding_test(
         config,
-        CORRELATION_DATA,
         "mqtt/test/pub/cd",
         props,
         |p| p.correlation_data.as_deref() == Some(b"corr-123"),
@@ -647,14 +591,13 @@ const USER_PROPS: TestContext = TestContext {
 };
 
 /// User Properties SHOULD be forwarded unchanged [MQTT-3.3.2-18].
-async fn user_properties_preserved(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
+async fn user_properties_preserved(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let props = Properties {
         user_properties: vec![("key".to_string(), "value".to_string())],
         ..Properties::default()
     };
     property_forwarding_test(
         config,
-        USER_PROPS,
         "mqtt/test/pub/up",
         props,
         |p| {
@@ -675,9 +618,7 @@ const MSG_ORDERING: TestContext = TestContext {
 /// When a server delivers messages to a subscriber, it MUST maintain the order
 /// of messages for each topic [MQTT-4.6.0-6]. We publish 5 QoS 1 messages in
 /// sequence and verify they arrive in order.
-async fn message_ordering(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MSG_ORDERING;
-
+async fn message_ordering(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/ordering";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -720,17 +661,16 @@ async fn message_ordering(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
 
     let expected: Vec<String> = (0..5).map(|i| format!("msg-{i}")).collect();
     if received == expected {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else if received.len() < 5 {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Only received {}/5 messages: {received:?}", received.len()),
-        ))
+        Ok(Outcome::fail(format!(
+            "Only received {}/5 messages: {received:?}",
+            received.len()
+        )))
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Messages out of order: expected {expected:?}, got {received:?}"),
-        ))
+        Ok(Outcome::fail(format!(
+            "Messages out of order: expected {expected:?}, got {received:?}"
+        )))
     }
 }
 
@@ -744,9 +684,7 @@ const RETAIN_DELIVERY_FLAG: TestContext = TestContext {
 
 /// When delivering a retained message to a new subscription, the server
 /// SHOULD set the RETAIN flag to 1 [MQTT-3.3.1-6].
-async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_DELIVERY_FLAG;
-
+async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/retain_flag";
 
     // Publish a retained message.
@@ -767,12 +705,9 @@ async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> anyhow::
     )
     .await?;
 
-    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
-        Ok(p) if p.retain => TestResult::pass(&ctx),
-        Ok(_) => TestResult::fail(
-            &ctx,
-            "Retained message delivered but Retain flag is 0 (SHOULD be 1)",
-        ),
+    let result = match expect_publish(&mut sub_client, topic).await {
+        Ok(p) if p.retain => Outcome::Pass,
+        Ok(_) => Outcome::fail("Retained message delivered but Retain flag is 0 (SHOULD be 1)"),
         Err(r) => r,
     };
 
@@ -796,9 +731,7 @@ const RETAIN_DELETE: TestContext = TestContext {
 
 /// Publishing an empty payload with RETAIN=1 MUST remove any existing retained
 /// message for that topic [MQTT-3.3.1-7].
-async fn retained_deletion(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_DELETE;
-
+async fn retained_deletion(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/retain_delete";
 
     // Publish a retained message
@@ -826,21 +759,18 @@ async fn retained_deletion(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     .await?;
 
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == topic && p.payload.is_empty() => {
             // Some brokers send the empty retained message — this is acceptable
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Retained message still delivered after deletion: {:?}",
-                String::from_utf8_lossy(&p.payload)
-            ),
-        )),
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Ok(Packet::Publish(p)) if p.topic == topic => Ok(Outcome::fail(format!(
+            "Retained message still delivered after deletion: {:?}",
+            String::from_utf8_lossy(&p.payload)
+        ))),
+        Ok(_) => Ok(Outcome::Pass),
     }
 }
 
@@ -852,9 +782,7 @@ const RETAIN_REPLACE: TestContext = TestContext {
 
 /// A new retained message MUST replace any existing retained message for
 /// the same topic [MQTT-3.3.1-5].
-async fn retained_replacement(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_REPLACE;
-
+async fn retained_replacement(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/retain_replace";
 
     let pub_conn = ConnectParams::new("mqtt-test-retrpl-pub");
@@ -882,15 +810,12 @@ async fn retained_replacement(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
-        Ok(p) if p.payload == b"v2" => TestResult::pass(&ctx),
-        Ok(p) => TestResult::fail(
-            &ctx,
-            format!(
-                "Expected retained payload \"v2\", got {:?}",
-                String::from_utf8_lossy(&p.payload)
-            ),
-        ),
+    let result = match expect_publish(&mut sub_client, topic).await {
+        Ok(p) if p.payload == b"v2" => Outcome::Pass,
+        Ok(p) => Outcome::fail(format!(
+            "Expected retained payload \"v2\", got {:?}",
+            String::from_utf8_lossy(&p.payload)
+        )),
         Err(r) => r,
     };
 
@@ -912,9 +837,7 @@ const PUBACK_NO_SUB: TestContext = TestContext {
 
 /// When a QoS 1 message has no matching subscribers, the server MAY return
 /// PUBACK with reason code 0x10 (No Matching Subscribers) [MQTT-3.4.2-1].
-async fn puback_no_matching_subscribers(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PUBACK_NO_SUB;
-
+async fn puback_no_matching_subscribers(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-puback-nosub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -930,18 +853,15 @@ async fn puback_no_matching_subscribers(config: TestConfig<'_>) -> anyhow::Resul
     match client.recv().await? {
         Packet::PubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_code == 0x10 {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "PUBACK reason code {:#04x} (expected 0x10 for no matching subscribers)",
-                        ack.reason_code
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "PUBACK reason code {:#04x} (expected 0x10 for no matching subscribers)",
+                    ack.reason_code
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other)),
+        other => Ok(Outcome::fail_packet("PUBACK(1)", &other)),
     }
 }
 
@@ -955,9 +875,7 @@ const MEI_COUNTDOWN: TestContext = TestContext {
 
 /// When forwarding a message with Message Expiry Interval, the server MUST
 /// set it to the received value minus the time the message was waiting [MQTT-3.3.2-6].
-async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MEI_COUNTDOWN;
-
+async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/mei_countdown";
 
     // Connect subscriber with a persistent session, subscribe, then disconnect
@@ -1004,7 +922,7 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Test
     let (mut sub_client2, _) =
         client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
 
-    let p = match expect_publish(&mut sub_client2, &ctx, topic).await {
+    let p = match expect_publish(&mut sub_client2, topic).await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
@@ -1012,13 +930,11 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Test
         sub_client2.send_puback(pid, 0x00).await?;
     }
     match p.properties.message_expiry_interval {
-        Some(mei) if mei < 60 => Ok(TestResult::pass(&ctx)),
-        Some(mei) => Ok(TestResult::fail(
-            &ctx,
-            format!("MEI not decremented: received {mei}, expected < 60"),
-        )),
-        None => Ok(TestResult::fail(
-            &ctx,
+        Some(mei) if mei < 60 => Ok(Outcome::Pass),
+        Some(mei) => Ok(Outcome::fail(format!(
+            "MEI not decremented: received {mei}, expected < 60"
+        ))),
+        None => Ok(Outcome::fail(
             "No Message Expiry Interval in forwarded PUBLISH",
         )),
     }
@@ -1034,9 +950,7 @@ const MAX_PKT_SIZE: TestContext = TestContext {
 
 /// The server MUST NOT send packets exceeding the client's declared
 /// Maximum Packet Size [MQTT-3.1.2-24].
-async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MAX_PKT_SIZE;
-
+async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/max_pkt";
 
     // Connect subscriber with a small Maximum Packet Size
@@ -1060,8 +974,7 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<T
     let got_big = matches!(sub_client.recv_with_timeout(Duration::from_secs(1)).await, Ok(Packet::Publish(p)) if p.topic == topic && p.payload.len() > 40);
 
     if got_big {
-        return Ok(TestResult::fail(
-            &ctx,
+        return Ok(Outcome::fail(
             "Server sent packet exceeding client's Maximum Packet Size",
         ));
     }
@@ -1072,8 +985,8 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<T
         .await?;
 
     match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::pass(&ctx)),
-        _ => Ok(TestResult::pass(&ctx)), // Server may have disconnected — still compliant
+        Ok(Packet::Publish(p)) if p.topic == topic => Ok(Outcome::Pass),
+        _ => Ok(Outcome::Pass), // Server may have disconnected — still compliant
     }
 }
 
@@ -1087,9 +1000,7 @@ const TOPIC_ALIAS_REUSE: TestContext = TestContext {
 
 /// After establishing a Topic Alias mapping, the client can send subsequent
 /// PUBLISH packets with an empty topic name and only the Topic Alias [MQTT-3.3.2-10].
-async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TOPIC_ALIAS_REUSE;
-
+async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/alias_reuse";
 
     let params = ConnectParams::new("mqtt-test-alias-reuse-pub");
@@ -1098,8 +1009,7 @@ async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
     let max_alias = connack.properties.topic_alias_maximum.unwrap_or(0);
     if max_alias == 0 {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker does not support Topic Aliases (maximum = 0)",
         ));
     }
@@ -1132,11 +1042,7 @@ async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     match sub_client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {}
         other => {
-            return Ok(TestResult::fail_packet(
-                &ctx,
-                "first PUBLISH via alias",
-                &other,
-            ));
+            return Ok(Outcome::fail_packet("first PUBLISH via alias", &other));
         }
     }
 
@@ -1156,25 +1062,19 @@ async fn topic_alias_reuse(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     pub_client.send_publish(&p2).await?;
 
     match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::Publish(p)) => Ok(TestResult::fail(
-            &ctx,
-            format!("Message delivered on wrong topic: {:?}", p.topic),
-        )),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH via alias reuse",
-            &other,
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
+        Ok(Packet::Publish(p)) if p.topic == topic => Ok(Outcome::Pass),
+        Ok(Packet::Publish(p)) => Ok(Outcome::fail(format!(
+            "Message delivered on wrong topic: {:?}",
+            p.topic
+        ))),
+        Ok(other) => Ok(Outcome::fail_packet("PUBLISH via alias reuse", &other)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
             "No message delivered via alias reuse (timed out)",
         )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) => Ok(Outcome::fail(
             "No message delivered via alias reuse (connection closed)",
         )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1186,16 +1086,13 @@ const TOPIC_ALIAS_RESET: TestContext = TestContext {
 
 /// Topic Alias mappings exist only within a Network Connection and MUST be
 /// reset on reconnect [MQTT-3.3.2-7].
-async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TOPIC_ALIAS_RESET;
-
+async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-alias-reset");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     let max_alias = connack.properties.topic_alias_maximum.unwrap_or(0);
     if max_alias == 0 {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker does not support Topic Aliases (maximum = 0)",
         ));
     }
@@ -1222,8 +1119,7 @@ async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> anyhow::Resul
         client::connect(config.addr, &params2, config.recv_timeout).await?;
 
     if connack2.properties.topic_alias_maximum.unwrap_or(0) == 0 {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker does not support Topic Aliases after reconnect",
         ));
     }
@@ -1245,17 +1141,10 @@ async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> anyhow::Resul
 
     // Server should disconnect or send DISCONNECT — alias mapping was reset
     match client2.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "disconnect (alias reset)",
-            &other,
-        )),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("disconnect (alias reset)", &other)),
     }
 }
 
@@ -1269,9 +1158,7 @@ const RECV_MAX_FLOW: TestContext = TestContext {
 
 /// The server MUST NOT send more than Receive Maximum QoS 1 and QoS 2
 /// PUBLISH packets for which it has not received PUBACK/PUBCOMP [MQTT-3.3.4-7].
-async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RECV_MAX_FLOW;
-
+async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/recv_max";
 
     // Connect subscriber with receive_maximum=2
@@ -1315,13 +1202,10 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<
     }
 
     if unacked.len() > 2 {
-        return Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Server sent {} unacknowledged messages (receive_maximum=2)",
-                unacked.len()
-            ),
-        ));
+        return Ok(Outcome::fail(format!(
+            "Server sent {} unacknowledged messages (receive_maximum=2)",
+            unacked.len()
+        )));
     }
 
     // Now ACK both and verify remaining messages flow
@@ -1344,12 +1228,11 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<
     }
 
     if total >= 4 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Only received {total}/5 messages total after ACKing"),
-        ))
+        Ok(Outcome::fail(format!(
+            "Only received {total}/5 messages total after ACKing"
+        )))
     }
 }
 
@@ -1363,9 +1246,7 @@ const QOS2_DUP: TestContext = TestContext {
 
 /// When the server receives a duplicate QoS 2 PUBLISH (same packet ID, DUP=1),
 /// it MUST respond with PUBREC [MQTT-4.3.3-2].
-async fn qos2_duplicate_publish(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS2_DUP;
-
+async fn qos2_duplicate_publish(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos2-dup");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1378,7 +1259,7 @@ async fn qos2_duplicate_publish(config: TestConfig<'_>) -> anyhow::Result<TestRe
         match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 10 => break,
             Packet::Publish(_) => {} // loopback
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(10)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBREC(10)", &other)),
         }
     }
 
@@ -1402,26 +1283,19 @@ async fn qos2_duplicate_publish(config: TestConfig<'_>) -> anyhow::Result<TestRe
                 client.send_pubrel(10, 0x00).await?;
                 match client.recv().await? {
                     Packet::PubComp(comp) if comp.packet_id == 10 => {
-                        return Ok(TestResult::pass(&ctx));
+                        return Ok(Outcome::Pass);
                     }
-                    other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(10)", &other)),
+                    other => return Ok(Outcome::fail_packet("PUBCOMP(10)", &other)),
                 }
             }
             Packet::Publish(_) => {} // loopback
             other => {
-                return Ok(TestResult::fail_packet(
-                    &ctx,
-                    "PUBREC(10) after DUP",
-                    &other,
-                ));
+                return Ok(Outcome::fail_packet("PUBREC(10) after DUP", &other));
             }
         }
     }
 
-    Ok(TestResult::fail(
-        &ctx,
-        "PUBREC not received for duplicate PUBLISH",
-    ))
+    Ok(Outcome::fail("PUBREC not received for duplicate PUBLISH"))
 }
 
 // ── Packet ID reuse ─────────────────────────────────────────────────────────
@@ -1434,9 +1308,7 @@ const PID_REUSE_QOS1: TestContext = TestContext {
 
 /// After a QoS 1 PUBLISH is acknowledged with PUBACK, the same packet ID
 /// MUST be available for reuse [MQTT-2.2.1-3].
-async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PID_REUSE_QOS1;
-
+async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/pid_reuse_q1";
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
@@ -1453,7 +1325,7 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<
         .await?;
     match pub_client.recv().await? {
         Packet::PubAck(ack) if ack.packet_id == 1 => {}
-        other => return Ok(TestResult::fail_packet(&ctx, "PUBACK(1)", &other)),
+        other => return Ok(Outcome::fail_packet("PUBACK(1)", &other)),
     }
 
     // Reuse packet_id=1 for a second PUBLISH
@@ -1462,7 +1334,7 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<
         .await?;
     match pub_client.recv().await? {
         Packet::PubAck(ack) if ack.packet_id == 1 => {}
-        other => return Ok(TestResult::fail_packet(&ctx, "PUBACK(1) reuse", &other)),
+        other => return Ok(Outcome::fail_packet("PUBACK(1) reuse", &other)),
     }
 
     // Verify both messages arrived
@@ -1480,12 +1352,12 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> anyhow::Result<
     }
 
     if payloads.len() == 2 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Expected 2 messages, got {}", payloads.len()),
-        ))
+        Ok(Outcome::fail(format!(
+            "Expected 2 messages, got {}",
+            payloads.len()
+        )))
     }
 }
 
@@ -1497,9 +1369,7 @@ const PID_REUSE_QOS2: TestContext = TestContext {
 
 /// After a QoS 2 flow completes (PUBCOMP received), the same packet ID
 /// MUST be available for reuse [MQTT-2.2.1-4].
-async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PID_REUSE_QOS2;
-
+async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-pidq2-pub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1516,7 +1386,7 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
         match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 5 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(5)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBREC(5)", &other)),
         }
     }
     client.send_pubrel(5, 0x00).await?;
@@ -1524,7 +1394,7 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
         match client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 5 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(5)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBCOMP(5)", &other)),
         }
     }
 
@@ -1540,7 +1410,7 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
         match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 5 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(5) reuse", &other)),
+            other => return Ok(Outcome::fail_packet("PUBREC(5) reuse", &other)),
         }
     }
     client.send_pubrel(5, 0x00).await?;
@@ -1548,11 +1418,11 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> anyhow::Result
         match client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 5 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(5) reuse", &other)),
+            other => return Ok(Outcome::fail_packet("PUBCOMP(5) reuse", &other)),
         }
     }
 
-    Ok(TestResult::pass(&ctx))
+    Ok(Outcome::Pass)
 }
 
 const QOS2_DUP_PUBREL: TestContext = TestContext {
@@ -1563,9 +1433,7 @@ const QOS2_DUP_PUBREL: TestContext = TestContext {
 
 /// When the server receives a duplicate PUBREL for the same packet ID,
 /// it MUST respond with PUBCOMP [MQTT-4.3.3-3].
-async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS2_DUP_PUBREL;
-
+async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos2-duppubrel");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1581,7 +1449,7 @@ async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<TestRes
         match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 7 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(7)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBREC(7)", &other)),
         }
     }
 
@@ -1591,26 +1459,22 @@ async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> anyhow::Result<TestRes
         match client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 7 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(7)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBCOMP(7)", &other)),
         }
     }
 
     // Send duplicate PUBREL — server MUST respond with PUBCOMP
     client.send_pubrel(7, 0x00).await?;
     match client.recv().await {
-        Ok(Packet::PubComp(comp)) if comp.packet_id == 7 => Ok(TestResult::pass(&ctx)),
+        Ok(Packet::PubComp(comp)) if comp.packet_id == 7 => Ok(Outcome::Pass),
         Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => {
             // Some brokers may consider duplicate PUBREL after PUBCOMP as
             // a protocol error — still acceptable behaviour
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet(
             "PUBCOMP(7) for duplicate PUBREL",
             &other,
         )),
@@ -1626,9 +1490,7 @@ const PAYLOAD_FORMAT_UTF8: TestContext = TestContext {
 /// When the Payload Format Indicator is set to 1 (UTF-8), the server MAY
 /// validate the payload and disconnect with reason 0x99 (Payload format invalid)
 /// if it is not valid UTF-8 [MQTT-3.3.2-3].
-async fn payload_format_utf8_validated(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PAYLOAD_FORMAT_UTF8;
-
+async fn payload_format_utf8_validated(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-pfi-utf8");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1650,33 +1512,25 @@ async fn payload_format_utf8_validated(config: TestConfig<'_>) -> anyhow::Result
     match client.recv().await {
         Ok(Packet::Disconnect(d)) if d.reason_code == 0x99 => {
             // Server validated and rejected — good
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
         Ok(Packet::Disconnect(_)) => {
             // Disconnected for some other reason — still counts as validation
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
         Ok(Packet::PubAck(_)) => {
             // Server accepted without validation — MAY, so this is fine
-            Ok(TestResult::fail(
-                &ctx,
+            Ok(Outcome::fail(
                 "Server accepted invalid UTF-8 payload without validation (Payload Format Indicator=1)",
             ))
         }
         Err(RecvError::Closed) => {
             // Connection closed — server may have validated and closed
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBACK or DISCONNECT",
-            &other,
-        )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("PUBACK or DISCONNECT", &other)),
     }
 }
 
@@ -1690,9 +1544,7 @@ const USER_PROPS_ORDER: TestContext = TestContext {
 
 /// The order of User Properties MUST be maintained when the server forwards
 /// a PUBLISH packet [MQTT-3.3.2-17].
-async fn user_properties_order(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = USER_PROPS_ORDER;
-
+async fn user_properties_order(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/up_order";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -1727,24 +1579,17 @@ async fn user_properties_order(config: TestConfig<'_>) -> anyhow::Result<TestRes
     match sub_client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {
             if p.properties.user_properties == ordered_props {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else if p.properties.user_properties.is_empty() {
-                Ok(TestResult::fail(
-                    &ctx,
-                    "No user properties in forwarded PUBLISH",
-                ))
+                Ok(Outcome::fail("No user properties in forwarded PUBLISH"))
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "User properties order not maintained: expected {:?}, got {:?}",
-                        ordered_props, p.properties.user_properties
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "User properties order not maintained: expected {:?}, got {:?}",
+                    ordered_props, p.properties.user_properties
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
+        other => Ok(Outcome::fail_packet(
             &format!("PUBLISH on topic \"{topic}\""),
             &other,
         )),
@@ -1761,9 +1606,7 @@ const RETAINED_QOS0: TestContext = TestContext {
 
 /// The server SHOULD store the last retained message for a topic even when
 /// it was published at QoS 0 [MQTT-3.3.1-11].
-async fn retained_qos0_stored(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAINED_QOS0;
-
+async fn retained_qos0_stored(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/retain_qos0";
 
     // Publish a QoS 0 retained message
@@ -1794,9 +1637,9 @@ async fn retained_qos0_stored(config: TestConfig<'_>) -> anyhow::Result<TestResu
     )
     .await?;
 
-    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
-        Ok(p) if !p.payload.is_empty() => TestResult::pass(&ctx),
-        Ok(_) => TestResult::fail(&ctx, "Retained message delivered but payload was empty"),
+    let result = match expect_publish(&mut sub_client, topic).await {
+        Ok(p) if !p.payload.is_empty() => Outcome::Pass,
+        Ok(_) => Outcome::fail("Retained message delivered but payload was empty"),
         Err(r) => r,
     };
 
@@ -1821,9 +1664,7 @@ const QOS2_NO_DUP_DELIVERY: TestContext = TestContext {
 /// When the server receives a duplicate QoS 2 PUBLISH (before PUBREL), it MUST
 /// re-ACK with PUBREC but MUST NOT deliver the message again to subscribers
 /// [MQTT-4.3.3-10].
-async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS2_NO_DUP_DELIVERY;
-
+async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/qos2_nodup";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -1845,7 +1686,7 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
         match pub_client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 20 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(20)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBREC(20)", &other)),
         }
     }
 
@@ -1866,7 +1707,7 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
         match pub_client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 20 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(20) dup", &other)),
+            other => return Ok(Outcome::fail_packet("PUBREC(20) dup", &other)),
         }
     }
 
@@ -1876,7 +1717,7 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
         match pub_client.recv().await? {
             Packet::PubComp(comp) if comp.packet_id == 20 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBCOMP(20)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBCOMP(20)", &other)),
         }
     }
 
@@ -1890,14 +1731,11 @@ async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
     }
 
     if count == 1 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Subscriber received {count} messages (expected exactly 1, duplicate PUBLISH must not cause duplicate delivery)"
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Subscriber received {count} messages (expected exactly 1, duplicate PUBLISH must not cause duplicate delivery)"
+        )))
     }
 }
 
@@ -1912,9 +1750,7 @@ const QOS2_EXPIRY_CONTINUES: TestContext = TestContext {
 /// The server MUST continue the QoS 2 acknowledgement sequence even if
 /// the message has expired [MQTT-4.3.3-13]. Publish with a short
 /// Message Expiry Interval, wait for expiry, then complete the flow.
-async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS2_EXPIRY_CONTINUES;
-
+async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-q2expiry");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1938,7 +1774,7 @@ async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> anyhow::
         match client.recv().await? {
             Packet::PubRec(rec) if rec.packet_id == 30 => break,
             Packet::Publish(_) => continue,
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBREC(30)", &other)),
+            other => return Ok(Outcome::fail_packet("PUBREC(30)", &other)),
         }
     }
 
@@ -1949,21 +1785,18 @@ async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> anyhow::
     client.send_pubrel(30, 0x00).await?;
 
     match client.recv().await {
-        Ok(Packet::PubComp(comp)) if comp.packet_id == 30 => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
+        Ok(Packet::PubComp(comp)) if comp.packet_id == 30 => Ok(Outcome::Pass),
+        Ok(other) => Ok(Outcome::fail_packet(
             "PUBCOMP(30) after message expiry",
             &other,
         )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
             "No PUBCOMP after message expiry (timed out) — server must continue QoS 2 flow",
         )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) => Ok(Outcome::fail(
             "No PUBCOMP after message expiry (connection closed) — server must continue QoS 2 flow",
         )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1977,9 +1810,7 @@ const QOS1_DUP_ZERO: TestContext = TestContext {
 
 /// When the server forwards a QoS 1 message to a subscriber for the first time,
 /// the DUP flag MUST be 0 [MQTT-4.3.2-2].
-async fn qos1_initial_delivery_dup_zero(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS1_DUP_ZERO;
-
+async fn qos1_initial_delivery_dup_zero(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/qos1_dup0";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -2004,19 +1835,14 @@ async fn qos1_initial_delivery_dup_zero(config: TestConfig<'_>) -> anyhow::Resul
                 sub_client.send_puback(pid, 0x00).await?;
             }
             if p.dup {
-                Ok(TestResult::fail(
-                    &ctx,
+                Ok(Outcome::fail(
                     "Server forwarded QoS 1 message with DUP=1 on initial delivery",
                 ))
             } else {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH on subscriber",
-            &other,
-        )),
+        other => Ok(Outcome::fail_packet("PUBLISH on subscriber", &other)),
     }
 }
 
@@ -2031,9 +1857,7 @@ const QUOTA_ZERO_CONTROL: TestContext = TestContext {
 /// Even when the receive quota is exhausted (all slots occupied by unacked
 /// QoS 1/2 messages), the server MUST continue to process and respond to
 /// other MQTT control packets like PINGREQ [MQTT-4.9.0-3].
-async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QUOTA_ZERO_CONTROL;
-
+async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/quota_zero";
 
     // Subscriber with receive_maximum=2
@@ -2078,36 +1902,28 @@ async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Resu
     sub_client.send_pingreq().await?;
 
     match sub_client.recv().await {
-        Ok(Packet::PingResp) => Ok(TestResult::pass(&ctx)),
+        Ok(Packet::PingResp) => Ok(Outcome::Pass),
         Ok(Packet::Publish(_)) => {
             // Might receive another publish before pingresp — try once more
             sub_client.send_pingreq().await?;
             match sub_client.recv().await {
-                Ok(Packet::PingResp) => Ok(TestResult::pass(&ctx)),
-                Ok(other) => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
-                Err(RecvError::Timeout) => Ok(TestResult::fail(
-                    &ctx,
-                    "No PINGRESP when quota is zero (timed out)",
-                )),
-                Err(RecvError::Closed) => Ok(TestResult::fail(
-                    &ctx,
+                Ok(Packet::PingResp) => Ok(Outcome::Pass),
+                Ok(other) => Ok(Outcome::fail_packet("PINGRESP", &other)),
+                Err(RecvError::Timeout) => {
+                    Ok(Outcome::fail("No PINGRESP when quota is zero (timed out)"))
+                }
+                Err(RecvError::Closed) => Ok(Outcome::fail(
                     "No PINGRESP when quota is zero (connection closed)",
                 )),
-                Err(RecvError::Other(e)) => {
-                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
-                }
+                Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
             }
         }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "No PINGRESP when quota is zero (timed out)",
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
+        Ok(other) => Ok(Outcome::fail_packet("PINGRESP", &other)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("No PINGRESP when quota is zero (timed out)")),
+        Err(RecvError::Closed) => Ok(Outcome::fail(
             "No PINGRESP when quota is zero (connection closed)",
         )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -2122,9 +1938,7 @@ const RETAIN_ZERO_PRESERVES: TestContext = TestContext {
 /// If the RETAIN flag is 0 in a PUBLISH, the server MUST NOT store the message
 /// as a retained message and MUST NOT remove or replace any existing retained
 /// message [MQTT-3.3.1-8].
-async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_ZERO_PRESERVES;
-
+async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/retain0_preserve";
 
     // 1. Store a retained message
@@ -2158,26 +1972,19 @@ async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> anyhow::Resul
     )
     .await?;
 
-    let result = match expect_publish(&mut sub_client, &ctx, topic).await {
-        Ok(p) if p.retain && p.payload == b"original-retained" => TestResult::pass(&ctx),
-        Ok(p) if p.retain && p.payload == b"non-retained-update" => TestResult::fail(
-            &ctx,
-            "Retained message was replaced by PUBLISH with Retain=0",
-        ),
-        Ok(p) if p.retain => TestResult::fail(
-            &ctx,
-            format!(
-                "Unexpected retained payload: {:?}",
-                String::from_utf8_lossy(&p.payload)
-            ),
-        ),
-        Ok(p) => TestResult::fail(
-            &ctx,
-            format!(
-                "Received non-retained message (payload: {:?}) instead of retained",
-                String::from_utf8_lossy(&p.payload)
-            ),
-        ),
+    let result = match expect_publish(&mut sub_client, topic).await {
+        Ok(p) if p.retain && p.payload == b"original-retained" => Outcome::Pass,
+        Ok(p) if p.retain && p.payload == b"non-retained-update" => {
+            Outcome::fail("Retained message was replaced by PUBLISH with Retain=0")
+        }
+        Ok(p) if p.retain => Outcome::fail(format!(
+            "Unexpected retained payload: {:?}",
+            String::from_utf8_lossy(&p.payload)
+        )),
+        Ok(p) => Outcome::fail(format!(
+            "Received non-retained message (payload: {:?}) instead of retained",
+            String::from_utf8_lossy(&p.payload)
+        )),
         Err(r) => r,
     };
 
@@ -2202,9 +2009,7 @@ const ORDERED_TOPIC_QOS0: TestContext = TestContext {
 /// messages in the order received from each client, per QoS level [MQTT-4.6.0-5].
 /// This test verifies ordering for QoS 0 messages (complementing the existing
 /// QoS 1 ordering test at MQTT-4.6.0-1).
-async fn ordered_topic_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = ORDERED_TOPIC_QOS0;
-
+async fn ordered_topic_qos0(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/ordered_qos0";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -2244,31 +2049,26 @@ async fn ordered_topic_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult
 
     let expected: Vec<String> = (0..10).map(|i| format!("ord-{i}")).collect();
     if received == expected {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else if received.len() < 10 {
         // QoS 0 may lose messages — still a pass if ordering is preserved
         let is_ordered = received.windows(2).all(|w| w[0] < w[1]);
         if is_ordered && received.len() >= 5 {
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         } else if is_ordered {
-            Ok(TestResult::fail(
-                &ctx,
-                format!(
-                    "Only {}/10 messages received (ordered, but too few)",
-                    received.len()
-                ),
-            ))
+            Ok(Outcome::fail(format!(
+                "Only {}/10 messages received (ordered, but too few)",
+                received.len()
+            )))
         } else {
-            Ok(TestResult::fail(
-                &ctx,
-                format!("Messages arrived out of order: {received:?}"),
-            ))
+            Ok(Outcome::fail(format!(
+                "Messages arrived out of order: {received:?}"
+            )))
         }
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Messages arrived out of order: {received:?}"),
-        ))
+        Ok(Outcome::fail(format!(
+            "Messages arrived out of order: {received:?}"
+        )))
     }
 }
 
@@ -2280,9 +2080,7 @@ const CONTENT_TYPE_FORWARDED: TestContext = TestContext {
 
 /// The server MUST forward the Content Type property unaltered to receivers
 /// [MQTT-3.3.2-19].
-async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CONTENT_TYPE_FORWARDED;
-
+async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/content_type_fwd";
     let content_type = "application/octet-stream; charset=utf-8";
 
@@ -2312,7 +2110,7 @@ async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Res
     // Drain PUBACK
     let _ = pub_client.recv().await;
 
-    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+    let p = match expect_publish(&mut sub_client, topic).await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
@@ -2320,13 +2118,11 @@ async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> anyhow::Res
         sub_client.send_puback(pid, 0x00).await?;
     }
     match p.properties.content_type.as_deref() {
-        Some(ct) if ct == content_type => Ok(TestResult::pass(&ctx)),
-        Some(ct) => Ok(TestResult::fail(
-            &ctx,
-            format!("Content Type altered: expected \"{content_type}\", got \"{ct}\""),
-        )),
-        None => Ok(TestResult::fail(
-            &ctx,
+        Some(ct) if ct == content_type => Ok(Outcome::Pass),
+        Some(ct) => Ok(Outcome::fail(format!(
+            "Content Type altered: expected \"{content_type}\", got \"{ct}\""
+        ))),
+        None => Ok(Outcome::fail(
             "Content Type property was stripped by server",
         )),
     }
@@ -2346,9 +2142,7 @@ const QOS1_UNACKNOWLEDGED: TestContext = TestContext {
 /// Test: subscribe QoS 1 with a persistent session, receive a forwarded
 /// PUBLISH but withhold PUBACK, disconnect abruptly, then reconnect — the
 /// broker must redeliver the message.
-async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS1_UNACKNOWLEDGED;
-
+async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/pub/qos1_unack";
 
     // Connect subscriber with a persistent session, subscribe QoS 1
@@ -2374,7 +2168,7 @@ async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Res
     }
 
     // Receive the forwarded PUBLISH on subscriber — but do NOT send PUBACK
-    let received = match expect_publish(&mut sub_client, &ctx, topic).await {
+    let received = match expect_publish(&mut sub_client, topic).await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
@@ -2393,7 +2187,7 @@ async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Res
         client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
 
     // Broker MUST redeliver the unacknowledged message
-    let p = match expect_publish(&mut sub_client2, &ctx, topic).await {
+    let p = match expect_publish(&mut sub_client2, topic).await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
@@ -2403,14 +2197,11 @@ async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Res
     }
     // Verify it's the same message
     if p.payload == received.payload {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Redelivered payload differs: expected {:?}, got {:?}",
-                received.payload, p.payload
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Redelivered payload differs: expected {:?}, got {:?}",
+            received.payload, p.payload
+        )))
     }
 }

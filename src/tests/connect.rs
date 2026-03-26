@@ -6,7 +6,7 @@ use crate::client::{self, RawClient, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams, WillParams,
 };
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("CONNECT / CONNACK");
@@ -78,22 +78,17 @@ const BASIC_CONNECT: TestContext = TestContext {
 };
 
 /// A valid CONNECT MUST receive a CONNACK in return [MQTT-3.2.0-1].
-async fn basic_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = BASIC_CONNECT;
-
+async fn basic_connect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-basic-connect");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} (expected 0x00)",
-                connack.reason_code
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x} (expected 0x00)",
+            connack.reason_code
+        )))
     }
 }
 
@@ -104,19 +99,16 @@ const CLEAN_START_TRUE: TestContext = TestContext {
 };
 
 /// Clean Start = 1 MUST create a new session [MQTT-3.1.2-4].
-async fn clean_start_true(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CLEAN_START_TRUE;
-
+async fn clean_start_true(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-clean-start");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.session_present {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "CONNACK session_present=1 despite Clean Start=1",
         ))
     } else {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     }
 }
 
@@ -127,9 +119,7 @@ const CLEAN_START_FALSE: TestContext = TestContext {
 };
 
 /// Clean Start = 0 with no existing session MUST set session_present=0 [MQTT-3.2.2-4].
-async fn clean_start_false_no_session(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CLEAN_START_FALSE;
-
+async fn clean_start_false_no_session(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     // Use a unique client ID unlikely to have an existing session.
     let id = format!(
         "mqtt-test-no-session-{}",
@@ -144,12 +134,11 @@ async fn clean_start_false_no_session(config: TestConfig<'_>) -> anyhow::Result<
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.session_present {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "CONNACK session_present=1 but no prior session should exist",
         ))
     } else {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     }
 }
 
@@ -160,18 +149,15 @@ const ZERO_LEN_CLIENT_ID: TestContext = TestContext {
 };
 
 /// Zero-length client ID with Clean Start=1 MUST be accepted [MQTT-3.1.3-7].
-async fn zero_length_client_id(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = ZERO_LEN_CLIENT_ID;
-
+async fn zero_length_client_id(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     match connack.reason_code {
-        0x00 => Ok(TestResult::pass(&ctx)),
-        code => Ok(TestResult::fail(
-            &ctx,
-            format!("CONNACK reason code {code:#04x}; broker rejected empty client ID"),
-        )),
+        0x00 => Ok(Outcome::Pass),
+        code => Ok(Outcome::fail(format!(
+            "CONNACK reason code {code:#04x}; broker rejected empty client ID"
+        ))),
     }
 }
 
@@ -182,11 +168,7 @@ const ZERO_LEN_NO_CLEAN: TestContext = TestContext {
 };
 
 /// Zero-length client ID with Clean Start=0 MAY be rejected [MQTT-3.1.3-8].
-async fn zero_length_client_id_no_clean_start(
-    config: TestConfig<'_>,
-) -> anyhow::Result<TestResult> {
-    let ctx = ZERO_LEN_NO_CLEAN;
-
+async fn zero_length_client_id_no_clean_start(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("");
     params.clean_start = false;
 
@@ -194,28 +176,24 @@ async fn zero_length_client_id_no_clean_start(
     client.send_connect(&params).await?;
 
     match client.recv().await {
-        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x85 => Ok(TestResult::pass(&ctx)),
+        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x85 => Ok(Outcome::Pass),
         Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => {
             // Connection closed — also acceptable rejection
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => {
             let _ = client.send_disconnect(0x00).await;
-            Ok(TestResult::fail(
-                &ctx,
+            Ok(Outcome::fail(
                 "Broker accepted empty client ID with Clean Start=0 (expected 0x85 rejection)",
             ))
         }
-        Ok(Packet::ConnAck(connack)) => Ok(TestResult::fail(
-            &ctx,
-            format!("Expected reason 0x85, got {:#04x}", connack.reason_code),
-        )),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK with 0x85", &other)),
+        Ok(Packet::ConnAck(connack)) => Ok(Outcome::fail(format!(
+            "Expected reason 0x85, got {:#04x}",
+            connack.reason_code
+        ))),
+        Ok(other) => Ok(Outcome::fail_packet("CONNACK with 0x85", &other)),
     }
 }
 
@@ -227,27 +205,21 @@ const ASSIGNED_CLIENT_ID: TestContext = TestContext {
 
 /// When the server accepts a zero-length Client ID, it SHOULD return an
 /// Assigned Client Identifier property in CONNACK [MQTT-3.2.2-16].
-async fn assigned_client_id(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = ASSIGNED_CLIENT_ID;
-
+async fn assigned_client_id(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code != 0x00 {
-        return Ok(TestResult::skip(
-            &ctx,
-            format!(
-                "Broker rejected empty client ID (reason {:#04x})",
-                connack.reason_code
-            ),
-        ));
+        return Ok(Outcome::skip(format!(
+            "Broker rejected empty client ID (reason {:#04x})",
+            connack.reason_code
+        )));
     }
 
     if connack.properties.assigned_client_id.is_some() {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Broker accepted empty client ID but did not return Assigned Client Identifier",
         ))
     }
@@ -260,26 +232,20 @@ const FIRST_CONNECT: TestContext = TestContext {
 };
 
 /// First packet on a connection MUST be CONNECT [MQTT-3.1.0-1].
-async fn first_packet_must_be_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = FIRST_CONNECT;
-
+async fn first_packet_must_be_connect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Send a PINGREQ as the first packet instead of CONNECT
     client.send_pingreq().await?;
 
     match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::PingResp) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::PingResp) => Ok(Outcome::fail(
             "Broker responded to PINGREQ without prior CONNECT",
         )),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "connection close", &other)),
+        Ok(other) => Ok(Outcome::fail_packet("connection close", &other)),
     }
 }
 
@@ -292,21 +258,19 @@ const SESSION_EXPIRY: TestContext = TestContext {
 };
 
 /// Session Expiry Interval property is accepted [MQTT-3.1.2-11].
-async fn session_expiry_interval_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_EXPIRY;
-
+async fn session_expiry_interval_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-sei");
     params.properties.session_expiry_interval = Some(60);
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("CONNACK reason code {:#04x}", connack.reason_code),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x}",
+            connack.reason_code
+        )))
     }
 }
 
@@ -317,21 +281,19 @@ const RECEIVE_MAX: TestContext = TestContext {
 };
 
 /// Receive Maximum property is accepted [MQTT-3.1.2-11].
-async fn receive_maximum_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RECEIVE_MAX;
-
+async fn receive_maximum_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-recv-max");
     params.properties.receive_maximum = Some(10);
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("CONNACK reason code {:#04x}", connack.reason_code),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x}",
+            connack.reason_code
+        )))
     }
 }
 
@@ -342,21 +304,19 @@ const MAX_PACKET_SIZE: TestContext = TestContext {
 };
 
 /// Maximum Packet Size property is accepted [MQTT-3.2.2-17].
-async fn maximum_packet_size_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MAX_PACKET_SIZE;
-
+async fn maximum_packet_size_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-max-pkt");
     params.properties.maximum_packet_size = Some(65536);
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("CONNACK reason code {:#04x}", connack.reason_code),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x}",
+            connack.reason_code
+        )))
     }
 }
 
@@ -368,17 +328,14 @@ const SERVER_KEEP_ALIVE: TestContext = TestContext {
 
 /// Server MAY send Server Keep Alive in CONNACK to override the client's
 /// requested keep-alive interval [MQTT-3.2.2-21].
-async fn server_keep_alive(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SERVER_KEEP_ALIVE;
-
+async fn server_keep_alive(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-server-ka");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.properties.server_keep_alive.is_some() {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Server did not include Server Keep Alive property in CONNACK",
         ))
     }
@@ -391,24 +348,20 @@ const TOPIC_ALIAS_MAX: TestContext = TestContext {
 };
 
 /// Server MAY include Topic Alias Maximum in CONNACK [MQTT-3.2.2-9].
-async fn topic_alias_maximum(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TOPIC_ALIAS_MAX;
-
+async fn topic_alias_maximum(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-ta-max");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if let Some(max) = connack.properties.topic_alias_maximum {
         if max > 0 {
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         } else {
-            Ok(TestResult::fail(
-                &ctx,
+            Ok(Outcome::fail(
                 "Topic Alias Maximum is 0 (topic aliases not supported)",
             ))
         }
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Server did not include Topic Alias Maximum in CONNACK",
         ))
     }
@@ -422,19 +375,16 @@ const WILDCARD_SUB_AVAIL: TestContext = TestContext {
 
 /// Server MAY include Wildcard Subscription Available in CONNACK [MQTT-3.2.2-12].
 /// Most brokers support wildcards so this checks if the property is present and true.
-async fn wildcard_subscription_available(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILDCARD_SUB_AVAIL;
-
+async fn wildcard_subscription_available(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-wildcard-avail");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     match connack.properties.wildcard_subscription_available {
         Some(true) | None => {
             // None means default (true per spec)
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Some(false) => Ok(TestResult::fail(
-            &ctx,
+        Some(false) => Ok(Outcome::fail(
             "Server reported Wildcard Subscription Available = false",
         )),
     }
@@ -449,9 +399,7 @@ const DUP_CONNECT: TestContext = TestContext {
 };
 
 /// Server MUST disconnect a client that sends a second CONNECT [MQTT-3.1.0-2].
-async fn duplicate_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DUP_CONNECT;
-
+async fn duplicate_connect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-dup-connect");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -460,13 +408,10 @@ async fn duplicate_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
     // Broker must either send DISCONNECT or close the connection.
     match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "disconnect", &other)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("disconnect", &other)),
     }
 }
 
@@ -477,9 +422,7 @@ const INVALID_PROTO_NAME: TestContext = TestContext {
 };
 
 /// Server MUST close connection if protocol name is not 'MQTT' [MQTT-3.1.2-1].
-async fn invalid_protocol_name(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = INVALID_PROTO_NAME;
-
+async fn invalid_protocol_name(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with protocol name "XQTT" instead of "MQTT"
@@ -497,13 +440,10 @@ async fn invalid_protocol_name(config: TestConfig<'_>) -> anyhow::Result<TestRes
     client.send_raw(bad_connect).await?;
 
     match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "connection close", &other)),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("connection close", &other)),
     }
 }
 
@@ -514,9 +454,7 @@ const INVALID_PROTO_VER: TestContext = TestContext {
 };
 
 /// Server MAY respond with 0x84 for unsupported protocol version [MQTT-3.1.2-2].
-async fn invalid_protocol_version(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = INVALID_PROTO_VER;
-
+async fn invalid_protocol_version(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with protocol version 4 (MQTT 3.1.1) — no properties field
@@ -533,25 +471,18 @@ async fn invalid_protocol_version(config: TestConfig<'_>) -> anyhow::Result<Test
     client.send_raw(bad_connect).await?;
 
     match client.recv().await {
-        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x84 => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => Ok(TestResult::fail(
-            &ctx,
+        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x84 => Ok(Outcome::Pass),
+        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => Ok(Outcome::fail(
             "Broker accepted MQTT v4 CONNECT with success (expected rejection)",
         )),
-        Ok(Packet::ConnAck(connack)) => Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Expected CONNACK reason 0x84, got {:#04x}",
-                connack.reason_code
-            ),
-        )),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK or close", &other)),
+        Ok(Packet::ConnAck(connack)) => Ok(Outcome::fail(format!(
+            "Expected CONNACK reason 0x84, got {:#04x}",
+            connack.reason_code
+        ))),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("CONNACK or close", &other)),
     }
 }
 
@@ -563,9 +494,7 @@ const SESSION_PRESENT_ZERO_ON_REJECT: TestContext = TestContext {
 
 /// If the server rejects the CONNECT, session_present MUST be 0 in the
 /// CONNACK regardless of any prior session state [MQTT-3.2.2-3].
-async fn session_present_zero_on_reject(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_PRESENT_ZERO_ON_REJECT;
-
+async fn session_present_zero_on_reject(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Send a CONNECT with invalid protocol version to provoke a rejection.
@@ -584,32 +513,27 @@ async fn session_present_zero_on_reject(config: TestConfig<'_>) -> anyhow::Resul
     match client.recv().await {
         Ok(Packet::ConnAck(connack)) if connack.reason_code != 0x00 => {
             if connack.session_present {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "CONNACK with reason {:#04x} has session_present=1 (MUST be 0)",
-                        connack.reason_code
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "CONNACK with reason {:#04x} has session_present=1 (MUST be 0)",
+                    connack.reason_code
+                )))
             } else {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             }
         }
         Ok(Packet::ConnAck(_)) => {
             // Broker accepted the v4 CONNECT — can't test this requirement.
-            Ok(TestResult::skip(
-                &ctx,
+            Ok(Outcome::skip(
                 "Broker accepted MQTT v4 CONNECT; cannot provoke rejection",
             ))
         }
         Err(_) => {
             // Broker closed connection — acceptable but can't verify session_present.
-            Ok(TestResult::skip(
-                &ctx,
+            Ok(Outcome::skip(
                 "Broker closed connection without CONNACK; cannot verify session_present",
             ))
         }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
+        Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }
 
@@ -620,9 +544,7 @@ const KEEP_ALIVE: TestContext = TestContext {
 };
 
 /// Server MUST disconnect client that exceeds 1.5× keep-alive without activity [MQTT-3.1.2-22].
-async fn keep_alive_timeout(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = KEEP_ALIVE;
-
+async fn keep_alive_timeout(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-keepalive");
     params.keep_alive = 2; // 2 seconds → broker should disconnect after ~3s
 
@@ -630,14 +552,10 @@ async fn keep_alive_timeout(config: TestConfig<'_>) -> anyhow::Result<TestResult
 
     // Do NOT send PINGREQ. Wait for the broker to disconnect us.
     match client.recv_with_timeout(Duration::from_secs(5)).await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet(
             "disconnect after keep-alive timeout",
             &other,
         )),
@@ -653,9 +571,7 @@ const WILL_ON_CLOSE: TestContext = TestContext {
 };
 
 /// Will message MUST be published on unexpected connection close [MQTT-3.1.2-8].
-async fn will_message_on_unexpected_close(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_ON_CLOSE;
-
+async fn will_message_on_unexpected_close(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let will_topic = "mqtt/test/will/unexpected";
 
     // Set up a subscriber to receive the will message
@@ -680,24 +596,16 @@ async fn will_message_on_unexpected_close(config: TestConfig<'_>) -> anyhow::Res
     match sub_client.recv_with_timeout(Duration::from_secs(5)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => {
             if p.payload == b"will-triggered" {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Will payload mismatch: got {:?}",
-                        String::from_utf8_lossy(&p.payload)
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Will payload mismatch: got {:?}",
+                    String::from_utf8_lossy(&p.payload)
+                )))
             }
         }
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH (will message)",
-            &other,
-        )),
-        Err(_) => Ok(TestResult::fail(
-            &ctx,
+        Ok(other) => Ok(Outcome::fail_packet("PUBLISH (will message)", &other)),
+        Err(_) => Ok(Outcome::fail(
             "Will message not received after unexpected disconnect",
         )),
     }
@@ -710,9 +618,7 @@ const WILL_REMOVED_ON_DISCONNECT: TestContext = TestContext {
 };
 
 /// Will message MUST be removed from session on normal DISCONNECT [MQTT-3.1.2-10].
-async fn will_message_removed_on_disconnect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_REMOVED_ON_DISCONNECT;
-
+async fn will_message_removed_on_disconnect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let will_topic = "mqtt/test/will/normal";
 
     // Set up a subscriber
@@ -736,14 +642,13 @@ async fn will_message_removed_on_disconnect(config: TestConfig<'_>) -> anyhow::R
 
     // Short timeout — we expect NO message
     match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::fail(
             "Will message was published despite normal DISCONNECT",
         )),
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Ok(_) => Ok(Outcome::Pass),
     }
 }
 
@@ -754,9 +659,7 @@ const WILL_RETAIN: TestContext = TestContext {
 };
 
 /// Will Retain flag MUST be respected [MQTT-3.1.2-13].
-async fn will_retain_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_RETAIN;
-
+async fn will_retain_flag(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let will_topic = "mqtt/test/will/retain";
 
     // Check if broker supports retain
@@ -765,10 +668,7 @@ async fn will_retain_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
         client::connect(config.addr, &check_params, config.recv_timeout).await?;
 
     if connack.properties.retain_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
-            "Broker reported Retain Available = false",
-        ));
+        return Ok(Outcome::skip("Broker reported Retain Available = false"));
     }
 
     // Clear any existing retained message on this topic
@@ -807,18 +707,12 @@ async fn will_retain_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
     .await?;
 
     match sub_client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == will_topic && p.retain => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::fail(
-            &ctx,
+        Ok(Packet::Publish(p)) if p.topic == will_topic && p.retain => Ok(Outcome::Pass),
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::fail(
             "Will message received but retain flag was not set",
         )),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "retained PUBLISH (will)",
-            &other,
-        )),
-        Err(_) => Ok(TestResult::fail(
-            &ctx,
+        Ok(other) => Ok(Outcome::fail_packet("retained PUBLISH (will)", &other)),
+        Err(_) => Ok(Outcome::fail(
             "Retained will message not delivered to new subscriber",
         )),
     }
@@ -833,9 +727,7 @@ const SERVER_MAX_QOS: TestContext = TestContext {
 };
 
 /// If server advertises Maximum QoS, publishing above it MUST result in DISCONNECT [MQTT-3.2.2-19].
-async fn server_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SERVER_MAX_QOS;
-
+async fn server_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-max-qos");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -851,29 +743,21 @@ async fn server_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult
             match client.recv().await {
                 Ok(Packet::Disconnect(d)) if d.reason_code == 0x9B => {
                     // 0x9B = QoS not supported
-                    Ok(TestResult::pass(&ctx))
+                    Ok(Outcome::Pass)
                 }
                 Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => {
                     // Disconnected — acceptable
-                    Ok(TestResult::pass(&ctx))
+                    Ok(Outcome::Pass)
                 }
-                Err(RecvError::Timeout) => Ok(TestResult::fail(
-                    &ctx,
-                    "broker did not disconnect (timed out)",
-                )),
-                Err(RecvError::Other(e)) => {
-                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
+                Err(RecvError::Timeout) => {
+                    Ok(Outcome::fail("broker did not disconnect (timed out)"))
                 }
-                Ok(Packet::PubAck(ack)) if ack.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
-                Ok(Packet::PubAck(_)) => Ok(TestResult::fail(
-                    &ctx,
+                Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+                Ok(Packet::PubAck(ack)) if ack.reason_code >= 0x80 => Ok(Outcome::Pass),
+                Ok(Packet::PubAck(_)) => Ok(Outcome::fail(
                     "Server accepted QoS 1 PUBLISH despite Maximum QoS = 0",
                 )),
-                Ok(other) => Ok(TestResult::fail_packet(
-                    &ctx,
-                    "DISCONNECT or error PUBACK",
-                    &other,
-                )),
+                Ok(other) => Ok(Outcome::fail_packet("DISCONNECT or error PUBACK", &other)),
             }
         }
         Some(1) => {
@@ -883,31 +767,22 @@ async fn server_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult
             client.send_publish(&pub_params).await?;
 
             match client.recv().await {
-                Ok(Packet::Disconnect(d)) if d.reason_code == 0x9B => Ok(TestResult::pass(&ctx)),
-                Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-                Err(RecvError::Timeout) => Ok(TestResult::fail(
-                    &ctx,
-                    "broker did not disconnect (timed out)",
-                )),
-                Err(RecvError::Other(e)) => {
-                    Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
+                Ok(Packet::Disconnect(d)) if d.reason_code == 0x9B => Ok(Outcome::Pass),
+                Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+                Err(RecvError::Timeout) => {
+                    Ok(Outcome::fail("broker did not disconnect (timed out)"))
                 }
-                Ok(Packet::PubRec(rec)) if rec.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
-                Ok(Packet::PubRec(_)) => Ok(TestResult::fail(
-                    &ctx,
+                Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+                Ok(Packet::PubRec(rec)) if rec.reason_code >= 0x80 => Ok(Outcome::Pass),
+                Ok(Packet::PubRec(_)) => Ok(Outcome::fail(
                     "Server accepted QoS 2 PUBLISH despite Maximum QoS = 1",
                 )),
-                Ok(other) => Ok(TestResult::fail_packet(
-                    &ctx,
-                    "DISCONNECT or error PUBREC",
-                    &other,
-                )),
+                Ok(other) => Ok(Outcome::fail_packet("DISCONNECT or error PUBREC", &other)),
             }
         }
         _ => {
             // Server supports QoS 2 (default) or didn't advertise — skip
-            Ok(TestResult::skip(
-                &ctx,
+            Ok(Outcome::skip(
                 "Server supports QoS 2 (no Maximum QoS restriction to test)",
             ))
         }
@@ -921,9 +796,7 @@ const SERVER_RECV_MAX: TestContext = TestContext {
 };
 
 /// Server MUST respect client's Receive Maximum [MQTT-3.2.2-14].
-async fn server_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SERVER_RECV_MAX;
-
+async fn server_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     // Connect with a very low Receive Maximum
     let recv_max: u16 = 2;
     let mut sub_params = ConnectParams::new("mqtt-test-recv-max-sub");
@@ -963,14 +836,11 @@ async fn server_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<TestRe
     }
 
     if received <= recv_max {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Received {received} QoS 1 messages without PUBACK (Receive Maximum = {recv_max})",
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Received {received} QoS 1 messages without PUBACK (Receive Maximum = {recv_max})",
+        )))
     }
 }
 
@@ -986,9 +856,7 @@ const WILL_DELAY: TestContext = TestContext {
 /// message for up to the specified number of seconds [MQTT-3.1.3-9].
 /// We test with a short delay and verify the message is NOT published
 /// immediately but IS published after the delay expires.
-async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_DELAY;
-
+async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let will_topic = "mqtt/test/will/delay";
 
     // Subscriber
@@ -1022,8 +890,7 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
     // Should NOT arrive immediately (within 1 second)
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => {
-            return Ok(TestResult::fail(
-                &ctx,
+            return Ok(Outcome::fail(
                 "Will message arrived immediately despite Will Delay Interval = 2s",
             ));
         }
@@ -1032,14 +899,9 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
 
     // Should arrive after the delay (wait up to 4 more seconds)
     match sub_client.recv_with_timeout(Duration::from_secs(4)).await {
-        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH (delayed will)",
-            &other,
-        )),
-        Err(_) => Ok(TestResult::fail(
-            &ctx,
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::Pass),
+        Ok(other) => Ok(Outcome::fail_packet("PUBLISH (delayed will)", &other)),
+        Err(_) => Ok(Outcome::fail(
             "Will message not received after delay interval expired",
         )),
     }
@@ -1055,19 +917,16 @@ const REQ_RESP_INFO: TestContext = TestContext {
 
 /// When the client sets Request Response Information = 1, the server MAY
 /// include Response Information in the CONNACK [MQTT-3.1.2-28].
-async fn request_response_information(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = REQ_RESP_INFO;
-
+async fn request_response_information(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-resp-info");
     params.properties.request_response_information = Some(true);
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.properties.response_information.is_some() {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Server did not include Response Information despite request",
         ))
     }
@@ -1086,9 +945,7 @@ const ENHANCED_AUTH: TestContext = TestContext {
 /// If the broker does not support the method, it should respond with a CONNACK
 /// containing reason code 0x8C (Bad authentication method) or 0x87 (Not Authorized).
 /// If it does support it, it may respond with an AUTH packet to continue the exchange.
-async fn enhanced_auth_method(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = ENHANCED_AUTH;
-
+async fn enhanced_auth_method(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-enhanced-auth");
     params.properties.authentication_method = Some("SCRAM-SHA-256".to_string());
     params.properties.authentication_data = Some(b"client-first-message".to_vec());
@@ -1102,33 +959,29 @@ async fn enhanced_auth_method(config: TestConfig<'_>) -> anyhow::Result<TestResu
         }) => {
             // 0x18 = Continue authentication — broker supports enhanced auth
             let _ = client.send_disconnect(0x00).await;
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x8C => {
             // Bad authentication method — broker rejects but handles correctly
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x87 => {
             // Not Authorized — broker rejects but handles correctly
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => {
             // Broker accepted without challenge — unusual but not invalid
             let _ = client.send_disconnect(0x00).await;
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Ok(Packet::ConnAck(connack)) => Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason {:#04x} for enhanced auth CONNECT",
-                connack.reason_code
-            ),
-        )),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::fail(
-            &ctx,
+        Ok(Packet::ConnAck(connack)) => Ok(Outcome::fail(format!(
+            "CONNACK reason {:#04x} for enhanced auth CONNECT",
+            connack.reason_code
+        ))),
+        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::fail(
             "Broker closed connection instead of sending CONNACK with auth error code",
         )),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK or AUTH", &other)),
+        Ok(other) => Ok(Outcome::fail_packet("CONNACK or AUTH", &other)),
     }
 }
 
@@ -1142,9 +995,7 @@ const REASON_STRING: TestContext = TestContext {
 
 /// Server MAY include a Reason String in CONNACK when rejecting a connection [MQTT-3.2.2-20].
 /// We trigger a rejection with an invalid protocol name and check for a Reason String.
-async fn reason_string_in_connack(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = REASON_STRING;
-
+async fn reason_string_in_connack(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with protocol version 4 to trigger a CONNACK rejection
@@ -1163,23 +1014,20 @@ async fn reason_string_in_connack(config: TestConfig<'_>) -> anyhow::Result<Test
     match client.recv().await {
         Ok(Packet::ConnAck(connack)) if connack.reason_code >= 0x80 => {
             if connack.properties.reason_string.is_some() {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
+                Ok(Outcome::fail(
                     "CONNACK rejection did not include Reason String",
                 ))
             }
         }
-        Ok(Packet::ConnAck(_)) => Ok(TestResult::skip(
-            &ctx,
+        Ok(Packet::ConnAck(_)) => Ok(Outcome::skip(
             "Broker accepted MQTT v4 CONNECT — cannot test error Reason String",
         )),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::fail(
-            &ctx,
+        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::fail(
             "Broker closed connection instead of sending CONNACK with Reason String",
         )),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
+        Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }
 
@@ -1193,24 +1041,19 @@ const ACCEPTABLE_CLIENT_ID: TestContext = TestContext {
 
 /// Server SHOULD allow Client Identifiers which contain only characters
 /// [0-9a-zA-Z] and are between 1 and 23 bytes long [MQTT-3.1.3-5].
-async fn acceptable_client_id_chars(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = ACCEPTABLE_CLIENT_ID;
-
+async fn acceptable_client_id_chars(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     // A 23-char ID using the recommended character set.
     let client_id = "abcABC0123456789xyzXYZw";
     let params = ConnectParams::new(client_id);
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Broker rejected 23-char alphanumeric client ID (reason {:#04x})",
-                connack.reason_code
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Broker rejected 23-char alphanumeric client ID (reason {:#04x})",
+            connack.reason_code
+        )))
     }
 }
 
@@ -1224,9 +1067,7 @@ const FLOW_CONTROL: TestContext = TestContext {
 /// number of concurrent QoS>0 messages it sends before receiving acknowledgements
 /// [MQTT-4.9.0-1]. We read the server's Receive Maximum and verify the server
 /// does not exceed it when delivering QoS 1 messages without client PUBACK.
-async fn flow_control_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = FLOW_CONTROL;
-
+async fn flow_control_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     // Connect subscriber — inspect server's Receive Maximum from CONNACK.
     let sub_params = ConnectParams::new("mqtt-test-flow-ctrl-sub");
     let (mut sub_client, connack) =
@@ -1234,12 +1075,9 @@ async fn flow_control_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<
 
     let server_recv_max = connack.properties.receive_maximum.unwrap_or(65535);
     if server_recv_max > 20 {
-        return Ok(TestResult::skip(
-            &ctx,
-            format!(
-                "Server Receive Maximum is {server_recv_max} — too high to practically test flow control"
-            ),
-        ));
+        return Ok(Outcome::skip(format!(
+            "Server Receive Maximum is {server_recv_max} — too high to practically test flow control"
+        )));
     }
 
     let topic = "mqtt/test/flow/ctrl";
@@ -1271,14 +1109,11 @@ async fn flow_control_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<
         }
     }
     if received <= server_recv_max {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Server sent {received} QoS 1 messages without PUBACK (Receive Maximum = {server_recv_max})",
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Server sent {received} QoS 1 messages without PUBACK (Receive Maximum = {server_recv_max})",
+        )))
     }
 }
 
@@ -1292,20 +1127,16 @@ const CONNACK_MAX_QOS: TestContext = TestContext {
 
 /// Server MAY include Maximum QoS in CONNACK to advertise its highest
 /// supported QoS level [MQTT-3.2.2-7].
-async fn connack_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CONNACK_MAX_QOS;
-
+async fn connack_maximum_qos(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-max-qos-prop");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     match connack.properties.maximum_qos {
-        Some(qos) if qos <= 2 => Ok(TestResult::pass(&ctx)),
-        Some(qos) => Ok(TestResult::fail(
-            &ctx,
-            format!("Maximum QoS property has invalid value {qos} (expected 0, 1, or 2)"),
-        )),
-        None => Ok(TestResult::fail(
-            &ctx,
+        Some(qos) if qos <= 2 => Ok(Outcome::Pass),
+        Some(qos) => Ok(Outcome::fail(format!(
+            "Maximum QoS property has invalid value {qos} (expected 0, 1, or 2)"
+        ))),
+        None => Ok(Outcome::fail(
             "CONNACK does not include Maximum QoS property (defaults to 2)",
         )),
     }
@@ -1318,16 +1149,13 @@ const CONNACK_RETAIN_AVAIL: TestContext = TestContext {
 };
 
 /// Server MAY include Retain Available in CONNACK [MQTT-3.2.2-10].
-async fn connack_retain_available(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CONNACK_RETAIN_AVAIL;
-
+async fn connack_retain_available(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-retain-avail");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     match connack.properties.retain_available {
-        Some(_) => Ok(TestResult::pass(&ctx)),
-        None => Ok(TestResult::fail(
-            &ctx,
+        Some(_) => Ok(Outcome::Pass),
+        None => Ok(Outcome::fail(
             "CONNACK does not include Retain Available property (defaults to true)",
         )),
     }
@@ -1340,16 +1168,13 @@ const CONNACK_SUB_IDS: TestContext = TestContext {
 };
 
 /// Server MAY include Subscription Identifiers Available in CONNACK [MQTT-3.2.2-13].
-async fn connack_subscription_ids_available(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CONNACK_SUB_IDS;
-
+async fn connack_subscription_ids_available(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-subid-avail");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     match connack.properties.subscription_ids_available {
-        Some(_) => Ok(TestResult::pass(&ctx)),
-        None => Ok(TestResult::fail(
-            &ctx,
+        Some(_) => Ok(Outcome::Pass),
+        None => Ok(Outcome::fail(
             "CONNACK does not include Subscription Identifiers Available property (defaults to true)",
         )),
     }
@@ -1362,18 +1187,13 @@ const CONNACK_SHARED_SUB: TestContext = TestContext {
 };
 
 /// Server MAY include Shared Subscription Available in CONNACK [MQTT-3.2.2-15].
-async fn connack_shared_subscription_available(
-    config: TestConfig<'_>,
-) -> anyhow::Result<TestResult> {
-    let ctx = CONNACK_SHARED_SUB;
-
+async fn connack_shared_subscription_available(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-shared-sub-avail");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     match connack.properties.shared_subscription_available {
-        Some(_) => Ok(TestResult::pass(&ctx)),
-        None => Ok(TestResult::fail(
-            &ctx,
+        Some(_) => Ok(Outcome::Pass),
+        None => Ok(Outcome::fail(
             "CONNACK does not include Shared Subscription Available property (defaults to true)",
         )),
     }
@@ -1387,9 +1207,7 @@ const CONNACK_SERVER_REF: TestContext = TestContext {
 
 /// Server MAY include a Server Reference property in a rejected CONNACK
 /// to redirect the client [MQTT-3.2.2-18].
-async fn connack_server_reference(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CONNACK_SERVER_REF;
-
+async fn connack_server_reference(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Send MQTT v4 CONNECT to trigger a rejection
@@ -1408,23 +1226,20 @@ async fn connack_server_reference(config: TestConfig<'_>) -> anyhow::Result<Test
     match client.recv().await {
         Ok(Packet::ConnAck(connack)) if connack.reason_code >= 0x80 => {
             if connack.properties.server_reference.is_some() {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
+                Ok(Outcome::fail(
                     "Rejected CONNACK does not include Server Reference property",
                 ))
             }
         }
-        Ok(Packet::ConnAck(_)) => Ok(TestResult::skip(
-            &ctx,
+        Ok(Packet::ConnAck(_)) => Ok(Outcome::skip(
             "Broker accepted MQTT v4 CONNECT — cannot test rejected CONNACK properties",
         )),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(TestResult::skip(
-            &ctx,
+        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::skip(
             "Broker closed connection without CONNACK — cannot inspect Server Reference",
         )),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
+        Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }
 
@@ -1437,9 +1252,7 @@ const SERVER_REDIRECT: TestContext = TestContext {
 /// Server MAY use reason codes 0x9C (Use Another Server) or 0x9D
 /// (Server Moved) to redirect clients [MQTT-4.11]. We check if a normal
 /// CONNACK includes a Server Reference, indicating redirection support.
-async fn server_redirection(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SERVER_REDIRECT;
-
+async fn server_redirection(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-redirect");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1448,20 +1261,16 @@ async fn server_redirection(config: TestConfig<'_>) -> anyhow::Result<TestResult
     if connack.reason_code == 0x9C || connack.reason_code == 0x9D {
         // Actively redirecting — check for Server Reference.
         if connack.properties.server_reference.is_some() {
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         } else {
-            Ok(TestResult::fail(
-                &ctx,
-                format!(
-                    "Redirect reason {:#04x} without Server Reference property",
-                    connack.reason_code
-                ),
-            ))
+            Ok(Outcome::fail(format!(
+                "Redirect reason {:#04x} without Server Reference property",
+                connack.reason_code
+            )))
         }
     } else {
         // Normal connection — server is not redirecting. Not a failure for MAY.
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Server did not redirect (no 0x9C/0x9D reason code in CONNACK)",
         ))
     }
@@ -1477,24 +1286,19 @@ const USERNAME_PASSWORD: TestContext = TestContext {
 
 /// A CONNECT carrying both username and password MUST be accepted (assuming the
 /// broker allows anonymous or the credentials are valid) [MQTT-3.1.3-4/5].
-async fn username_password_accepted(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = USERNAME_PASSWORD;
-
+async fn username_password_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-user-pass");
     params.username = Some("testuser".into());
     params.password = Some(b"testpass".to_vec());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} (expected 0x00)",
-                connack.reason_code
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x} (expected 0x00)",
+            connack.reason_code
+        )))
     }
 }
 
@@ -1506,23 +1310,18 @@ const PASSWORD_NO_USERNAME: TestContext = TestContext {
 
 /// In MQTT v5, a CONNECT MAY include a password without a username — the
 /// username-flag=0, password-flag=1 combination is valid [MQTT-3.1.2-19].
-async fn password_without_username(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PASSWORD_NO_USERNAME;
-
+async fn password_without_username(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-pass-no-user");
     params.password = Some(b"testpass".to_vec());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} — broker rejected password without username",
-                connack.reason_code
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x} — broker rejected password without username",
+            connack.reason_code
+        )))
     }
 }
 
@@ -1534,23 +1333,18 @@ const EMPTY_USERNAME: TestContext = TestContext {
 
 /// A CONNECT with the Username flag set and a zero-length UTF-8 string is valid
 /// per the spec — the username is simply empty [MQTT-3.1.3-4].
-async fn empty_username(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = EMPTY_USERNAME;
-
+async fn empty_username(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-empty-user");
     params.username = Some(String::new());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} (expected 0x00)",
-                connack.reason_code
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x} (expected 0x00)",
+            connack.reason_code
+        )))
     }
 }
 
@@ -1561,23 +1355,18 @@ const USERNAME_ONLY: TestContext = TestContext {
 };
 
 /// A CONNECT with only the Username flag set (no Password flag) is valid.
-async fn username_only(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = USERNAME_ONLY;
-
+async fn username_only(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-user-only");
     params.username = Some("testuser".into());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} (expected 0x00)",
-                connack.reason_code
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x} (expected 0x00)",
+            connack.reason_code
+        )))
     }
 }
 
@@ -1591,9 +1380,7 @@ const WILL_NON_RETAINED: TestContext = TestContext {
 
 /// When Will Flag=1 and Will Retain=0, the server MUST publish the will
 /// message as a non-retained message [MQTT-3.1.2-14].
-async fn will_non_retained(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_NON_RETAINED;
-
+async fn will_non_retained(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let will_topic = "mqtt/test/will/nonretain";
 
     // Clear any existing retained message on this topic
@@ -1650,21 +1437,15 @@ async fn will_non_retained(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
             match sub2.recv_with_timeout(Duration::from_secs(1)).await {
                 Ok(Packet::Publish(p2)) if p2.topic == will_topic && !p2.payload.is_empty() => {
-                    Ok(TestResult::fail(
-                        &ctx,
+                    Ok(Outcome::fail(
                         "Will message with Retain=0 was stored as retained (new subscriber received it)",
                     ))
                 }
-                _ => Ok(TestResult::pass(&ctx)),
+                _ => Ok(Outcome::Pass),
             }
         }
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH (will message)",
-            &other,
-        )),
-        Err(_) => Ok(TestResult::fail(
-            &ctx,
+        Ok(other) => Ok(Outcome::fail_packet("PUBLISH (will message)", &other)),
+        Err(_) => Ok(Outcome::fail(
             "Will message not published after ungraceful disconnect",
         )),
     }
@@ -1680,9 +1461,7 @@ const TOPIC_ALIAS_MAX_ZERO: TestContext = TestContext {
 
 /// If the client sets Topic Alias Maximum=0 in CONNECT, the server MUST NOT
 /// send any Topic Aliases in PUBLISH packets to that client [MQTT-3.1.2-26].
-async fn topic_alias_maximum_zero(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TOPIC_ALIAS_MAX_ZERO;
-
+async fn topic_alias_maximum_zero(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/connect/ta_zero";
 
     // Connect subscriber with topic_alias_maximum=0
@@ -1713,12 +1492,9 @@ async fn topic_alias_maximum_zero(config: TestConfig<'_>) -> anyhow::Result<Test
         match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
             Ok(Packet::Publish(p)) if p.topic == topic => {
                 if let Some(alias) = p.properties.topic_alias {
-                    return Ok(TestResult::fail(
-                        &ctx,
-                        format!(
-                            "Server sent Topic Alias {alias} to client with Topic Alias Maximum=0",
-                        ),
-                    ));
+                    return Ok(Outcome::fail(format!(
+                        "Server sent Topic Alias {alias} to client with Topic Alias Maximum=0",
+                    )));
                 }
                 received += 1;
             }
@@ -1727,10 +1503,9 @@ async fn topic_alias_maximum_zero(config: TestConfig<'_>) -> anyhow::Result<Test
     }
 
     if received > 0 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "No messages received to verify topic alias behavior",
         ))
     }
@@ -1747,9 +1522,7 @@ const CONNACK_BEFORE_CLOSE: TestContext = TestContext {
 /// When the server rejects a CONNECT (e.g. due to a malformed packet), it MAY
 /// send a CONNACK with a Reason Code of 0x80 or greater before closing the
 /// network connection [MQTT-3.1.4-2].
-async fn connack_before_close_on_error(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CONNACK_BEFORE_CLOSE;
-
+async fn connack_before_close_on_error(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with reserved flag set (bit 0 = 1) — this is a malformed packet
@@ -1767,21 +1540,17 @@ async fn connack_before_close_on_error(config: TestConfig<'_>) -> anyhow::Result
     client.send_raw(bad_connect).await?;
 
     match client.recv().await {
-        Ok(Packet::ConnAck(connack)) if connack.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::ConnAck(connack)) => Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason {:#04x} (expected >= 0x80 for malformed CONNECT)",
-                connack.reason_code
-            ),
-        )),
+        Ok(Packet::ConnAck(connack)) if connack.reason_code >= 0x80 => Ok(Outcome::Pass),
+        Ok(Packet::ConnAck(connack)) => Ok(Outcome::fail(format!(
+            "CONNACK reason {:#04x} (expected >= 0x80 for malformed CONNECT)",
+            connack.reason_code
+        ))),
         Err(_) | Ok(Packet::Disconnect(_)) => {
             // Server closed without sending CONNACK — allowed (it's a MAY)
-            Ok(TestResult::fail(
-                &ctx,
+            Ok(Outcome::fail(
                 "Server closed connection without sending CONNACK (MAY behavior)",
             ))
         }
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "CONNACK", &other)),
+        Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }

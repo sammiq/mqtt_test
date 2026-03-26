@@ -8,7 +8,7 @@ use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions, SubscribeParams,
     UnsubscribeParams,
 };
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("SUBSCRIBE / UNSUBSCRIBE");
@@ -68,9 +68,7 @@ const BASIC_SUB: TestContext = TestContext {
 };
 
 /// Server MUST send SUBACK in response to SUBSCRIBE [MQTT-3.8.4-1].
-async fn basic_subscribe(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = BASIC_SUB;
-
+async fn basic_subscribe(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-subscribe");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -80,18 +78,15 @@ async fn basic_subscribe(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     match client.recv().await? {
         Packet::SubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "SUBACK reason code indicates failure: {:?}",
-                        ack.reason_codes
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "SUBACK reason code indicates failure: {:?}",
+                    ack.reason_codes
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other)),
+        other => Ok(Outcome::fail_packet("SUBACK(1)", &other)),
     }
 }
 
@@ -102,9 +97,7 @@ const WILDCARD_PLUS: TestContext = TestContext {
 };
 
 /// `+` wildcard MUST match exactly one level [MQTT-4.7.1-2].
-async fn wildcard_plus(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILDCARD_PLUS;
-
+async fn wildcard_plus(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-wildcard-plus");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -113,7 +106,7 @@ async fn wildcard_plus(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     match client.recv().await? {
         Packet::SubAck(_) => {}
         other => {
-            return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
+            return Ok(Outcome::fail_packet("SUBACK", &other));
         }
     }
 
@@ -125,11 +118,8 @@ async fn wildcard_plus(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         .await?;
 
     match client.recv().await? {
-        Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_plus/match" => {
-            Ok(TestResult::pass(&ctx))
-        }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
+        Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_plus/match" => Ok(Outcome::Pass),
+        other => Ok(Outcome::fail_packet(
             "PUBLISH on topic \"mqtt/test/sub/wc_plus/match\"",
             &other,
         )),
@@ -143,9 +133,7 @@ const WILDCARD_HASH: TestContext = TestContext {
 };
 
 /// `#` wildcard MUST match the parent and all sub-levels [MQTT-4.7.1-2].
-async fn wildcard_hash(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILDCARD_HASH;
-
+async fn wildcard_hash(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-wildcard-hash");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -154,7 +142,7 @@ async fn wildcard_hash(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     match client.recv().await? {
         Packet::SubAck(_) => {}
         other => {
-            return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
+            return Ok(Outcome::fail_packet("SUBACK", &other));
         }
     }
 
@@ -167,10 +155,9 @@ async fn wildcard_hash(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     match client.recv().await? {
         Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_hash/deep/nested/topic" => {
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
+        other => Ok(Outcome::fail_packet(
             "PUBLISH on topic \"mqtt/test/sub/wc_hash/deep/nested/topic\"",
             &other,
         )),
@@ -184,9 +171,7 @@ const UNSUB: TestContext = TestContext {
 };
 
 /// Server MUST send UNSUBACK in response to UNSUBSCRIBE [MQTT-3.10.4-4].
-async fn unsubscribe(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUB;
-
+async fn unsubscribe(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = client::connect_and_subscribe(
         config.addr,
         "mqtt-test-unsubscribe",
@@ -200,8 +185,8 @@ async fn unsubscribe(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     client.send_unsubscribe(&unsub).await?;
 
     match client.recv().await? {
-        Packet::UnsubAck(ack) if ack.packet_id == 2 => Ok(TestResult::pass(&ctx)),
-        other => Ok(TestResult::fail_packet(&ctx, "UNSUBACK(2)", &other)),
+        Packet::UnsubAck(ack) if ack.packet_id == 2 => Ok(Outcome::Pass),
+        other => Ok(Outcome::fail_packet("UNSUBACK(2)", &other)),
     }
 }
 
@@ -212,9 +197,7 @@ const DOLLAR_TOPIC: TestContext = TestContext {
 };
 
 /// Topics starting with `$` MUST NOT be matched by subscriptions starting with `#` or `+` [MQTT-4.7.2-1].
-async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DOLLAR_TOPIC;
-
+async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-dollar-topic");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -224,7 +207,7 @@ async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Resul
     match client.recv().await? {
         Packet::SubAck(_) => {}
         other => {
-            return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other));
+            return Ok(Outcome::fail_packet("SUBACK", &other));
         }
     }
 
@@ -264,15 +247,11 @@ async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Resul
     }
 
     if received_dollar {
-        Ok(TestResult::fail(
-            &ctx,
-            "$SYS topic was delivered to '#' subscriber",
-        ))
+        Ok(Outcome::fail("$SYS topic was delivered to '#' subscriber"))
     } else if received_canary {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Canary message not received — '#' subscription may not be working",
         ))
     }
@@ -285,9 +264,7 @@ const SUBACK_REASON_COUNT: TestContext = TestContext {
 };
 
 /// SUBACK MUST contain a reason code for each Topic Filter in the SUBSCRIBE [MQTT-3.8.4-6].
-async fn suback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SUBACK_REASON_COUNT;
-
+async fn suback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-suback-count");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -323,15 +300,15 @@ async fn suback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Test
     match client.recv().await? {
         Packet::SubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_codes.len() == 3 {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!("Expected 3 reason codes, got {}", ack.reason_codes.len()),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Expected 3 reason codes, got {}",
+                    ack.reason_codes.len()
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other)),
+        other => Ok(Outcome::fail_packet("SUBACK(1)", &other)),
     }
 }
 
@@ -342,9 +319,7 @@ const UNSUBACK_REASON_COUNT: TestContext = TestContext {
 };
 
 /// UNSUBACK MUST contain a reason code for each Topic Filter in the UNSUBSCRIBE [MQTT-3.10.4-5].
-async fn unsuback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUBACK_REASON_COUNT;
-
+async fn unsuback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-unsuback-count");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -394,15 +369,15 @@ async fn unsuback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Te
     match client.recv().await? {
         Packet::UnsubAck(ack) if ack.packet_id == 2 => {
             if ack.reason_codes.len() == 3 {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!("Expected 3 reason codes, got {}", ack.reason_codes.len()),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Expected 3 reason codes, got {}",
+                    ack.reason_codes.len()
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "UNSUBACK(2)", &other)),
+        other => Ok(Outcome::fail_packet("UNSUBACK(2)", &other)),
     }
 }
 
@@ -415,15 +390,12 @@ const SHARED_SUB: TestContext = TestContext {
 };
 
 /// Shared subscriptions ($share/group/topic) are accepted [MQTT-4.8.2].
-async fn shared_subscription(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SHARED_SUB;
-
+async fn shared_subscription(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-shared-sub");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.properties.shared_subscription_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker reported Shared Subscription Available = false",
         ));
     }
@@ -434,18 +406,15 @@ async fn shared_subscription(config: TestConfig<'_>) -> anyhow::Result<TestResul
     match client.recv().await? {
         Packet::SubAck(ack) if ack.packet_id == 1 => {
             if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "SUBACK reason code indicates failure: {:?}",
-                        ack.reason_codes
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "SUBACK reason code indicates failure: {:?}",
+                    ack.reason_codes
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "SUBACK(1)", &other)),
+        other => Ok(Outcome::fail_packet("SUBACK(1)", &other)),
     }
 }
 
@@ -458,15 +427,12 @@ const SUB_ID: TestContext = TestContext {
 };
 
 /// Subscription Identifier MUST be returned in matching PUBLISH [MQTT-3.8.2-2].
-async fn subscription_identifier(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SUB_ID;
-
+async fn subscription_identifier(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-id");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.properties.subscription_ids_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker reported Subscription Identifiers Available = false",
         ));
     }
@@ -498,19 +464,15 @@ async fn subscription_identifier(config: TestConfig<'_>) -> anyhow::Result<TestR
     match client.recv().await? {
         Packet::Publish(p) if p.topic == "mqtt/test/sub/subid" => {
             if p.properties.subscription_identifier == Some(42) {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Expected subscription_identifier=42, got {:?}",
-                        p.properties.subscription_identifier
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Expected subscription_identifier=42, got {:?}",
+                    p.properties.subscription_identifier
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
+        other => Ok(Outcome::fail_packet(
             "PUBLISH on topic \"mqtt/test/sub/subid\"",
             &other,
         )),
@@ -524,9 +486,7 @@ const NO_LOCAL: TestContext = TestContext {
 };
 
 /// no_local=true: server MUST NOT send messages published by the same client [MQTT-3.8.3-3].
-async fn no_local_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = NO_LOCAL;
-
+async fn no_local_flag(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-no-local");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -554,18 +514,13 @@ async fn no_local_flag(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
 
     // Expect NO message — short timeout is sufficient to confirm absence.
     match client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/no_local" => Ok(TestResult::fail(
-            &ctx,
-            "Received own PUBLISH despite no_local=true",
-        )),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "no packet (no_local)",
-            &other,
-        )),
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/no_local" => {
+            Ok(Outcome::fail("Received own PUBLISH despite no_local=true"))
+        }
+        Ok(other) => Ok(Outcome::fail_packet("no packet (no_local)", &other)),
     }
 }
 
@@ -576,18 +531,13 @@ const RETAIN_AS_PUB: TestContext = TestContext {
 };
 
 /// retain_as_published=true: retain flag MUST be preserved on delivery [MQTT-3.8.3-4].
-async fn retain_as_published(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_AS_PUB;
-
+async fn retain_as_published(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let pub_params_conn = ConnectParams::new("mqtt-test-rap-pub");
     let (mut pub_client, connack) =
         client::connect(config.addr, &pub_params_conn, config.recv_timeout).await?;
 
     if connack.properties.retain_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
-            "Broker reported Retain Available = false",
-        ));
+        return Ok(Outcome::skip("Broker reported Retain Available = false"));
     }
 
     // Publish retained message
@@ -617,10 +567,9 @@ async fn retain_as_published(config: TestConfig<'_>) -> anyhow::Result<TestResul
     sub_client.send_subscribe(&sub).await?;
     sub_client.recv().await?; // SUBACK
 
-    match expect_publish(&mut sub_client, &ctx, "mqtt/test/sub/rap").await {
-        Ok(p) if p.retain => Ok(TestResult::pass(&ctx)),
-        Ok(_) => Ok(TestResult::fail(
-            &ctx,
+    match expect_publish(&mut sub_client, "mqtt/test/sub/rap").await {
+        Ok(p) if p.retain => Ok(Outcome::Pass),
+        Ok(_) => Ok(Outcome::fail(
             "Received PUBLISH but retain flag was cleared",
         )),
         Err(r) => Ok(r),
@@ -634,19 +583,14 @@ const RETAIN_HANDLING_1: TestContext = TestContext {
 };
 
 /// retain_handling=1: retained messages sent only on NEW subscription [MQTT-3.8.3-5].
-async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_HANDLING_1;
-
+async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     // Publish a retained message
     let pub_conn = ConnectParams::new("mqtt-test-rh1-pub");
     let (mut pub_client, connack) =
         client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     if connack.properties.retain_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
-            "Broker reported Retain Available = false",
-        ));
+        return Ok(Outcome::skip("Broker reported Retain Available = false"));
     }
 
     pub_client
@@ -676,7 +620,7 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     sub_client.recv().await?; // SUBACK
 
     // Should receive retained message on first subscribe
-    if let Err(r) = expect_publish(&mut sub_client, &ctx, "mqtt/test/sub/rh1").await {
+    if let Err(r) = expect_publish(&mut sub_client, "mqtt/test/sub/rh1").await {
         return Ok(r);
     }
 
@@ -698,18 +642,13 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
     // Should NOT receive retained message again — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => Ok(Outcome::fail(
             "Retained message sent again on re-subscription",
         )),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "no packet on re-subscription",
-            &other,
-        )),
+        Ok(other) => Ok(Outcome::fail_packet("no packet on re-subscription", &other)),
     }
 }
 
@@ -720,19 +659,14 @@ const RETAIN_HANDLING_2: TestContext = TestContext {
 };
 
 /// retain_handling=2: retained messages MUST NOT be sent on subscribe [MQTT-3.8.3-5].
-async fn retain_handling_2(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_HANDLING_2;
-
+async fn retain_handling_2(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     // Publish a retained message
     let pub_conn = ConnectParams::new("mqtt-test-rh2-pub");
     let (mut pub_client, connack) =
         client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     if connack.properties.retain_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
-            "Broker reported Retain Available = false",
-        ));
+        return Ok(Outcome::skip("Broker reported Retain Available = false"));
     }
 
     pub_client
@@ -763,15 +697,13 @@ async fn retain_handling_2(config: TestConfig<'_>) -> anyhow::Result<TestResult>
 
     // Should NOT receive any retained message — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh2" => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh2" => Ok(Outcome::fail(
             "Retained message delivered despite retain_handling=2",
         )),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
+        Ok(other) => Ok(Outcome::fail_packet(
             "no packet (retain_handling=2)",
             &other,
         )),
@@ -788,9 +720,7 @@ const UNSUB_STOPS: TestContext = TestContext {
 
 /// After receiving a valid UNSUBSCRIBE, the server MUST stop adding new
 /// messages matching the removed filter [MQTT-3.10.4-6].
-async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUB_STOPS;
-
+async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/sub/unsub_stops";
     let mut client = client::connect_and_subscribe(
         config.addr,
@@ -808,11 +738,7 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
     match client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {}
         other => {
-            return Ok(TestResult::fail_packet(
-                &ctx,
-                "PUBLISH before unsubscribe",
-                &other,
-            ));
+            return Ok(Outcome::fail_packet("PUBLISH before unsubscribe", &other));
         }
     }
 
@@ -821,7 +747,7 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
     client.send_unsubscribe(&unsub).await?;
     match client.recv().await? {
         Packet::UnsubAck(_) => {}
-        other => return Ok(TestResult::fail_packet(&ctx, "UNSUBACK", &other)),
+        other => return Ok(Outcome::fail_packet("UNSUBACK", &other)),
     }
 
     // Publish again — should NOT be delivered
@@ -830,14 +756,13 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Te
         .await?;
 
     match client.recv_with_timeout(Duration::from_secs(1)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::fail(
-            &ctx,
-            "Message delivered after UNSUBSCRIBE",
-        )),
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p)) if p.topic == topic => {
+            Ok(Outcome::fail("Message delivered after UNSUBSCRIBE"))
+        }
+        Ok(_) => Ok(Outcome::Pass),
     }
 }
 
@@ -851,9 +776,7 @@ const OVERLAP_QOS: TestContext = TestContext {
 
 /// When a client has overlapping subscriptions, the server MUST deliver
 /// the message at the maximum QoS of all matching subscriptions [MQTT-3.3.4-2].
-async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = OVERLAP_QOS;
-
+async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-overlap-qos");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -886,7 +809,7 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Re
     }
 
     // Subscriber should receive at QoS 1 (the higher of the two)
-    let p = match expect_publish(&mut client, &ctx, "mqtt/test/sub/overlap/exact").await {
+    let p = match expect_publish(&mut client, "mqtt/test/sub/overlap/exact").await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
@@ -894,12 +817,12 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Re
         client.send_puback(pid, 0x00).await?;
     }
     if p.qos == QoS::AtLeastOnce {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Delivered at {:?}, expected AtLeastOnce", p.qos),
-        ))
+        Ok(Outcome::fail(format!(
+            "Delivered at {:?}, expected AtLeastOnce",
+            p.qos
+        )))
     }
 }
 
@@ -913,15 +836,12 @@ const SUB_ID_OVERLAP: TestContext = TestContext {
 
 /// When multiple subscriptions match a publish and each has a Subscription
 /// Identifier, the delivered PUBLISH MUST include all matching IDs [MQTT-3.3.4-3].
-async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SUB_ID_OVERLAP;
-
+async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-subid-overlap");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.properties.subscription_ids_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker reported Subscription Identifiers Available = false",
         ));
     }
@@ -986,17 +906,15 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<T
 
     ids_seen.sort();
     if ids_seen.contains(&10) && ids_seen.contains(&20) {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else if ids_seen.is_empty() {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "No subscription identifiers in delivered PUBLISH",
         ))
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Expected subscription IDs [10, 20], got {ids_seen:?}"),
-        ))
+        Ok(Outcome::fail(format!(
+            "Expected subscription IDs [10, 20], got {ids_seen:?}"
+        )))
     }
 }
 
@@ -1009,9 +927,7 @@ const MULTI_LEVEL_TOPIC: TestContext = TestContext {
 };
 
 /// A subscription to `a/b/#` MUST match `a/b/c/d/e` [MQTT-4.7.1-3].
-async fn multi_level_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MULTI_LEVEL_TOPIC;
-
+async fn multi_level_topic(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
         "mqtt-test-multi-level",
@@ -1024,8 +940,8 @@ async fn multi_level_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     let publish = PublishParams::qos0("mqtt/test/deep/a/b/c/d", b"deep".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match expect_publish(&mut sub, &ctx, "mqtt/test/deep/a/b/c/d").await {
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+    match expect_publish(&mut sub, "mqtt/test/deep/a/b/c/d").await {
+        Ok(_) => Ok(Outcome::Pass),
         Err(r) => Ok(r),
     }
 }
@@ -1037,9 +953,7 @@ const WILDCARD_MIDDLE: TestContext = TestContext {
 };
 
 /// A subscription to `a/+/c` MUST match `a/b/c` but NOT `a/b/d` or `a/b/c/d`.
-async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILDCARD_MIDDLE;
-
+async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
         "mqtt-test-wc-mid",
@@ -1057,19 +971,19 @@ async fn wildcard_middle_level(config: TestConfig<'_>) -> anyhow::Result<TestRes
     let p2 = PublishParams::qos0("mqtt/test/wc/any/extra/end", b"no-match".to_vec());
     pub_client.send_publish(&p2).await?;
 
-    if let Err(r) = expect_publish(&mut sub, &ctx, "mqtt/test/wc/any/end").await {
+    if let Err(r) = expect_publish(&mut sub, "mqtt/test/wc/any/end").await {
         return Ok(r);
     }
 
     // Verify no second message arrives (the non-matching one)
     match sub.recv_with_timeout(Duration::from_millis(500)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p2)) if p2.topic == "mqtt/test/wc/any/extra/end" => Ok(
-            TestResult::fail(&ctx, "'+' wildcard matched across multiple levels"),
-        ),
-        _ => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p2)) if p2.topic == "mqtt/test/wc/any/extra/end" => {
+            Ok(Outcome::fail("'+' wildcard matched across multiple levels"))
+        }
+        _ => Ok(Outcome::Pass),
     }
 }
 
@@ -1081,9 +995,7 @@ const MULTI_FILTERS: TestContext = TestContext {
 
 /// A SUBSCRIBE with multiple topic filters MUST return a SUBACK with
 /// a reason code for each filter [MQTT-3.8.4-6].
-async fn multiple_filters_single_subscribe(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MULTI_FILTERS;
-
+async fn multiple_filters_single_subscribe(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-multi-filter");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1101,19 +1013,15 @@ async fn multiple_filters_single_subscribe(config: TestConfig<'_>) -> anyhow::Re
     match client.recv().await? {
         Packet::SubAck(ack) => {
             if ack.reason_codes.len() == 3 {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!("Expected 3 reason codes, got {}", ack.reason_codes.len()),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Expected 3 reason codes, got {}",
+                    ack.reason_codes.len()
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
-            "SUBACK with 3 reason codes",
-            &other,
-        )),
+        other => Ok(Outcome::fail_packet("SUBACK with 3 reason codes", &other)),
     }
 }
 
@@ -1125,9 +1033,7 @@ const SUB_UPGRADE_QOS: TestContext = TestContext {
 
 /// Re-subscribing to the same topic with a higher QoS MUST upgrade the
 /// subscription. Messages should then be delivered at the new QoS.
-async fn subscription_upgrade_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SUB_UPGRADE_QOS;
-
+async fn subscription_upgrade_qos(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-upgrade");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -1143,21 +1049,20 @@ async fn subscription_upgrade_qos(config: TestConfig<'_>) -> anyhow::Result<Test
         Packet::SubAck(ack) => {
             if ack.reason_codes.first().copied() == Some(0x01) {
                 // Granted QoS 1
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else if ack.reason_codes.first().copied() == Some(0x00) {
                 // Granted QoS 0 — downgraded
-                Ok(TestResult::fail(
-                    &ctx,
+                Ok(Outcome::fail(
                     "Re-subscribe at QoS 1 returned QoS 0 — subscription not upgraded",
                 ))
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!("Unexpected SUBACK reason code: {:?}", ack.reason_codes),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Unexpected SUBACK reason code: {:?}",
+                    ack.reason_codes
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
+        other => Ok(Outcome::fail_packet("SUBACK", &other)),
     }
 }
 
@@ -1169,9 +1074,7 @@ const EMPTY_TOPIC_LEVEL: TestContext = TestContext {
 
 /// An empty topic level like `a//b` is valid per the spec. The broker MUST
 /// deliver messages published to `a//b` to subscribers of `a//b`.
-async fn empty_topic_level(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = EMPTY_TOPIC_LEVEL;
-
+async fn empty_topic_level(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
         "mqtt-test-empty-level",
@@ -1184,8 +1087,8 @@ async fn empty_topic_level(config: TestConfig<'_>) -> anyhow::Result<TestResult>
     let publish = PublishParams::qos0("mqtt/test//empty", b"empty-level".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match expect_publish(&mut sub, &ctx, "mqtt/test//empty").await {
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+    match expect_publish(&mut sub, "mqtt/test//empty").await {
+        Ok(_) => Ok(Outcome::Pass),
         Err(r) => Ok(r),
     }
 }
@@ -1199,9 +1102,7 @@ const CASE_SENSITIVE: TestContext = TestContext {
 /// Topic names are case-sensitive. Subscribe to "mqtt/Test/CASE" and verify
 /// that a publish to "mqtt/test/case" (different case) is NOT received, while
 /// a publish to "mqtt/Test/CASE" IS received [MQTT-4.7.3-3].
-async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CASE_SENSITIVE;
-
+async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
         "mqtt-test-case",
@@ -1221,8 +1122,7 @@ async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResu
 
     match sub.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/case" => {
-            return Ok(TestResult::fail(
-                &ctx,
+            return Ok(Outcome::fail(
                 "Received message on case-different topic — server normalized topic names",
             ));
         }
@@ -1237,8 +1137,8 @@ async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<TestResu
         ))
         .await?;
 
-    match expect_publish(&mut sub, &ctx, "mqtt/Test/CASE").await {
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+    match expect_publish(&mut sub, "mqtt/Test/CASE").await {
+        Ok(_) => Ok(Outcome::Pass),
         Err(r) => Ok(r),
     }
 }
@@ -1252,9 +1152,7 @@ const EXACT_CHAR: TestContext = TestContext {
 /// Non-wildcard levels in a topic filter must match character-for-character.
 /// Subscribe to "mqtt/exact/match", verify "mqtt/exact/match" matches but
 /// "mqtt/exact/matcH" does not [MQTT-4.7.3-4].
-async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = EXACT_CHAR;
-
+async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
         "mqtt-test-exact",
@@ -1274,8 +1172,7 @@ async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
 
     match sub.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/exact/matcH" => {
-            return Ok(TestResult::fail(
-                &ctx,
+            return Ok(Outcome::fail(
                 "Received message on topic differing by one character — not character-for-character matching",
             ));
         }
@@ -1287,8 +1184,8 @@ async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
         .send_publish(&PublishParams::qos0("mqtt/exact/match", b"exact".to_vec()))
         .await?;
 
-    match expect_publish(&mut sub, &ctx, "mqtt/exact/match").await {
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+    match expect_publish(&mut sub, "mqtt/exact/match").await {
+        Ok(_) => Ok(Outcome::Pass),
         Err(r) => Ok(r),
     }
 }
@@ -1303,9 +1200,7 @@ const LEVEL_SEPARATOR_DISTINCT: TestContext = TestContext {
 /// different topics because "a//b" has an empty level between two separators.
 /// Subscribe to "a/b", verify "a/b" matches but "a//b" does not. Then subscribe
 /// to "a//b" and verify "a//b" matches [MQTT-4.7.0-1].
-async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = LEVEL_SEPARATOR_DISTINCT;
-
+async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     // Subscriber 1: subscribe to "mqtt/test/sep/a/b"
     let (mut sub1, mut pub_client) = client::sub_pub_pair(
         config.addr,
@@ -1326,8 +1221,7 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
 
     match sub1.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sep/a//b" => {
-            return Ok(TestResult::fail(
-                &ctx,
+            return Ok(Outcome::fail(
                 "Subscriber to \"a/b\" received message published to \"a//b\" — empty level not treated as distinct",
             ));
         }
@@ -1342,7 +1236,7 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    if let Err(r) = expect_publish(&mut sub1, &ctx, "mqtt/test/sep/a/b").await {
+    if let Err(r) = expect_publish(&mut sub1, "mqtt/test/sep/a/b").await {
         return Ok(r);
     }
 
@@ -1363,8 +1257,8 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match expect_publish(&mut sub2, &ctx, "mqtt/test/sep/a//b").await {
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+    match expect_publish(&mut sub2, "mqtt/test/sep/a//b").await {
+        Ok(_) => Ok(Outcome::Pass),
         Err(r) => Ok(r),
     }
 }
@@ -1384,9 +1278,7 @@ const UNSUB_STOPS_NEW: TestContext = TestContext {
 /// 1. Explicitly verifying delivery works before unsubscribe
 /// 2. Waiting for UNSUBACK before publishing
 /// 3. Publishing multiple messages after unsubscribe with a small delay
-async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUB_STOPS_NEW;
-
+async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/unsub/stop";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -1405,11 +1297,7 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
     match sub_client.recv().await? {
         Packet::Publish(p) if p.topic == topic => {}
         other => {
-            return Ok(TestResult::fail_packet(
-                &ctx,
-                "PUBLISH before unsubscribe",
-                &other,
-            ));
+            return Ok(Outcome::fail_packet("PUBLISH before unsubscribe", &other));
         }
     }
 
@@ -1418,7 +1306,7 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
     sub_client.send_unsubscribe(&unsub).await?;
     match sub_client.recv().await? {
         Packet::UnsubAck(_) => {}
-        other => return Ok(TestResult::fail_packet(&ctx, "UNSUBACK", &other)),
+        other => return Ok(Outcome::fail_packet("UNSUBACK", &other)),
     }
 
     // Step 3: Small delay to ensure server has processed the unsubscribe
@@ -1436,14 +1324,13 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> anyhow::Resul
 
     // Step 5: Verify none arrive
     match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p)) if p.topic == topic => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p)) if p.topic == topic => Ok(Outcome::fail(
             "Message delivered after UNSUBSCRIBE + UNSUBACK",
         )),
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Ok(_) => Ok(Outcome::Pass),
     }
 }
 
@@ -1457,9 +1344,7 @@ const UNSUB_BUFFERED: TestContext = TestContext {
 /// already buffered or in-flight before the UNSUBACK was sent [MQTT-3.10.4-3].
 /// This is a MAY — we just check the server behaves reasonably (does not crash,
 /// UNSUBACK is received) regardless of whether buffered messages still arrive.
-async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUB_BUFFERED;
-
+async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/unsub/buffered";
 
     // Subscribe at QoS 1 so messages are properly queued
@@ -1470,7 +1355,7 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result
     client.send_subscribe(&sub).await?;
     match client.recv().await? {
         Packet::SubAck(_) => {}
-        other => return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
+        other => return Ok(Outcome::fail_packet("SUBACK", &other)),
     }
 
     // Publish several QoS 1 messages from a separate client to build up a buffer
@@ -1530,16 +1415,15 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result
     }
 
     if !got_unsuback {
-        return Ok(TestResult::fail(&ctx, "UNSUBACK not received"));
+        return Ok(Outcome::fail("UNSUBACK not received"));
     }
 
     if buffered_count > 0 {
         // Server delivered buffered messages — MAY behaviour detected
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
         // Server did not deliver any buffered messages — also valid, but MAY not detected
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Server did not deliver any buffered messages after UNSUBSCRIBE (MAY behaviour not detected)",
         ))
     }
@@ -1553,9 +1437,7 @@ const RETAIN_HANDLING_0: TestContext = TestContext {
 
 /// With retain_handling=0 (the default), any existing retained messages matching
 /// the topic filter MUST be re-sent on subscribe [MQTT-3.8.4-4].
-async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RETAIN_HANDLING_0;
-
+async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/sub/rh0";
 
     // Publish a retained message
@@ -1564,10 +1446,7 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
         client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
 
     if connack.properties.retain_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
-            "Broker reported Retain Available = false",
-        ));
+        return Ok(Outcome::skip("Broker reported Retain Available = false"));
     }
 
     pub_client
@@ -1594,7 +1473,7 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
     sub_client.recv().await?; // SUBACK
 
     // Must receive the retained message
-    if let Err(r) = expect_publish(&mut sub_client, &ctx, topic).await {
+    if let Err(r) = expect_publish(&mut sub_client, topic).await {
         return Ok(r);
     }
 
@@ -1615,8 +1494,8 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
     sub_client.recv().await?; // SUBACK
 
     // Must receive retained message again
-    match expect_publish(&mut sub_client, &ctx, topic).await {
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+    match expect_publish(&mut sub_client, topic).await {
+        Ok(_) => Ok(Outcome::Pass),
         Err(r) => Ok(r),
     }
 }
@@ -1630,9 +1509,7 @@ const QOS_DOWNGRADE_1_TO_0: TestContext = TestContext {
 /// The QoS of delivered messages MUST be the minimum of the published QoS and
 /// the maximum QoS granted by the server [MQTT-3.8.4-8]. Publish QoS 1, subscribe
 /// at QoS 0, verify delivery at QoS 0.
-async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS_DOWNGRADE_1_TO_0;
-
+async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/sub/qos1to0";
 
     let (mut sub_client, mut pub_client) = client::sub_pub_pair(
@@ -1653,20 +1530,17 @@ async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> anyhow::Result<Te
     let _ = pub_client.recv().await;
 
     // Subscriber should receive at QoS 0 (no packet_id)
-    let p = match expect_publish(&mut sub_client, &ctx, topic).await {
+    let p = match expect_publish(&mut sub_client, topic).await {
         Ok(p) => p,
         Err(r) => return Ok(r),
     };
     if p.qos == QoS::AtMostOnce {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Delivered at {:?}, expected AtMostOnce (QoS 1 pub, QoS 0 sub)",
-                p.qos
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Delivered at {:?}, expected AtMostOnce (QoS 1 pub, QoS 0 sub)",
+            p.qos
+        )))
     }
 }
 
@@ -1678,9 +1552,7 @@ const UNSUB_INFLIGHT_QOS1: TestContext = TestContext {
 
 /// After UNSUBSCRIBE, the server MUST complete delivery of any QoS 1 messages
 /// that are already in-flight [MQTT-3.10.4-2].
-async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUB_INFLIGHT_QOS1;
-
+async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/sub/unsub-inflight";
 
     // Subscriber at QoS 1
@@ -1691,7 +1563,7 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
     sub_client.send_subscribe(&sub).await?;
     match sub_client.recv().await? {
         Packet::SubAck(_) => {}
-        other => return Ok(TestResult::fail_packet(&ctx, "SUBACK", &other)),
+        other => return Ok(Outcome::fail_packet("SUBACK", &other)),
     }
 
     // Publisher sends several QoS 1 messages rapidly
@@ -1717,21 +1589,17 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
             let unsub = UnsubscribeParams::simple(2, topic);
             sub_client.send_unsubscribe(&unsub).await?;
         }
-        Ok(other) => return Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
+        Ok(other) => return Ok(Outcome::fail_packet("PUBLISH", &other)),
         Err(RecvError::Closed) => {
-            return Ok(TestResult::fail(
-                &ctx,
+            return Ok(Outcome::fail(
                 "broker closed connection before delivering message",
             ));
         }
         Err(RecvError::Timeout) => {
-            return Ok(TestResult::fail(
-                &ctx,
-                "No message received before unsubscribe",
-            ));
+            return Ok(Outcome::fail("No message received before unsubscribe"));
         }
         Err(RecvError::Other(e)) => {
-            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
+            return Ok(Outcome::fail(format!("unexpected error: {e:#}")));
         }
     }
 
@@ -1773,16 +1641,16 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
     }
 
     if !got_unsuback {
-        return Ok(TestResult::fail(&ctx, "UNSUBACK not received"));
+        return Ok(Outcome::fail("UNSUBACK not received"));
     }
 
     // The fact that we received messages, unsubscribed, and could still
     // complete in-flight QoS 1 delivery (PUBACK accepted) means the
     // server completed the in-flight delivery.
     if received_before_unsub > 0 {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(&ctx, "No in-flight messages observed"))
+        Ok(Outcome::fail("No in-flight messages observed"))
     }
 }
 
@@ -1796,15 +1664,12 @@ const SHARED_SUB_FORMAT: TestContext = TestContext {
 
 /// The ShareName in `$share/ShareName/TopicFilter` MUST NOT contain '/', '+',
 /// or '#', and MUST be followed by '/' and a Topic Filter [MQTT-4.8.2-2].
-async fn shared_sub_topic_filter_format(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SHARED_SUB_FORMAT;
-
+async fn shared_sub_topic_filter_format(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-shared-fmt");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     if connack.properties.shared_subscription_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker does not support shared subscriptions",
         ));
     }
@@ -1856,15 +1721,12 @@ async fn shared_sub_topic_filter_format(config: TestConfig<'_>) -> anyhow::Resul
     }
 
     if rejected == invalid_topics.len() {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "Only {rejected}/{} invalid shared subscription formats were rejected",
-                invalid_topics.len()
-            ),
-        ))
+        Ok(Outcome::fail(format!(
+            "Only {rejected}/{} invalid shared subscription formats were rejected",
+            invalid_topics.len()
+        )))
     }
 }
 
@@ -1876,9 +1738,7 @@ const SHARED_SUB_QOS: TestContext = TestContext {
 
 /// When delivering to shared subscribers, the server MUST respect each
 /// subscriber's granted QoS level [MQTT-4.8.2-3].
-async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SHARED_SUB_QOS;
-
+async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/shared/qos";
     let shared_filter = "$share/qosgrp/mqtt/test/shared/qos";
 
@@ -1887,8 +1747,7 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<Test
     let (mut sub_a, connack) = client::connect(config.addr, &params_a, config.recv_timeout).await?;
 
     if connack.properties.shared_subscription_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker does not support shared subscriptions",
         ));
     }
@@ -1942,12 +1801,11 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<Test
     }
 
     if qos_violation {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Server delivered messages exceeding the subscriber's granted QoS",
         ))
     } else {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     }
 }
 
@@ -1960,9 +1818,7 @@ const SHARED_SUB_QOS2_RECONNECT: TestContext = TestContext {
 /// If the connection to the chosen shared subscriber breaks during QoS 2
 /// delivery, the server MUST complete delivery when the client reconnects
 /// [MQTT-4.8.2-4].
-async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SHARED_SUB_QOS2_RECONNECT;
-
+async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let sub_id = "mqtt-test-shared-q2-recon";
     let pub_id = "mqtt-test-shared-q2-recon-pub";
     let topic = "mqtt/test/shared/qos2recon";
@@ -1975,8 +1831,7 @@ async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Tes
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
 
     if connack.properties.shared_subscription_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker does not support shared subscriptions",
         ));
     }
@@ -2022,30 +1877,26 @@ async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     if !connack2.session_present {
         cleanup_session(config.addr, sub_id, config.recv_timeout).await;
-        return Ok(TestResult::fail(
-            &ctx,
+        return Ok(Outcome::fail(
             "Broker did not preserve session (session_present=0)",
         ));
     }
 
     // 5. Should receive the queued QoS 2 message.
     let result = match sub_client2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
-        Ok(Packet::PubRel(_)) => TestResult::pass(&ctx),
-        Ok(other) => TestResult::fail_packet(
-            &ctx,
+        Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
+        Ok(Packet::PubRel(_)) => Outcome::Pass,
+        Ok(other) => Outcome::fail_packet(
             "PUBLISH or PUBREL from shared subscription on reconnect",
             &other,
         ),
-        Err(RecvError::Closed) => TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) => Outcome::fail(
             "broker closed connection before delivering QoS 2 message after reconnect",
         ),
-        Err(RecvError::Timeout) => TestResult::fail(
-            &ctx,
-            "No QoS 2 message delivered to shared subscriber after reconnect",
-        ),
-        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
+        Err(RecvError::Timeout) => {
+            Outcome::fail("No QoS 2 message delivered to shared subscriber after reconnect")
+        }
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
     };
 
     cleanup_session(config.addr, sub_id, config.recv_timeout).await;
@@ -2062,9 +1913,7 @@ const SHARED_SUB_NACK_DISCARD: TestContext = TestContext {
 /// If a shared subscription client responds with a PUBACK containing Reason
 /// Code >= 0x80, the server MUST discard the message and not attempt to send
 /// it to any other subscriber [MQTT-4.8.2-6].
-async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SHARED_SUB_NACK_DISCARD;
-
+async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let topic = "mqtt/test/shared/nack";
     let shared_filter = "$share/nackgrp/mqtt/test/shared/nack";
 
@@ -2073,8 +1922,7 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
     let (mut sub_a, connack) = client::connect(config.addr, &params_a, config.recv_timeout).await?;
 
     if connack.properties.shared_subscription_available == Some(false) {
-        return Ok(TestResult::skip(
-            &ctx,
+        return Ok(Outcome::skip(
             "Broker does not support shared subscriptions",
         ));
     }
@@ -2110,11 +1958,7 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
             }
         }
         other => {
-            return Ok(TestResult::fail_packet(
-                &ctx,
-                "PUBLISH on subscriber A",
-                &other,
-            ));
+            return Ok(Outcome::fail_packet("PUBLISH on subscriber A", &other));
         }
     }
 
@@ -2128,17 +1972,16 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
     match sub_b.recv_with_timeout(short_timeout).await {
         Err(RecvError::Timeout) => {
             // Timeout — no message received. This is correct.
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(_)) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(_)) => Ok(Outcome::fail(
             "Server redirected NACKed message to another subscriber (should have discarded)",
         )),
         Ok(_) => {
             // Some other packet — not the message, pass.
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
     }
 }

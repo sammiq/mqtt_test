@@ -59,62 +59,39 @@ pub enum Outcome {
     Skip(String),
 }
 
+impl Outcome {
+    pub fn fail(reason: impl Into<String>) -> Self {
+        Outcome::Fail {
+            message: reason.into(),
+            verbose: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn fail_verbose(reason: impl Into<String>, verbose: impl Into<String>) -> Self {
+        Outcome::Fail {
+            message: reason.into(),
+            verbose: Some(verbose.into()),
+        }
+    }
+
+    pub fn fail_packet(expected: &str, got: &Packet) -> Self {
+        Outcome::Fail {
+            message: format!("Expected {expected}, got {got}"),
+            verbose: Some(format!("Expected {expected}, got {got:?}")),
+        }
+    }
+
+    pub fn skip(reason: impl Into<String>) -> Self {
+        Outcome::Skip(reason.into())
+    }
+}
+
 /// A single compliance test result.
 #[derive(Debug, Clone)]
 pub struct TestResult {
     pub ctx: TestContext,
     pub outcome: Outcome,
-}
-
-impl TestResult {
-    pub fn pass(ctx: &TestContext) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Pass,
-        }
-    }
-
-    pub fn fail(ctx: &TestContext, reason: impl Into<String>) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Fail {
-                message: reason.into(),
-                verbose: None,
-            },
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn fail_verbose(
-        ctx: &TestContext,
-        reason: impl Into<String>,
-        verbose: impl Into<String>,
-    ) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Fail {
-                message: reason.into(),
-                verbose: Some(verbose.into()),
-            },
-        }
-    }
-
-    pub fn fail_packet(ctx: &TestContext, expected: &str, got: &Packet) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Fail {
-                message: format!("Expected {expected}, got {got}"),
-                verbose: Some(format!("Expected {expected}, got {got:?}")),
-            },
-        }
-    }
-
-    pub fn skip(ctx: &TestContext, reason: impl Into<String>) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Skip(reason.into()),
-        }
-    }
 }
 
 /// A named group of related test results.
@@ -124,7 +101,7 @@ pub struct Suite {
 }
 
 /// A boxed, Send-safe test future.
-type TestFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<TestResult>> + Send + 'a>>;
+type TestFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Outcome>> + Send + 'a>>;
 
 /// Collects test futures before execution, deriving the count automatically.
 ///
@@ -147,7 +124,7 @@ impl<'a> SuiteRunner<'a> {
     pub fn add(
         &mut self,
         ctx: TestContext,
-        fut: impl Future<Output = anyhow::Result<TestResult>> + Send + 'a,
+        fut: impl Future<Output = anyhow::Result<Outcome>> + Send + 'a,
     ) {
         self.tests.push((ctx, Box::pin(fut)));
     }
@@ -183,18 +160,8 @@ mod tests {
     };
 
     #[test]
-    fn pass_preserves_context() {
-        let r = TestResult::pass(&CTX);
-        assert_eq!(r.ctx.primary_ref(), "TEST-1");
-        assert_eq!(r.ctx.description, "test description");
-        assert!(matches!(r.ctx.compliance, Compliance::Must));
-        assert!(matches!(r.outcome, Outcome::Pass));
-    }
-
-    #[test]
     fn fail_stores_message() {
-        let r = TestResult::fail(&CTX, "something broke");
-        match r.outcome {
+        match Outcome::fail("something broke") {
             Outcome::Fail { message, verbose } => {
                 assert_eq!(message, "something broke");
                 assert!(verbose.is_none());
@@ -205,8 +172,7 @@ mod tests {
 
     #[test]
     fn fail_verbose_stores_both() {
-        let r = TestResult::fail_verbose(&CTX, "short", "long details");
-        match r.outcome {
+        match Outcome::fail_verbose("short", "long details") {
             Outcome::Fail { message, verbose } => {
                 assert_eq!(message, "short");
                 assert_eq!(verbose.as_deref(), Some("long details"));
@@ -222,8 +188,7 @@ mod tests {
             reason_code: 0x85,
             properties: Properties::default(),
         });
-        let r = TestResult::fail_packet(&CTX, "SUBACK(1)", &connack);
-        match r.outcome {
+        match Outcome::fail_packet("SUBACK(1)", &connack) {
             Outcome::Fail { message, verbose } => {
                 assert!(message.contains("SUBACK(1)"));
                 assert!(message.contains("CONNACK"));
@@ -237,8 +202,7 @@ mod tests {
 
     #[test]
     fn skip_stores_reason() {
-        let r = TestResult::skip(&CTX, "broker does not support feature");
-        match r.outcome {
+        match Outcome::skip("broker does not support feature") {
             Outcome::Skip(reason) => {
                 assert_eq!(reason, "broker does not support feature");
             }
@@ -265,9 +229,18 @@ mod tests {
         let suite = Suite {
             name: "test-suite",
             results: vec![
-                TestResult::pass(&CTX),
-                TestResult::fail(&CTX, "oops"),
-                TestResult::skip(&CTX, "n/a"),
+                TestResult {
+                    ctx: CTX,
+                    outcome: Outcome::Pass,
+                },
+                TestResult {
+                    ctx: CTX,
+                    outcome: Outcome::fail("oops"),
+                },
+                TestResult {
+                    ctx: CTX,
+                    outcome: Outcome::skip("n/a"),
+                },
             ],
         };
         assert_eq!(suite.name, "test-suite");

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 /// Clean up a persistent session by reconnecting with clean_start=true.
 async fn cleanup_session(addr: &str, client_id: &str, recv_timeout: Duration) {
@@ -43,9 +43,7 @@ const SESSION_PRESENT: TestContext = TestContext {
 
 /// If a session exists and the client reconnects with Clean Start=0,
 /// session_present MUST be 1 in the CONNACK [MQTT-3.1.2-5].
-async fn session_present_on_resume(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_PRESENT;
-
+async fn session_present_on_resume(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let client_id = "mqtt-test-session-present";
 
     // First connection: Clean Start=1, set Session Expiry so the session survives.
@@ -67,10 +65,9 @@ async fn session_present_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
 
     if connack.session_present {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "session_present=0 on reconnect with Clean Start=0 (expected 1)",
         ))
     }
@@ -84,9 +81,7 @@ const QOS1_REDELIVER: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, any QoS 1 messages that were
 /// not acknowledged MUST be redelivered [MQTT-4.4.0-1].
-async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS1_REDELIVER;
-
+async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let sub_id = "mqtt-test-qos1-redel-sub";
     let pub_id = "mqtt-test-qos1-redel-pub";
     let topic = "mqtt/test/session/qos1";
@@ -129,21 +124,19 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     if !connack.session_present {
         cleanup_session(config.addr, sub_id, config.recv_timeout).await;
-        return Ok(TestResult::fail(
-            &ctx,
+        return Ok(Outcome::fail(
             "Broker did not preserve session (session_present=0); cannot test redelivery",
         ));
     }
 
     // 5. Check for the redelivered message.
     let result = match sub_client2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
-        Ok(other) => TestResult::fail_packet(&ctx, "redelivered PUBLISH on session resume", &other),
-        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
-            &ctx,
-            "No queued QoS 1 message redelivered after session resume",
-        ),
-        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
+        Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
+        Ok(other) => Outcome::fail_packet("redelivered PUBLISH on session resume", &other),
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => {
+            Outcome::fail("No queued QoS 1 message redelivered after session resume")
+        }
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
     };
     // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
@@ -160,9 +153,7 @@ const QOS2_REDELIVER: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, incomplete QoS 2 flows
 /// MUST be resumed [MQTT-4.3.3 / MQTT-4.4].
-async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = QOS2_REDELIVER;
-
+async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let sub_id = "mqtt-test-qos2-redel-sub";
     let pub_id = "mqtt-test-qos2-redel-pub";
     let topic = "mqtt/test/session/qos2";
@@ -216,29 +207,25 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Tes
 
     if !connack.session_present {
         cleanup_session(config.addr, sub_id, config.recv_timeout).await;
-        return Ok(TestResult::fail(
-            &ctx,
+        return Ok(Outcome::fail(
             "Broker did not preserve session (session_present=0); cannot test redelivery",
         ));
     }
 
     // 5. Should receive the queued QoS 2 message (as PUBLISH or PUBREL depending on state).
     let result = match sub_client2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
+        Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
         Ok(Packet::PubRel(_)) => {
             // The broker may resume at the PUBREL stage — this is also valid.
-            TestResult::pass(&ctx)
+            Outcome::Pass
         }
-        Ok(other) => TestResult::fail_packet(
-            &ctx,
-            "redelivered PUBLISH or PUBREL on session resume",
-            &other,
-        ),
-        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
-            &ctx,
-            "No queued QoS 2 message redelivered after session resume",
-        ),
-        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
+        Ok(other) => {
+            Outcome::fail_packet("redelivered PUBLISH or PUBREL on session resume", &other)
+        }
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => {
+            Outcome::fail("No queued QoS 2 message redelivered after session resume")
+        }
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
     };
     // AutoDisconnect on sub_client2 sends DISCONNECT on drop.
 
@@ -255,11 +242,7 @@ const SUB_PERSISTS: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, its subscriptions from
 /// the previous session MUST still be active [MQTT-3.1.2-6].
-async fn subscription_persists_across_sessions(
-    config: TestConfig<'_>,
-) -> anyhow::Result<TestResult> {
-    let ctx = SUB_PERSISTS;
-
+async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let sub_id = "mqtt-test-sub-persist";
     let pub_id = "mqtt-test-sub-persist-pub";
     let topic = "mqtt/test/session/persist";
@@ -283,8 +266,7 @@ async fn subscription_persists_across_sessions(
 
     if !connack.session_present {
         cleanup_session(config.addr, sub_id, config.recv_timeout).await;
-        return Ok(TestResult::fail(
-            &ctx,
+        return Ok(Outcome::fail(
             "Broker did not preserve session (session_present=0); cannot test subscription persistence",
         ));
     }
@@ -299,13 +281,12 @@ async fn subscription_persists_across_sessions(
 
     // 4. The reconnected subscriber should receive it without re-subscribing.
     let result = match c2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
-        Ok(other) => TestResult::fail_packet(&ctx, "PUBLISH from persisted subscription", &other),
-        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
-            &ctx,
-            "No message received — subscription did not persist across reconnect",
-        ),
-        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
+        Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
+        Ok(other) => Outcome::fail_packet("PUBLISH from persisted subscription", &other),
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => {
+            Outcome::fail("No message received — subscription did not persist across reconnect")
+        }
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
     };
     // AutoDisconnect on c2 sends DISCONNECT on drop.
 
@@ -322,9 +303,7 @@ const SESSION_EXPIRY_ZERO: TestContext = TestContext {
 
 /// A Session Expiry Interval of 0 means the session state MUST be discarded
 /// when the connection closes [MQTT-3.1.2-10].
-async fn session_expiry_zero(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_EXPIRY_ZERO;
-
+async fn session_expiry_zero(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let client_id = "mqtt-test-session-exp-zero";
 
     // First connection: Session Expiry Interval = 0 (explicit).
@@ -342,10 +321,9 @@ async fn session_expiry_zero(config: TestConfig<'_>) -> anyhow::Result<TestResul
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
 
     if !connack.session_present {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "session_present=1 despite Session Expiry Interval=0",
         ))
     }
@@ -359,9 +337,7 @@ const SESSION_EXPIRY_MAX: TestContext = TestContext {
 
 /// Session Expiry Interval of 0xFFFFFFFF means the session does not expire.
 /// Reconnecting with Clean Start=0 should find the session [MQTT-3.1.2-11].
-async fn session_expiry_max(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_EXPIRY_MAX;
-
+async fn session_expiry_max(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let client_id = "mqtt-test-session-exp-max";
 
     // First connection with max session expiry.
@@ -380,10 +356,9 @@ async fn session_expiry_max(config: TestConfig<'_>) -> anyhow::Result<TestResult
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
 
     if connack.session_present {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "session_present=0 despite Session Expiry Interval=0xFFFFFFFF",
         ))
     }
@@ -397,9 +372,7 @@ const SESSION_TAKEOVER: TestContext = TestContext {
 
 /// If a client connects with a Client Identifier already in use, the server
 /// MUST disconnect the existing client [MQTT-3.1.4-3].
-async fn session_takeover(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_TAKEOVER;
-
+async fn session_takeover(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let client_id = "mqtt-test-session-takeover";
 
     // First connection.
@@ -415,11 +388,11 @@ async fn session_takeover(config: TestConfig<'_>) -> anyhow::Result<TestResult> 
 
     // c1 should have been disconnected by the server.
     let result = match c1.recv().await {
-        Err(RecvError::Closed) => TestResult::pass(&ctx),
-        Err(RecvError::Timeout) => TestResult::fail(&ctx, "broker did not disconnect (timed out)"),
-        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
-        Ok(Packet::Disconnect(_)) => TestResult::pass(&ctx),
-        Ok(other) => TestResult::fail_packet(&ctx, "DISCONNECT or connection close", &other),
+        Err(RecvError::Closed) => Outcome::Pass,
+        Err(RecvError::Timeout) => Outcome::fail("broker did not disconnect (timed out)"),
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
+        Ok(Packet::Disconnect(_)) => Outcome::Pass,
+        Ok(other) => Outcome::fail_packet("DISCONNECT or connection close", &other),
     };
 
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
@@ -436,9 +409,7 @@ const SESSION_EXPIRY_DISCARD: TestContext = TestContext {
 /// The server MUST discard session state when the network connection is closed
 /// and the Session Expiry Interval has passed [MQTT-4.1.0-1/2]. Connect with a
 /// 2-second expiry, disconnect, wait 3 seconds, then verify the session is gone.
-async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_EXPIRY_DISCARD;
-
+async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let client_id = "mqtt-test-session-exp-discard";
     let topic = "mqtt/test/session/expiry_discard";
 
@@ -463,8 +434,7 @@ async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<TestRe
 
     if !connack_before.session_present {
         cleanup_session(config.addr, client_id, config.recv_timeout).await;
-        return Ok(TestResult::fail(
-            &ctx,
+        return Ok(Outcome::fail(
             "Session not present immediately after disconnect (expected session_present=1)",
         ));
     }
@@ -480,10 +450,9 @@ async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<TestRe
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
 
     if !connack_after.session_present {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
+        Ok(Outcome::fail(
             "Session still present after Session Expiry Interval passed (expected session_present=0)",
         ))
     }
@@ -499,9 +468,7 @@ const SESSION_PRESENT_PERSISTENCE: TestContext = TestContext {
 /// the CONNACK MUST contain Session Present=1 [MQTT-3.2.2-2] and the subscription
 /// must deliver messages without re-subscribing. This verifies the end-to-end
 /// persistence guarantee beyond just the session_present flag.
-async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_PRESENT_PERSISTENCE;
-
+async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let client_id = "mqtt-test-session-pres-persist";
     let pub_id = "mqtt-test-session-pres-pub";
     let topic = "mqtt/test/session/present_persist";
@@ -541,21 +508,19 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
 
     if !connack.session_present {
         cleanup_session(config.addr, client_id, config.recv_timeout).await;
-        return Ok(TestResult::fail(
-            &ctx,
+        return Ok(Outcome::fail(
             "Session Present=0 on reconnect with Clean Start=0 (expected 1)",
         ));
     }
 
     // 4. Verify queued message is delivered — proves session state was preserved.
     let result = match c2.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => TestResult::pass(&ctx),
-        Ok(other) => TestResult::fail_packet(&ctx, "queued PUBLISH from persisted session", &other),
-        Err(RecvError::Timeout) | Err(RecvError::Closed) => TestResult::fail(
-            &ctx,
+        Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
+        Ok(other) => Outcome::fail_packet("queued PUBLISH from persisted session", &other),
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => Outcome::fail(
             "Session Present=1 but queued message not delivered — session state incomplete",
         ),
-        Err(RecvError::Other(e)) => TestResult::fail(&ctx, format!("unexpected error: {e:#}")),
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
     };
 
     cleanup_session(config.addr, client_id, config.recv_timeout).await;

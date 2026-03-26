@@ -7,7 +7,7 @@
 
 use crate::client::{self, RawClient, RecvError};
 use crate::codec::{ConnectParams, Packet};
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("MALFORMED PACKETS");
@@ -59,13 +59,13 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 /// - DISCONNECT packet → pass.
 /// - Timeout → fail (broker ignored the malformed packet).
 /// - Other error → fail (unexpected).
-async fn expect_disconnect(client: &mut RawClient, ctx: &TestContext) -> TestResult {
+async fn expect_disconnect(client: &mut RawClient) -> Outcome {
     match client.recv().await {
-        Err(RecvError::Closed) => TestResult::pass(ctx),
-        Err(RecvError::Timeout) => TestResult::fail(ctx, "broker did not disconnect (timed out)"),
-        Err(RecvError::Other(e)) => TestResult::fail(ctx, format!("unexpected error: {e:#}")),
-        Ok(Packet::Disconnect(_)) => TestResult::pass(ctx),
-        Ok(other) => TestResult::fail_packet(ctx, "disconnect or connection close", &other),
+        Err(RecvError::Closed) => Outcome::Pass,
+        Err(RecvError::Timeout) => Outcome::fail("broker did not disconnect (timed out)"),
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
+        Ok(Packet::Disconnect(_)) => Outcome::Pass,
+        Ok(other) => Outcome::fail_packet("disconnect or connection close", &other),
     }
 }
 
@@ -83,38 +83,30 @@ async fn expect_disconnect(client: &mut RawClient, ctx: &TestContext) -> TestRes
 /// - CONNACK with reason >= 0x80 → wait for connection close (MUST).
 /// - CONNACK with reason 0x00 → fail (broker accepted malformed CONNECT).
 /// - Timeout → fail (broker ignored the malformed packet).
-async fn expect_connect_reject(client: &mut RawClient, ctx: &TestContext) -> TestResult {
+async fn expect_connect_reject(client: &mut RawClient) -> Outcome {
     match client.recv().await {
-        Err(RecvError::Closed) => TestResult::pass(ctx),
-        Err(RecvError::Timeout) => TestResult::fail(ctx, "broker did not disconnect (timed out)"),
-        Err(RecvError::Other(e)) => TestResult::fail(ctx, format!("unexpected error: {e:#}")),
+        Err(RecvError::Closed) => Outcome::Pass,
+        Err(RecvError::Timeout) => Outcome::fail("broker did not disconnect (timed out)"),
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
         Ok(Packet::ConnAck(ack)) if ack.reason_code >= 0x80 => {
             // Broker rejected — now verify it closes the connection [MQTT-3.1.4-1].
             match client.recv().await {
-                Err(RecvError::Closed) => TestResult::pass(ctx),
-                Err(RecvError::Timeout) => TestResult::fail(
-                    ctx,
-                    format!(
-                        "Broker sent CONNACK(reason=0x{:02X}) but did not close the connection",
-                        ack.reason_code,
-                    ),
-                ),
+                Err(RecvError::Closed) => Outcome::Pass,
+                Err(RecvError::Timeout) => Outcome::fail(format!(
+                    "Broker sent CONNACK(reason=0x{:02X}) but did not close the connection",
+                    ack.reason_code,
+                )),
                 Err(RecvError::Other(e)) => {
-                    TestResult::fail(ctx, format!("unexpected error after CONNACK: {e:#}"))
+                    Outcome::fail(format!("unexpected error after CONNACK: {e:#}"))
                 }
-                Ok(other) => {
-                    TestResult::fail_packet(ctx, "connection close after error CONNACK", &other)
-                }
+                Ok(other) => Outcome::fail_packet("connection close after error CONNACK", &other),
             }
         }
-        Ok(Packet::ConnAck(ack)) => TestResult::fail(
-            ctx,
-            format!(
-                "Expected connection close or error CONNACK, got CONNACK(reason=0x{:02X}, session_present={})",
-                ack.reason_code, ack.session_present,
-            ),
-        ),
-        Ok(other) => TestResult::fail_packet(ctx, "connection close or error CONNACK", &other),
+        Ok(Packet::ConnAck(ack)) => Outcome::fail(format!(
+            "Expected connection close or error CONNACK, got CONNACK(reason=0x{:02X}, session_present={})",
+            ack.reason_code, ack.session_present,
+        )),
+        Ok(other) => Outcome::fail_packet("connection close or error CONNACK", &other),
     }
 }
 
@@ -128,9 +120,7 @@ const RESERVED_FLAGS: TestContext = TestContext {
 
 /// The CONNECT packet's connect-flags byte has a reserved bit (bit 0) that
 /// MUST be 0. Sending it as 1 is a malformed packet [MQTT-3.1.2-3].
-async fn reserved_connect_flags(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RESERVED_FLAGS;
-
+async fn reserved_connect_flags(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Hand-craft a CONNECT with reserved flag bit 0 = 1.
@@ -148,7 +138,7 @@ async fn reserved_connect_flags(config: TestConfig<'_>) -> anyhow::Result<TestRe
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const BAD_REMAINING_LEN: TestContext = TestContext {
@@ -159,9 +149,7 @@ const BAD_REMAINING_LEN: TestContext = TestContext {
 
 /// A packet with a remaining-length field that uses more than 4 bytes
 /// (continuation bit set on all 4 bytes) is malformed [MQTT-1.5.5-1].
-async fn malformed_remaining_length(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = BAD_REMAINING_LEN;
-
+async fn malformed_remaining_length(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Send a CONNECT-like packet with a 5-byte remaining length (all continuation bits set).
@@ -173,7 +161,7 @@ async fn malformed_remaining_length(config: TestConfig<'_>) -> anyhow::Result<Te
     ];
     client.send_raw(bad_packet).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
@@ -184,9 +172,7 @@ const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
 
 /// A PUBLISH with an empty topic string and no Topic Alias property is
 /// a protocol error [MQTT-3.3.2-8].
-async fn publish_empty_topic_no_alias(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = EMPTY_TOPIC_NO_ALIAS;
-
+async fn publish_empty_topic_no_alias(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-empty-topic");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -201,7 +187,7 @@ async fn publish_empty_topic_no_alias(config: TestConfig<'_>) -> anyhow::Result<
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const TOPIC_ALIAS_ZERO: TestContext = TestContext {
@@ -211,9 +197,7 @@ const TOPIC_ALIAS_ZERO: TestContext = TestContext {
 };
 
 /// A Topic Alias of 0 is not permitted — the server MUST disconnect [MQTT-3.3.2-8].
-async fn publish_topic_alias_zero(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TOPIC_ALIAS_ZERO;
-
+async fn publish_topic_alias_zero(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-alias-zero");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -229,7 +213,7 @@ async fn publish_topic_alias_zero(config: TestConfig<'_>) -> anyhow::Result<Test
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const SUB_NO_FILTERS: TestContext = TestContext {
@@ -240,9 +224,7 @@ const SUB_NO_FILTERS: TestContext = TestContext {
 
 /// A SUBSCRIBE packet MUST contain at least one topic filter [MQTT-3.8.3-3].
 /// The payload must be non-empty.
-async fn subscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SUB_NO_FILTERS;
-
+async fn subscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-empty");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -257,7 +239,7 @@ async fn subscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestResu
     ];
     client.send_raw(bad_subscribe).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const SUB_INVALID_QOS: TestContext = TestContext {
@@ -268,9 +250,7 @@ const SUB_INVALID_QOS: TestContext = TestContext {
 
 /// The subscription options byte's upper 2 QoS bits (6-7) are reserved and
 /// MUST be 0. Setting them is a protocol error [MQTT-3.8.3-5].
-async fn subscribe_invalid_qos(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SUB_INVALID_QOS;
-
+async fn subscribe_invalid_qos(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-bad-qos");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -286,7 +266,7 @@ async fn subscribe_invalid_qos(config: TestConfig<'_>) -> anyhow::Result<TestRes
     ];
     client.send_raw(bad_subscribe).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const INVALID_WILDCARD: TestContext = TestContext {
@@ -297,9 +277,7 @@ const INVALID_WILDCARD: TestContext = TestContext {
 
 /// '#' wildcard not at the end of a topic filter is a protocol error [MQTT-4.7.1-1].
 /// The server MUST treat a SUBSCRIBE with such a filter as a protocol error.
-async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = INVALID_WILDCARD;
-
+async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-bad-wildcard");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -318,30 +296,20 @@ async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> anyhow::Result<Te
 
     // Server should either disconnect or return SUBACK with error reason code (0x80+).
     match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::SubAck(ack)) => {
             if ack.reason_codes.iter().all(|&c| c >= 0x80) {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "SUBACK accepted invalid wildcard filter: reason codes {:?}",
-                        ack.reason_codes
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "SUBACK accepted invalid wildcard filter: reason codes {:?}",
+                    ack.reason_codes
+                )))
             }
         }
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "disconnect or error SUBACK",
-            &other,
-        )),
+        Ok(other) => Ok(Outcome::fail_packet("disconnect or error SUBACK", &other)),
     }
 }
 
@@ -352,9 +320,7 @@ const UNSUB_NO_FILTERS: TestContext = TestContext {
 };
 
 /// An UNSUBSCRIBE packet MUST contain at least one topic filter [MQTT-3.10.3-2].
-async fn unsubscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUB_NO_FILTERS;
-
+async fn unsubscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-unsub-empty");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -369,7 +335,7 @@ async fn unsubscribe_no_filters(config: TestConfig<'_>) -> anyhow::Result<TestRe
     ];
     client.send_raw(bad_unsubscribe).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const UNSUB_RESERVED_BITS: TestContext = TestContext {
@@ -380,9 +346,7 @@ const UNSUB_RESERVED_BITS: TestContext = TestContext {
 
 /// The UNSUBSCRIBE fixed header byte must have bits 3-0 = 0010.
 /// Sending wrong reserved bits is a malformed packet [MQTT-3.10.1-1].
-async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UNSUB_RESERVED_BITS;
-
+async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-unsub-reserved");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -398,7 +362,7 @@ async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Tes
     ];
     client.send_raw(bad_unsubscribe).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
@@ -409,9 +373,7 @@ const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
 
 /// A Topic Alias value that exceeds the server's Topic Alias Maximum is a
 /// protocol error — the server MUST disconnect [MQTT-3.3.2-9].
-async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TOPIC_ALIAS_EXCEEDS_MAX;
-
+async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-alias-exceed");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -433,7 +395,7 @@ async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> anyhow::Result<T
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const INVALID_PLUS_WILDCARD: TestContext = TestContext {
@@ -444,9 +406,7 @@ const INVALID_PLUS_WILDCARD: TestContext = TestContext {
 
 /// '+' wildcard not occupying an entire topic level is a protocol error [MQTT-4.7.1-1].
 /// E.g., "mqtt/te+st" is invalid.
-async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = INVALID_PLUS_WILDCARD;
-
+async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-bad-plus");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -465,30 +425,20 @@ async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> anyhow::Resu
 
     // Server should either disconnect or return SUBACK with error reason code (0x80+).
     match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::SubAck(ack)) => {
             if ack.reason_codes.iter().all(|&c| c >= 0x80) {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "SUBACK accepted invalid '+' wildcard filter: reason codes {:?}",
-                        ack.reason_codes
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "SUBACK accepted invalid '+' wildcard filter: reason codes {:?}",
+                    ack.reason_codes
+                )))
             }
         }
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "disconnect or error SUBACK",
-            &other,
-        )),
+        Ok(other) => Ok(Outcome::fail_packet("disconnect or error SUBACK", &other)),
     }
 }
 
@@ -500,9 +450,7 @@ const NULL_IN_TOPIC: TestContext = TestContext {
 
 /// A UTF-8 Encoded String MUST NOT include an encoding of the null character
 /// U+0000 [MQTT-1.5.4-2]. A topic containing \0 is malformed.
-async fn publish_topic_with_null_char(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = NULL_IN_TOPIC;
-
+async fn publish_topic_with_null_char(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-null-topic");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -519,7 +467,7 @@ async fn publish_topic_with_null_char(config: TestConfig<'_>) -> anyhow::Result<
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const SUB_WRONG_FIXED: TestContext = TestContext {
@@ -530,9 +478,7 @@ const SUB_WRONG_FIXED: TestContext = TestContext {
 
 /// The SUBSCRIBE fixed header byte MUST have bits 3-0 set to 0010.
 /// Sending 0x80 (bits = 0000) instead of 0x82 is malformed [MQTT-3.8.1-1].
-async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SUB_WRONG_FIXED;
-
+async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-fixed-bits");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -548,7 +494,7 @@ async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> anyhow::Re
     ];
     client.send_raw(bad_subscribe).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 // ── Client ID ───────────────────────────────────────────────────────────────
@@ -562,9 +508,7 @@ const NO_CLIENT_ID: TestContext = TestContext {
 /// The Client Identifier MUST be present and is the first field in the
 /// CONNECT payload [MQTT-3.1.3-3]. A CONNECT whose payload is empty
 /// (remaining length only covers the variable header) is malformed.
-async fn connect_missing_client_id(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = NO_CLIENT_ID;
-
+async fn connect_missing_client_id(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with an empty payload — no client ID at all.
@@ -582,7 +526,7 @@ async fn connect_missing_client_id(config: TestConfig<'_>) -> anyhow::Result<Tes
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 // ── Username / Password ─────────────────────────────────────────────────────
@@ -595,9 +539,7 @@ const USERNAME_TRUNCATED: TestContext = TestContext {
 
 /// Username flag is set but the payload ends before the username field.
 /// The broker MUST treat this as a malformed packet [MQTT-3.1.2-15].
-async fn username_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = USERNAME_TRUNCATED;
-
+async fn username_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Username flag (0x82 = clean_start + username) but payload
@@ -615,7 +557,7 @@ async fn username_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const UTF8_SURROGATE: TestContext = TestContext {
@@ -627,9 +569,7 @@ const UTF8_SURROGATE: TestContext = TestContext {
 /// A UTF-8 Encoded String MUST NOT include encodings of UTF-16 surrogates
 /// (U+D800..U+DFFF) [MQTT-1.5.4-1]. Send a PUBLISH with a topic containing
 /// the ill-formed byte sequence 0xED 0xA0 0x80 (surrogate U+D800).
-async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = UTF8_SURROGATE;
-
+async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-utf8-surrogate");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -647,7 +587,7 @@ async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> anyhow::Result<
     ];
     client.send_raw(bad_publish).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const PUBACK_BAD_FLAGS: TestContext = TestContext {
@@ -658,9 +598,7 @@ const PUBACK_BAD_FLAGS: TestContext = TestContext {
 
 /// The fixed header flags for PUBACK (packet type 4) MUST be 0000 [MQTT-2.1.3-1].
 /// Sending 0x41 (flags = 0001) instead of 0x40 is a malformed packet.
-async fn puback_invalid_fixed_header_flags(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PUBACK_BAD_FLAGS;
-
+async fn puback_invalid_fixed_header_flags(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-puback-flags");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -674,7 +612,7 @@ async fn puback_invalid_fixed_header_flags(config: TestConfig<'_>) -> anyhow::Re
     ];
     client.send_raw(bad_puback).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const WILL_QOS_THREE: TestContext = TestContext {
@@ -685,9 +623,7 @@ const WILL_QOS_THREE: TestContext = TestContext {
 
 /// If Will QoS bits are both set (value 3), the CONNECT is malformed [MQTT-3.1.2-12].
 /// Connect flags byte: will_flag=1, will_qos=3, clean_start=1 → 0b_0001_1110 = 0x1E.
-async fn will_qos_three(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_QOS_THREE;
-
+async fn will_qos_three(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Will Flag=1, Will QoS=3 (both bits set), Clean Start=1.
@@ -709,7 +645,7 @@ async fn will_qos_three(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
@@ -720,9 +656,7 @@ const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
 
 /// The DISCONNECT fixed header byte MUST have reserved bits 3-0 = 0000 [MQTT-3.14.0-1].
 /// Sending 0xE1 (reserved bit 0 set) instead of 0xE0 is a malformed packet.
-async fn disconnect_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DISCONNECT_BAD_RESERVED;
-
+async fn disconnect_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-disc-reserved");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -734,7 +668,7 @@ async fn disconnect_reserved_bits(config: TestConfig<'_>) -> anyhow::Result<Test
     ];
     client.send_raw(bad_disconnect).await?;
 
-    Ok(expect_disconnect(&mut client, &ctx).await)
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const PASSWORD_TRUNCATED: TestContext = TestContext {
@@ -745,9 +679,7 @@ const PASSWORD_TRUNCATED: TestContext = TestContext {
 
 /// Password flag is set (along with username flag) but the payload ends
 /// after the username — no password bytes present.
-async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PASSWORD_TRUNCATED;
-
+async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Username + Password flags but only client ID + username in payload.
@@ -767,7 +699,7 @@ async fn password_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Resu
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 // ── Structural (flag/payload mismatch) ──────────────────────────────────────
@@ -781,9 +713,7 @@ const WILL_TRUNCATED: TestContext = TestContext {
 /// Will Flag is set but the payload contains only the client ID — no will
 /// properties, will topic, or will payload. The broker MUST reject this as
 /// a malformed packet [MQTT-3.1.2-9].
-async fn will_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_TRUNCATED;
-
+async fn will_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Will Flag=1, Clean Start=1, but payload ends after client ID.
@@ -801,7 +731,7 @@ async fn will_flag_truncated_payload(config: TestConfig<'_>) -> anyhow::Result<T
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const USERNAME_FLAG_MISMATCH: TestContext = TestContext {
@@ -813,11 +743,7 @@ const USERNAME_FLAG_MISMATCH: TestContext = TestContext {
 /// Username Flag is 0 but the remaining length includes extra bytes beyond the
 /// client ID. The server should detect unconsumed payload bytes and reject the
 /// packet as malformed [MQTT-3.1.2-16].
-async fn username_flag_clear_but_data_present(
-    config: TestConfig<'_>,
-) -> anyhow::Result<TestResult> {
-    let ctx = USERNAME_FLAG_MISMATCH;
-
+async fn username_flag_clear_but_data_present(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Username Flag=0 but remaining length includes 6 extra bytes
@@ -836,7 +762,7 @@ async fn username_flag_clear_but_data_present(
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const PASSWORD_FLAG_MISMATCH: TestContext = TestContext {
@@ -848,11 +774,7 @@ const PASSWORD_FLAG_MISMATCH: TestContext = TestContext {
 /// Password Flag is 0 but the remaining length includes extra bytes after the
 /// username. The server should detect unconsumed payload bytes and reject the
 /// packet as malformed [MQTT-3.1.2-18].
-async fn password_flag_clear_but_data_present(
-    config: TestConfig<'_>,
-) -> anyhow::Result<TestResult> {
-    let ctx = PASSWORD_FLAG_MISMATCH;
-
+async fn password_flag_clear_but_data_present(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Username Flag=1, Password Flag=0 but remaining length
@@ -872,7 +794,7 @@ async fn password_flag_clear_but_data_present(
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 // ── Structural (invalid UTF-8 in CONNECT fields) ───────────────────────────
@@ -885,9 +807,7 @@ const WILL_TOPIC_BAD_UTF8: TestContext = TestContext {
 
 /// The Will Topic is a UTF-8 Encoded String [MQTT-3.1.3-11]. A topic
 /// containing a UTF-16 surrogate (U+D800) is ill-formed and MUST be rejected.
-async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_TOPIC_BAD_UTF8;
-
+async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Will Flag=1, will topic contains surrogate U+D800 (0xED 0xA0 0x80).
@@ -907,7 +827,7 @@ async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestR
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const USERNAME_BAD_UTF8: TestContext = TestContext {
@@ -918,9 +838,7 @@ const USERNAME_BAD_UTF8: TestContext = TestContext {
 
 /// The Username is a UTF-8 Encoded String [MQTT-3.1.3-12]. A username
 /// containing a UTF-16 surrogate (U+D800) is ill-formed and MUST be rejected.
-async fn username_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = USERNAME_BAD_UTF8;
-
+async fn username_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with Username Flag=1, username contains surrogate U+D800.
@@ -938,7 +856,7 @@ async fn username_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestRes
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }
 
 const USER_PROP_BAD_UTF8: TestContext = TestContext {
@@ -949,9 +867,7 @@ const USER_PROP_BAD_UTF8: TestContext = TestContext {
 
 /// A String Pair's key and value must both be valid UTF-8 [MQTT-1.5.7-1].
 /// Send a CONNECT with a User Property whose key contains surrogate U+D800.
-async fn user_property_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = USER_PROP_BAD_UTF8;
-
+async fn user_property_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // CONNECT with a User Property (0x26) whose key is ill-formed UTF-8.
@@ -972,5 +888,5 @@ async fn user_property_invalid_utf8(config: TestConfig<'_>) -> anyhow::Result<Te
     ];
     client.send_raw(bad_connect).await?;
 
-    Ok(expect_connect_reject(&mut client, &ctx).await)
+    Ok(expect_connect_reject(&mut client).await)
 }

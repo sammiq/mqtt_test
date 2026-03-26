@@ -10,7 +10,7 @@ use tokio::time::timeout;
 
 use crate::client::{self, WsFramer};
 use crate::codec::ConnectParams;
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("WEBSOCKET");
@@ -30,10 +30,9 @@ const WS_SUBPROTOCOL: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-async fn ws_subprotocol(config: TestConfig<'_>) -> Result<TestResult> {
-    let ctx = WS_SUBPROTOCOL;
+async fn ws_subprotocol(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
-        return Ok(TestResult::skip(&ctx, "WebSocket not configured"));
+        return Ok(Outcome::skip("WebSocket not configured"));
     };
 
     let params = ConnectParams::new("mqtt-test-ws-subprotocol");
@@ -41,23 +40,18 @@ async fn ws_subprotocol(config: TestConfig<'_>) -> Result<TestResult> {
         client::connect_ws(ws_addr, ws_host, ws_path, &params, config.recv_timeout).await?;
 
     if connack.reason_code != 0x00 {
-        return Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} (expected 0x00)",
-                connack.reason_code
-            ),
-        ));
+        return Ok(Outcome::fail(format!(
+            "CONNACK reason code {:#04x} (expected 0x00)",
+            connack.reason_code
+        )));
     }
 
     match upgrade.subprotocol.as_deref() {
-        Some("mqtt") => Ok(TestResult::pass(&ctx)),
-        Some(other) => Ok(TestResult::fail(
-            &ctx,
-            format!("server returned subprotocol \"{other}\" instead of \"mqtt\""),
-        )),
-        None => Ok(TestResult::fail(
-            &ctx,
+        Some("mqtt") => Ok(Outcome::Pass),
+        Some(other) => Ok(Outcome::fail(format!(
+            "server returned subprotocol \"{other}\" instead of \"mqtt\""
+        ))),
+        None => Ok(Outcome::fail(
             "server did not return a Sec-WebSocket-Protocol header",
         )),
     }
@@ -73,10 +67,9 @@ const WS_PACKET_SPANNING: TestContext = TestContext {
 
 /// Send a CONNECT packet split across two WebSocket binary frames to verify
 /// the broker correctly reassembles MQTT packets that span frame boundaries.
-async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<TestResult> {
-    let ctx = WS_PACKET_SPANNING;
+async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
-        return Ok(TestResult::skip(&ctx, "WebSocket not configured"));
+        return Ok(Outcome::skip("WebSocket not configured"));
     };
 
     // Perform WebSocket upgrade manually so we can control framing
@@ -126,10 +119,9 @@ async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<TestResult> {
     .await;
 
     match result {
-        Ok(Ok(())) => Ok(TestResult::pass(&ctx)),
-        Ok(Err(e)) => Ok(TestResult::fail(&ctx, format!("{e}"))),
-        Err(_) => Ok(TestResult::fail(
-            &ctx,
+        Ok(Ok(())) => Ok(Outcome::Pass),
+        Ok(Err(e)) => Ok(Outcome::fail(format!("{e}"))),
+        Err(_) => Ok(Outcome::fail(
             "timed out waiting for CONNACK after split-frame CONNECT",
         )),
     }
@@ -146,10 +138,9 @@ const WS_TEXT_FRAME_REJECTED: TestContext = TestContext {
 /// After a successful WebSocket upgrade, send a CONNECT packet wrapped in a
 /// text frame (opcode 0x01) instead of binary (0x02). The broker MUST close
 /// the connection.
-async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<TestResult> {
-    let ctx = WS_TEXT_FRAME_REJECTED;
+async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
-        return Ok(TestResult::skip(&ctx, "WebSocket not configured"));
+        return Ok(Outcome::skip("WebSocket not configured"));
     };
 
     let mut tcp = TcpStream::connect(ws_addr)
@@ -193,13 +184,11 @@ async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<TestResult> {
     .await;
 
     match closed {
-        Ok(true) => Ok(TestResult::pass(&ctx)),
-        Ok(false) => Ok(TestResult::fail(
-            &ctx,
+        Ok(true) => Ok(Outcome::Pass),
+        Ok(false) => Ok(Outcome::fail(
             "broker accepted CONNECT in a text WebSocket frame instead of closing",
         )),
-        Err(_) => Ok(TestResult::fail(
-            &ctx,
+        Err(_) => Ok(Outcome::fail(
             "broker did not close connection after receiving text WebSocket frame",
         )),
     }

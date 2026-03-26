@@ -189,112 +189,134 @@ pub struct Properties {
     pub shared_subscription_available: Option<bool>,
 }
 
+/// Single definition of every standard property's field, wire-ID, and wire-format.
+/// Invokes `$callback!` with caller-supplied arguments followed by the property
+/// table, so encode and decode logic can each be generated from this one list.
+///
+/// Special cases (subscription_identifier — VBI encoding, user_properties —
+/// repeatable key-value pair) are handled inline in encode() and decode().
+#[rustfmt::skip]
+macro_rules! for_each_property {
+    ($callback:ident($($args:tt)*)) => {
+        $callback!($($args)*;
+            // field                            => wire ID                                    wire format
+            payload_format_indicator            => prop::PAYLOAD_FORMAT_INDICATOR,             OneByte;
+            message_expiry_interval             => prop::MESSAGE_EXPIRY_INTERVAL,              FourByte;
+            content_type                        => prop::CONTENT_TYPE,                         Utf8;
+            response_topic                      => prop::RESPONSE_TOPIC,                       Utf8;
+            correlation_data                    => prop::CORRELATION_DATA,                     Binary;
+            session_expiry_interval             => prop::SESSION_EXPIRY_INTERVAL,              FourByte;
+            assigned_client_id                  => prop::ASSIGNED_CLIENT_ID,                   Utf8;
+            server_keep_alive                   => prop::SERVER_KEEP_ALIVE,                    TwoByte;
+            authentication_method               => prop::AUTHENTICATION_METHOD,                Utf8;
+            authentication_data                 => prop::AUTHENTICATION_DATA,                  Binary;
+            request_problem_information         => prop::REQUEST_PROBLEM_INFORMATION,          BoolByte;
+            will_delay_interval                 => prop::WILL_DELAY_INTERVAL,                  FourByte;
+            request_response_information        => prop::REQUEST_RESPONSE_INFORMATION,         BoolByte;
+            response_information                => prop::RESPONSE_INFORMATION,                 Utf8;
+            server_reference                    => prop::SERVER_REFERENCE,                     Utf8;
+            reason_string                       => prop::REASON_STRING,                        Utf8;
+            receive_maximum                     => prop::RECEIVE_MAXIMUM,                      TwoByte;
+            topic_alias_maximum                 => prop::TOPIC_ALIAS_MAXIMUM,                  TwoByte;
+            topic_alias                         => prop::TOPIC_ALIAS,                          TwoByte;
+            maximum_qos                         => prop::MAXIMUM_QOS,                          OneByte;
+            retain_available                    => prop::RETAIN_AVAILABLE,                     BoolByte;
+            maximum_packet_size                 => prop::MAXIMUM_PACKET_SIZE,                  FourByte;
+            wildcard_subscription_available     => prop::WILDCARD_SUBSCRIPTION_AVAILABLE,      BoolByte;
+            subscription_ids_available          => prop::SUBSCRIPTION_IDS_AVAILABLE,           BoolByte;
+            shared_subscription_available       => prop::SHARED_SUBSCRIPTION_AVAILABLE,        BoolByte;
+        )
+    };
+}
+
+/// Encode each standard property from `$this` into `$props`.
+macro_rules! encode_properties {
+    ($this:ident, $props:ident; $( $field:ident => $($id:tt)::+, $kind:ident; )*) => {
+        $(encode_properties!(@one $this, $props, $field, $($id)::+, $kind);)*
+    };
+
+    (@one $this:ident, $props:ident, $field:ident, $($id:tt)::+, OneByte) => {
+        if let Some(v) = $this.$field { $props.push($($id)::+); $props.push(v); }
+    };
+    (@one $this:ident, $props:ident, $field:ident, $($id:tt)::+, BoolByte) => {
+        if let Some(v) = $this.$field { $props.push($($id)::+); $props.push(v as u8); }
+    };
+    (@one $this:ident, $props:ident, $field:ident, $($id:tt)::+, TwoByte) => {
+        if let Some(v) = $this.$field { $props.push($($id)::+); push_u16(v, &mut $props); }
+    };
+    (@one $this:ident, $props:ident, $field:ident, $($id:tt)::+, FourByte) => {
+        if let Some(v) = $this.$field { $props.push($($id)::+); push_u32(v, &mut $props); }
+    };
+    (@one $this:ident, $props:ident, $field:ident, $($id:tt)::+, Utf8) => {
+        if let Some(v) = &$this.$field { $props.push($($id)::+); push_str(v, &mut $props); }
+    };
+    (@one $this:ident, $props:ident, $field:ident, $($id:tt)::+, Binary) => {
+        if let Some(v) = &$this.$field { $props.push($($id)::+); push_bytes(v, &mut $props); }
+    };
+}
+
+/// Decode a single property by ID into `$p`, with match arms for all standard
+/// properties plus the two special cases and unknown-ID error.
+macro_rules! decode_properties {
+    ($p:ident, $data:ident, $pos:ident, $id_var:ident; $( $field:ident => $($fid:tt)::+, $kind:ident; )*) => {
+        match $id_var {
+            $($($fid)::+ => { decode_properties!(@one $p, $data, $pos, $field, $kind); })*
+            prop::SUBSCRIPTION_IDENTIFIER => {
+                $p.subscription_identifier = Some(decode_vbi($data, $pos)?);
+            }
+            prop::USER_PROPERTY => {
+                let k = read_str($data, $pos)?;
+                let v = read_str($data, $pos)?;
+                $p.user_properties.push((k, v));
+            }
+            unknown => {
+                return Err(DecodeError::Protocol(format!(
+                    "unknown property id: {unknown:#04x}"
+                )));
+            }
+        }
+    };
+
+    (@one $p:ident, $data:ident, $pos:ident, $field:ident, OneByte) => {
+        $p.$field = Some($data[*$pos]); *$pos += 1;
+    };
+    (@one $p:ident, $data:ident, $pos:ident, $field:ident, BoolByte) => {
+        $p.$field = Some($data[*$pos] != 0); *$pos += 1;
+    };
+    (@one $p:ident, $data:ident, $pos:ident, $field:ident, TwoByte) => {
+        $p.$field = Some(read_u16($data, $pos)?);
+    };
+    (@one $p:ident, $data:ident, $pos:ident, $field:ident, FourByte) => {
+        $p.$field = Some(read_u32($data, $pos)?);
+    };
+    (@one $p:ident, $data:ident, $pos:ident, $field:ident, Utf8) => {
+        $p.$field = Some(read_str($data, $pos)?);
+    };
+    (@one $p:ident, $data:ident, $pos:ident, $field:ident, Binary) => {
+        $p.$field = Some(read_bytes($data, $pos)?);
+    };
+}
+
 impl Properties {
     /// Encode all set properties into `buf`, prefixed with their VBI length.
     pub fn encode(&self, buf: &mut Vec<u8>) {
+        // Alias `self` so it can be passed as an ident to macros.
+        let this = self;
         let mut props: Vec<u8> = Vec::new();
 
-        macro_rules! one_byte {
-            ($id:expr, $val:expr) => {
-                if let Some(v) = $val {
-                    props.push($id);
-                    props.push(v);
-                }
-            };
-        }
-        macro_rules! bool_byte {
-            ($id:expr, $val:expr) => {
-                if let Some(v) = $val {
-                    props.push($id);
-                    props.push(v as u8);
-                }
-            };
-        }
-        macro_rules! two_byte {
-            ($id:expr, $val:expr) => {
-                if let Some(v) = $val {
-                    props.push($id);
-                    push_u16(v, &mut props);
-                }
-            };
-        }
-        macro_rules! four_byte {
-            ($id:expr, $val:expr) => {
-                if let Some(v) = $val {
-                    props.push($id);
-                    push_u32(v, &mut props);
-                }
-            };
-        }
-        macro_rules! utf8 {
-            ($id:expr, $val:expr) => {
-                if let Some(v) = &$val {
-                    props.push($id);
-                    push_str(v, &mut props);
-                }
-            };
-        }
-        macro_rules! binary {
-            ($id:expr, $val:expr) => {
-                if let Some(v) = &$val {
-                    props.push($id);
-                    push_bytes(v, &mut props);
-                }
-            };
-        }
+        for_each_property!(encode_properties(this, props));
 
-        one_byte!(
-            prop::PAYLOAD_FORMAT_INDICATOR,
-            self.payload_format_indicator
-        );
-        four_byte!(prop::MESSAGE_EXPIRY_INTERVAL, self.message_expiry_interval);
-        utf8!(prop::CONTENT_TYPE, self.content_type);
-        utf8!(prop::RESPONSE_TOPIC, self.response_topic);
-        binary!(prop::CORRELATION_DATA, self.correlation_data);
+        // Special: subscription_identifier uses VBI encoding.
         if let Some(v) = self.subscription_identifier {
             props.push(prop::SUBSCRIPTION_IDENTIFIER);
             encode_vbi(v, &mut props);
         }
-        four_byte!(prop::SESSION_EXPIRY_INTERVAL, self.session_expiry_interval);
-        utf8!(prop::ASSIGNED_CLIENT_ID, self.assigned_client_id);
-        two_byte!(prop::SERVER_KEEP_ALIVE, self.server_keep_alive);
-        utf8!(prop::AUTHENTICATION_METHOD, self.authentication_method);
-        binary!(prop::AUTHENTICATION_DATA, self.authentication_data);
-        bool_byte!(
-            prop::REQUEST_PROBLEM_INFORMATION,
-            self.request_problem_information
-        );
-        four_byte!(prop::WILL_DELAY_INTERVAL, self.will_delay_interval);
-        bool_byte!(
-            prop::REQUEST_RESPONSE_INFORMATION,
-            self.request_response_information
-        );
-        utf8!(prop::RESPONSE_INFORMATION, self.response_information);
-        utf8!(prop::SERVER_REFERENCE, self.server_reference);
-        utf8!(prop::REASON_STRING, self.reason_string);
-        two_byte!(prop::RECEIVE_MAXIMUM, self.receive_maximum);
-        two_byte!(prop::TOPIC_ALIAS_MAXIMUM, self.topic_alias_maximum);
-        two_byte!(prop::TOPIC_ALIAS, self.topic_alias);
-        one_byte!(prop::MAXIMUM_QOS, self.maximum_qos);
-        bool_byte!(prop::RETAIN_AVAILABLE, self.retain_available);
+        // Special: user_properties is a repeatable key-value pair.
         for (k, v) in &self.user_properties {
             props.push(prop::USER_PROPERTY);
             push_str(k, &mut props);
             push_str(v, &mut props);
         }
-        four_byte!(prop::MAXIMUM_PACKET_SIZE, self.maximum_packet_size);
-        bool_byte!(
-            prop::WILDCARD_SUBSCRIPTION_AVAILABLE,
-            self.wildcard_subscription_available
-        );
-        bool_byte!(
-            prop::SUBSCRIPTION_IDS_AVAILABLE,
-            self.subscription_ids_available
-        );
-        bool_byte!(
-            prop::SHARED_SUBSCRIPTION_AVAILABLE,
-            self.shared_subscription_available
-        );
 
         encode_vbi(props.len() as u32, buf);
         buf.extend_from_slice(&props);
@@ -311,86 +333,10 @@ impl Properties {
 
         let mut p = Properties::default();
 
-        macro_rules! one_byte {
-            ($field:expr) => {{
-                $field = Some(data[*pos]);
-                *pos += 1;
-            }};
-        }
-        macro_rules! bool_byte {
-            ($field:expr) => {{
-                $field = Some(data[*pos] != 0);
-                *pos += 1;
-            }};
-        }
-        macro_rules! two_byte {
-            ($field:expr) => {
-                $field = Some(read_u16(data, pos)?)
-            };
-        }
-        macro_rules! four_byte {
-            ($field:expr) => {
-                $field = Some(read_u32(data, pos)?)
-            };
-        }
-        macro_rules! utf8 {
-            ($field:expr) => {
-                $field = Some(read_str(data, pos)?)
-            };
-        }
-        macro_rules! binary {
-            ($field:expr) => {
-                $field = Some(read_bytes(data, pos)?)
-            };
-        }
-
         while *pos < end {
             let id = data[*pos];
             *pos += 1;
-            match id {
-                prop::PAYLOAD_FORMAT_INDICATOR => one_byte!(p.payload_format_indicator),
-                prop::MESSAGE_EXPIRY_INTERVAL => four_byte!(p.message_expiry_interval),
-                prop::CONTENT_TYPE => utf8!(p.content_type),
-                prop::RESPONSE_TOPIC => utf8!(p.response_topic),
-                prop::CORRELATION_DATA => binary!(p.correlation_data),
-                prop::SUBSCRIPTION_IDENTIFIER => {
-                    p.subscription_identifier = Some(decode_vbi(data, pos)?);
-                }
-                prop::SESSION_EXPIRY_INTERVAL => four_byte!(p.session_expiry_interval),
-                prop::ASSIGNED_CLIENT_ID => utf8!(p.assigned_client_id),
-                prop::SERVER_KEEP_ALIVE => two_byte!(p.server_keep_alive),
-                prop::AUTHENTICATION_METHOD => utf8!(p.authentication_method),
-                prop::AUTHENTICATION_DATA => binary!(p.authentication_data),
-                prop::REQUEST_PROBLEM_INFORMATION => bool_byte!(p.request_problem_information),
-                prop::WILL_DELAY_INTERVAL => four_byte!(p.will_delay_interval),
-                prop::REQUEST_RESPONSE_INFORMATION => bool_byte!(p.request_response_information),
-                prop::RESPONSE_INFORMATION => utf8!(p.response_information),
-                prop::SERVER_REFERENCE => utf8!(p.server_reference),
-                prop::REASON_STRING => utf8!(p.reason_string),
-                prop::RECEIVE_MAXIMUM => two_byte!(p.receive_maximum),
-                prop::TOPIC_ALIAS_MAXIMUM => two_byte!(p.topic_alias_maximum),
-                prop::TOPIC_ALIAS => two_byte!(p.topic_alias),
-                prop::MAXIMUM_QOS => one_byte!(p.maximum_qos),
-                prop::RETAIN_AVAILABLE => bool_byte!(p.retain_available),
-                prop::USER_PROPERTY => {
-                    let k = read_str(data, pos)?;
-                    let v = read_str(data, pos)?;
-                    p.user_properties.push((k, v));
-                }
-                prop::MAXIMUM_PACKET_SIZE => four_byte!(p.maximum_packet_size),
-                prop::WILDCARD_SUBSCRIPTION_AVAILABLE => {
-                    bool_byte!(p.wildcard_subscription_available)
-                }
-                prop::SUBSCRIPTION_IDS_AVAILABLE => bool_byte!(p.subscription_ids_available),
-                prop::SHARED_SUBSCRIPTION_AVAILABLE => {
-                    bool_byte!(p.shared_subscription_available)
-                }
-                unknown => {
-                    return Err(DecodeError::Protocol(format!(
-                        "unknown property id: {unknown:#04x}"
-                    )));
-                }
-            }
+            for_each_property!(decode_properties(p, data, pos, id));
         }
 
         Ok(p)

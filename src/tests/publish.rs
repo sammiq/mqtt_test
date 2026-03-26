@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
-use crate::helpers::{expect_disconnect, expect_publish};
-use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
+use crate::helpers::{expect_disconnect, expect_publish, expect_suback, publish_and_expect};
+use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("PUBLISH");
@@ -88,16 +88,11 @@ async fn qos0_accepted(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     )
     .await?;
 
-    let pub_params = PublishParams::qos0("mqtt/test/pub/qos0", b"hello".to_vec());
-    client.send_publish(&pub_params).await?;
-
-    match client.recv().await? {
-        Packet::Publish(p) if p.topic == "mqtt/test/pub/qos0" => Ok(Outcome::Pass),
-        other => Ok(Outcome::fail_packet(
-            "PUBLISH on topic \"mqtt/test/pub/qos0\"",
-            &other,
-        )),
-    }
+    Ok(
+        publish_and_expect(&mut client, "mqtt/test/pub/qos0", b"hello")
+            .await
+            .into_outcome(),
+    )
 }
 
 const QOS1: TestContext = TestContext {
@@ -881,7 +876,9 @@ async fn message_expiry_countdown(config: TestConfig<'_>) -> anyhow::Result<Outc
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
     drop(sub_client); // disconnect
 
     // Publish with MEI=60 while subscriber is offline
@@ -955,7 +952,9 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> anyhow::Result<O
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Publish a message with payload larger than 64 bytes from another client
     let pub_conn = ConnectParams::new("mqtt-test-maxpkt-pub");
@@ -1158,7 +1157,9 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> anyhow::Result<
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Publish 5 QoS 1 messages from another client
     let pub_conn = ConnectParams::new("mqtt-test-recvmax-pub");
@@ -1858,7 +1859,9 @@ async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> anyhow::Resu
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Publish 3 QoS 1 messages from another client
     let pub_conn = ConnectParams::new("mqtt-test-quota0-pub");
@@ -2143,7 +2146,9 @@ async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> anyhow::Res
         client::connect(config.addr, &sub_params, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Publish QoS 1 from a separate client
     let pub_conn = ConnectParams::new("mqtt-test-qos1-unack-pub");

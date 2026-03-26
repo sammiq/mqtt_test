@@ -6,7 +6,7 @@ use crate::client::{self, RawClient, RecvError};
 use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams, WillParams,
 };
-use crate::helpers::expect_disconnect;
+use crate::helpers::{expect_disconnect, expect_suback};
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
@@ -798,7 +798,9 @@ async fn server_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<Outcom
     let topic = "mqtt/test/connack/recvmax";
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Publish more messages than Receive Maximum using a separate client
     let pub_params = ConnectParams::new("mqtt-test-recv-max-pub");
@@ -1074,7 +1076,9 @@ async fn flow_control_receive_maximum(config: TestConfig<'_>) -> anyhow::Result<
     let topic = "mqtt/test/flow/ctrl";
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Publish more messages than Receive Maximum.
     let pub_params = ConnectParams::new("mqtt-test-flow-ctrl-pub");
@@ -1463,7 +1467,9 @@ async fn topic_alias_maximum_zero(config: TestConfig<'_>) -> anyhow::Result<Outc
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Publish several messages from another client to increase chance of alias use
     let pub_conn = ConnectParams::new("mqtt-test-ta0-pub");

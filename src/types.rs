@@ -87,6 +87,24 @@ impl Outcome {
     }
 }
 
+/// Extension trait for `Result<T, Outcome>` — collapses a helper result into
+/// a plain `Outcome` when the caller doesn't need the success value.
+///
+/// - `Ok(_)` → `Outcome::Pass`
+/// - `Err(outcome)` → `outcome`
+pub trait IntoOutcome {
+    fn into_outcome(self) -> Outcome;
+}
+
+impl<T> IntoOutcome for Result<T, Outcome> {
+    fn into_outcome(self) -> Outcome {
+        match self {
+            Ok(_) => Outcome::Pass,
+            Err(o) => o,
+        }
+    }
+}
+
 /// A single compliance test result.
 #[derive(Debug, Clone)]
 pub struct TestResult {
@@ -248,5 +266,20 @@ mod tests {
         assert!(matches!(suite.results[0].outcome, Outcome::Pass));
         assert!(matches!(suite.results[1].outcome, Outcome::Fail { .. }));
         assert!(matches!(suite.results[2].outcome, Outcome::Skip(_)));
+    }
+
+    #[test]
+    fn into_outcome_ok_is_pass() {
+        let r: Result<&str, Outcome> = Ok("data");
+        assert!(matches!(r.into_outcome(), Outcome::Pass));
+    }
+
+    #[test]
+    fn into_outcome_err_is_fail() {
+        let r: Result<(), Outcome> = Err(Outcome::fail("broken"));
+        match r.into_outcome() {
+            Outcome::Fail { message, .. } => assert_eq!(message, "broken"),
+            other => panic!("expected Fail, got {other:?}"),
+        }
     }
 }

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
+use crate::helpers::expect_suback;
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 /// Clean up a persistent session by reconnecting with clean_start=true.
@@ -94,7 +95,9 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Out
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // 2. Disconnect the subscriber abruptly (no DISCONNECT packet) so messages queue.
     drop(sub_client.into_raw());
@@ -166,7 +169,9 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Out
 
     let sub = SubscribeParams::simple(1, topic, QoS::ExactlyOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // 2. Disconnect subscriber abruptly.
     drop(sub_client.into_raw());
@@ -254,7 +259,9 @@ async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> anyhow
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
     c1.send_subscribe(&sub).await?;
-    c1.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut c1).await {
+        return Ok(r);
+    }
     drop(c1); // AutoDisconnect sends DISCONNECT on drop.
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -420,7 +427,9 @@ async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<Outcom
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     c1.send_subscribe(&sub).await?;
-    c1.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut c1).await {
+        return Ok(r);
+    }
 
     drop(c1); // Graceful disconnect
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -480,7 +489,9 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::R
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     c1.send_subscribe(&sub).await?;
-    c1.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut c1).await {
+        return Ok(r);
+    }
 
     // Disconnect abruptly so messages queue
     drop(c1.into_raw());

@@ -7,8 +7,8 @@ use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeOptions, SubscribeParams,
     UnsubscribeParams,
 };
-use crate::helpers::expect_publish;
-use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
+use crate::helpers::{expect_publish, expect_suback, publish_and_expect};
+use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("SUBSCRIBE / UNSUBSCRIBE");
@@ -75,19 +75,7 @@ async fn basic_subscribe(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let sub = SubscribeParams::simple(1, "mqtt/test/sub/basic", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
 
-    match client.recv().await? {
-        Packet::SubAck(ack) if ack.packet_id == 1 => {
-            if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
-                Ok(Outcome::Pass)
-            } else {
-                Ok(Outcome::fail(format!(
-                    "SUBACK reason code indicates failure: {:?}",
-                    ack.reason_codes
-                )))
-            }
-        }
-        other => Ok(Outcome::fail_packet("SUBACK(1)", &other)),
-    }
+    Ok(expect_suback(&mut client).await.into_outcome())
 }
 
 const WILDCARD_PLUS: TestContext = TestContext {
@@ -103,27 +91,15 @@ async fn wildcard_plus(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
 
     let sub = SubscribeParams::simple(1, "mqtt/test/sub/wc_plus/+", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv().await? {
-        Packet::SubAck(_) => {}
-        other => {
-            return Ok(Outcome::fail_packet("SUBACK", &other));
-        }
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
     }
 
-    client
-        .send_publish(&PublishParams::qos0(
-            "mqtt/test/sub/wc_plus/match",
-            b"plus".to_vec(),
-        ))
-        .await?;
-
-    match client.recv().await? {
-        Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_plus/match" => Ok(Outcome::Pass),
-        other => Ok(Outcome::fail_packet(
-            "PUBLISH on topic \"mqtt/test/sub/wc_plus/match\"",
-            &other,
-        )),
-    }
+    Ok(
+        publish_and_expect(&mut client, "mqtt/test/sub/wc_plus/match", b"plus")
+            .await
+            .into_outcome(),
+    )
 }
 
 const WILDCARD_HASH: TestContext = TestContext {
@@ -139,29 +115,17 @@ async fn wildcard_hash(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
 
     let sub = SubscribeParams::simple(1, "mqtt/test/sub/wc_hash/#", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv().await? {
-        Packet::SubAck(_) => {}
-        other => {
-            return Ok(Outcome::fail_packet("SUBACK", &other));
-        }
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
     }
 
-    client
-        .send_publish(&PublishParams::qos0(
-            "mqtt/test/sub/wc_hash/deep/nested/topic",
-            b"hash".to_vec(),
-        ))
-        .await?;
-
-    match client.recv().await? {
-        Packet::Publish(p) if p.topic == "mqtt/test/sub/wc_hash/deep/nested/topic" => {
-            Ok(Outcome::Pass)
-        }
-        other => Ok(Outcome::fail_packet(
-            "PUBLISH on topic \"mqtt/test/sub/wc_hash/deep/nested/topic\"",
-            &other,
-        )),
-    }
+    Ok(publish_and_expect(
+        &mut client,
+        "mqtt/test/sub/wc_hash/deep/nested/topic",
+        b"hash",
+    )
+    .await
+    .into_outcome())
 }
 
 const UNSUB: TestContext = TestContext {
@@ -204,11 +168,8 @@ async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> anyhow::Resul
     // Subscribe to "#" which should match everything EXCEPT $-prefixed topics
     let sub = SubscribeParams::simple(1, "#", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv().await? {
-        Packet::SubAck(_) => {}
-        other => {
-            return Ok(Outcome::fail_packet("SUBACK", &other));
-        }
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
     }
 
     // Publish to a $SYS topic — subscriber to "#" should NOT receive it
@@ -352,7 +313,9 @@ async fn unsuback_reason_code_count(config: TestConfig<'_>) -> anyhow::Result<Ou
         properties: Properties::default(),
     };
     client.send_subscribe(&sub).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
     // Unsubscribe from all 3
     let unsub = UnsubscribeParams {
@@ -403,19 +366,7 @@ async fn shared_subscription(config: TestConfig<'_>) -> anyhow::Result<Outcome> 
     let sub = SubscribeParams::simple(1, "$share/testgroup/mqtt/test/sub/shared", QoS::AtMostOnce);
     client.send_subscribe(&sub).await?;
 
-    match client.recv().await? {
-        Packet::SubAck(ack) if ack.packet_id == 1 => {
-            if ack.reason_codes.first().map(|&c| c < 0x80).unwrap_or(false) {
-                Ok(Outcome::Pass)
-            } else {
-                Ok(Outcome::fail(format!(
-                    "SUBACK reason code indicates failure: {:?}",
-                    ack.reason_codes
-                )))
-            }
-        }
-        other => Ok(Outcome::fail_packet("SUBACK(1)", &other)),
-    }
+    Ok(expect_suback(&mut client).await.into_outcome())
 }
 
 // ── Subscribe options ───────────────────────────────────────────────────────
@@ -452,30 +403,21 @@ async fn subscription_identifier(config: TestConfig<'_>) -> anyhow::Result<Outco
         },
     };
     client.send_subscribe(&sub).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
-    client
-        .send_publish(&PublishParams::qos0(
-            "mqtt/test/sub/subid",
-            b"subid-test".to_vec(),
-        ))
-        .await?;
-
-    match client.recv().await? {
-        Packet::Publish(p) if p.topic == "mqtt/test/sub/subid" => {
-            if p.properties.subscription_identifier == Some(42) {
-                Ok(Outcome::Pass)
-            } else {
-                Ok(Outcome::fail(format!(
-                    "Expected subscription_identifier=42, got {:?}",
-                    p.properties.subscription_identifier
-                )))
-            }
-        }
-        other => Ok(Outcome::fail_packet(
-            "PUBLISH on topic \"mqtt/test/sub/subid\"",
-            &other,
-        )),
+    let p = match publish_and_expect(&mut client, "mqtt/test/sub/subid", b"subid-test").await {
+        Ok(p) => p,
+        Err(r) => return Ok(r),
+    };
+    if p.properties.subscription_identifier == Some(42) {
+        Ok(Outcome::Pass)
+    } else {
+        Ok(Outcome::fail(format!(
+            "Expected subscription_identifier=42, got {:?}",
+            p.properties.subscription_identifier
+        )))
     }
 }
 
@@ -503,7 +445,9 @@ async fn no_local_flag(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
         properties: Properties::default(),
     };
     client.send_subscribe(&sub).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
     client
         .send_publish(&PublishParams::qos0(
@@ -565,7 +509,9 @@ async fn retain_as_published(config: TestConfig<'_>) -> anyhow::Result<Outcome> 
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     match expect_publish(&mut sub_client, "mqtt/test/sub/rap").await {
         Ok(p) if p.retain => Ok(Outcome::Pass),
@@ -617,7 +563,9 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Should receive retained message on first subscribe
     if let Err(r) = expect_publish(&mut sub_client, "mqtt/test/sub/rh1").await {
@@ -638,7 +586,9 @@ async fn retain_handling_1(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub2).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Should NOT receive retained message again — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
@@ -693,7 +643,9 @@ async fn retain_handling_2(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Should NOT receive any retained message — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
@@ -732,14 +684,8 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> anyhow::Result<Ou
     .await?;
 
     // Verify subscription works
-    client
-        .send_publish(&PublishParams::qos0(topic, b"before".to_vec()))
-        .await?;
-    match client.recv().await? {
-        Packet::Publish(p) if p.topic == topic => {}
-        other => {
-            return Ok(Outcome::fail_packet("PUBLISH before unsubscribe", &other));
-        }
+    if let Err(r) = publish_and_expect(&mut client, topic, b"before").await {
+        return Ok(r);
     }
 
     // Unsubscribe
@@ -783,12 +729,16 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> anyhow::Re
     // Subscribe to wildcard at QoS 0
     let sub1 = SubscribeParams::simple(1, "mqtt/test/sub/overlap/#", QoS::AtMostOnce);
     client.send_subscribe(&sub1).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
     // Subscribe to exact topic at QoS 1
     let sub2 = SubscribeParams::simple(2, "mqtt/test/sub/overlap/exact", QoS::AtLeastOnce);
     client.send_subscribe(&sub2).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
     // Publish QoS 1 from another client
     let pub_conn = ConnectParams::new("mqtt-test-overlap-pub");
@@ -862,7 +812,9 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<O
         },
     };
     client.send_subscribe(&sub1).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
     // Subscribe with sub-id 20 on exact
     let sub2 = SubscribeParams {
@@ -880,7 +832,9 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> anyhow::Result<O
         },
     };
     client.send_subscribe(&sub2).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
     // Publish to the overlapping topic
     client
@@ -940,10 +894,9 @@ async fn multi_level_topic(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let publish = PublishParams::qos0("mqtt/test/deep/a/b/c/d", b"deep".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match expect_publish(&mut sub, "mqtt/test/deep/a/b/c/d").await {
-        Ok(_) => Ok(Outcome::Pass),
-        Err(r) => Ok(r),
-    }
+    Ok(expect_publish(&mut sub, "mqtt/test/deep/a/b/c/d")
+        .await
+        .into_outcome())
 }
 
 const WILDCARD_MIDDLE: TestContext = TestContext {
@@ -1040,7 +993,9 @@ async fn subscription_upgrade_qos(config: TestConfig<'_>) -> anyhow::Result<Outc
     // Subscribe at QoS 0
     let sub0 = SubscribeParams::simple(1, "mqtt/test/upgrade", QoS::AtMostOnce);
     client.send_subscribe(&sub0).await?;
-    client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
 
     // Re-subscribe at QoS 1
     let sub1 = SubscribeParams::simple(2, "mqtt/test/upgrade", QoS::AtLeastOnce);
@@ -1087,10 +1042,9 @@ async fn empty_topic_level(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
     let publish = PublishParams::qos0("mqtt/test//empty", b"empty-level".to_vec());
     pub_client.send_publish(&publish).await?;
 
-    match expect_publish(&mut sub, "mqtt/test//empty").await {
-        Ok(_) => Ok(Outcome::Pass),
-        Err(r) => Ok(r),
-    }
+    Ok(expect_publish(&mut sub, "mqtt/test//empty")
+        .await
+        .into_outcome())
 }
 
 const CASE_SENSITIVE: TestContext = TestContext {
@@ -1137,10 +1091,9 @@ async fn case_sensitive_topic(config: TestConfig<'_>) -> anyhow::Result<Outcome>
         ))
         .await?;
 
-    match expect_publish(&mut sub, "mqtt/Test/CASE").await {
-        Ok(_) => Ok(Outcome::Pass),
-        Err(r) => Ok(r),
-    }
+    Ok(expect_publish(&mut sub, "mqtt/Test/CASE")
+        .await
+        .into_outcome())
 }
 
 const EXACT_CHAR: TestContext = TestContext {
@@ -1184,10 +1137,9 @@ async fn exact_char_match(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
         .send_publish(&PublishParams::qos0("mqtt/exact/match", b"exact".to_vec()))
         .await?;
 
-    match expect_publish(&mut sub, "mqtt/exact/match").await {
-        Ok(_) => Ok(Outcome::Pass),
-        Err(r) => Ok(r),
-    }
+    Ok(expect_publish(&mut sub, "mqtt/exact/match")
+        .await
+        .into_outcome())
 }
 
 const LEVEL_SEPARATOR_DISTINCT: TestContext = TestContext {
@@ -1257,10 +1209,9 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> anyhow::Resul
         ))
         .await?;
 
-    match expect_publish(&mut sub2, "mqtt/test/sep/a//b").await {
-        Ok(_) => Ok(Outcome::Pass),
-        Err(r) => Ok(r),
-    }
+    Ok(expect_publish(&mut sub2, "mqtt/test/sep/a//b")
+        .await
+        .into_outcome())
 }
 
 // ── Unsubscribe completeness ────────────────────────────────────────────────
@@ -1353,9 +1304,8 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> anyhow::Result
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     client.send_subscribe(&sub).await?;
-    match client.recv().await? {
-        Packet::SubAck(_) => {}
-        other => return Ok(Outcome::fail_packet("SUBACK", &other)),
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
     }
 
     // Publish several QoS 1 messages from a separate client to build up a buffer
@@ -1470,7 +1420,9 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Must receive the retained message
     if let Err(r) = expect_publish(&mut sub_client, topic).await {
@@ -1491,13 +1443,12 @@ async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> anyhow::Res
         properties: Properties::default(),
     };
     sub_client.send_subscribe(&sub2).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // Must receive retained message again
-    match expect_publish(&mut sub_client, topic).await {
-        Ok(_) => Ok(Outcome::Pass),
-        Err(r) => Ok(r),
-    }
+    Ok(expect_publish(&mut sub_client, topic).await.into_outcome())
 }
 
 const QOS_DOWNGRADE_1_TO_0: TestContext = TestContext {
@@ -1561,9 +1512,8 @@ async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> anyhow::
 
     let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub_client.send_subscribe(&sub).await?;
-    match sub_client.recv().await? {
-        Packet::SubAck(_) => {}
-        other => return Ok(Outcome::fail_packet("SUBACK", &other)),
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
     }
 
     // Publisher sends several QoS 1 messages rapidly
@@ -1754,14 +1704,18 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> anyhow::Result<Outc
 
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtMostOnce);
     sub_a.send_subscribe(&sub).await?;
-    sub_a.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_a).await {
+        return Ok(r);
+    }
 
     // Subscriber B at QoS 1.
     let params_b = ConnectParams::new("mqtt-test-shared-qos-b");
     let (mut sub_b, _) = client::connect(config.addr, &params_b, config.recv_timeout).await?;
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
     sub_b.send_subscribe(&sub).await?;
-    sub_b.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_b).await {
+        return Ok(r);
+    }
 
     // Publish 10 QoS 1 messages.
     let pub_params = ConnectParams::new("mqtt-test-shared-qos-pub");
@@ -1838,7 +1792,9 @@ async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> anyhow::Result<Out
 
     let sub = SubscribeParams::simple(1, shared_filter, QoS::ExactlyOnce);
     sub_client.send_subscribe(&sub).await?;
-    sub_client.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
 
     // 2. Disconnect subscriber abruptly.
     drop(sub_client.into_raw());
@@ -1929,7 +1885,9 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
 
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
     sub_a.send_subscribe(&sub).await?;
-    sub_a.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_a).await {
+        return Ok(r);
+    }
 
     // 2. Connect subscriber B but do NOT subscribe yet — this ensures
     //    the message is routed to A (the only subscriber in the group).
@@ -1965,7 +1923,9 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> anyhow::Resu
     // 5. Now subscribe B to the same shared group.
     let sub = SubscribeParams::simple(1, shared_filter, QoS::AtLeastOnce);
     sub_b.send_subscribe(&sub).await?;
-    sub_b.recv().await?; // SUBACK
+    if let Err(r) = expect_suback(&mut sub_b).await {
+        return Ok(r);
+    }
 
     // 6. B should NOT receive the NACKed message.
     let short_timeout = Duration::from_millis(500);

@@ -4,7 +4,7 @@
 //! individual test functions only need to handle the success path.
 
 use crate::client::{RawClient, RecvError};
-use crate::codec::{Packet, Publish};
+use crate::codec::{Packet, Publish, PublishParams, SubAck};
 use crate::types::Outcome;
 
 /// Receive the next packet and expect a PUBLISH on `topic`.
@@ -31,6 +31,55 @@ pub async fn expect_publish(client: &mut RawClient, topic: &str) -> Result<Publi
         Err(RecvError::Closed) => Err(Outcome::fail(format!(
             "no message on topic \"{topic}\" (connection closed)"
         ))),
+        Err(RecvError::Other(e)) => Err(Outcome::fail(format!("unexpected error: {e:#}"))),
+    }
+}
+
+/// Publish a QoS 0 message and expect it back on the same client.
+///
+/// Shorthand for the common self-loopback pattern: send a PUBLISH, then
+/// call [`expect_publish`] to receive the echoed message.  The topic
+/// string is used exactly once, eliminating the duplicate-topic typo risk.
+///
+/// Returns `Ok(publish)` on success so callers can inspect fields
+/// (payload, properties, retain, etc.).
+pub async fn publish_and_expect(
+    client: &mut RawClient,
+    topic: &str,
+    payload: &[u8],
+) -> Result<Publish, Outcome> {
+    client
+        .send_publish(&PublishParams::qos0(topic, payload.to_vec()))
+        .await
+        .map_err(|e| Outcome::fail(format!("failed to send PUBLISH: {e:#}")))?;
+    expect_publish(client, topic).await
+}
+
+/// Receive the next packet and expect a SUBACK with all-success reason codes.
+///
+/// Returns `Ok(suback)` when a SUBACK arrives with every reason code < 0x80.
+/// Returns `Err(Outcome)` for:
+/// - wrong packet type
+/// - any reason code >= 0x80 (subscription rejected)
+/// - `RecvError::Timeout` / `Closed` / `Other`
+///
+/// Callers that need to inspect the SUBACK further (e.g. granted QoS,
+/// reason code count) can use the returned [`SubAck`].
+pub async fn expect_suback(client: &mut RawClient) -> Result<SubAck, Outcome> {
+    match client.recv().await {
+        Ok(Packet::SubAck(ack)) => {
+            if ack.reason_codes.iter().all(|&c| c < 0x80) {
+                Ok(ack)
+            } else {
+                Err(Outcome::fail(format!(
+                    "SUBACK reason code indicates failure: {:?}",
+                    ack.reason_codes
+                )))
+            }
+        }
+        Ok(other) => Err(Outcome::fail_packet("SUBACK", &other)),
+        Err(RecvError::Timeout) => Err(Outcome::fail("no SUBACK received (timed out)")),
+        Err(RecvError::Closed) => Err(Outcome::fail("no SUBACK received (connection closed)")),
         Err(RecvError::Other(e)) => Err(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }

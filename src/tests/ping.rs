@@ -1,5 +1,7 @@
 //! PINGREQ / PINGRESP compliance tests [MQTT-3.12 / MQTT-3.13].
 
+use anyhow::Result;
+
 use crate::client;
 use crate::codec::{ConnectParams, Packet};
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
@@ -20,7 +22,7 @@ const PINGRESP: TestContext = TestContext {
 };
 
 /// Server MUST send PINGRESP in response to PINGREQ [MQTT-3.12.4-1].
-async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-ping");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -39,7 +41,7 @@ const MULTI_PING: TestContext = TestContext {
 };
 
 /// Server MUST respond to each PINGREQ [MQTT-3.12.4-1] (multiple pings).
-async fn multiple_pings(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn multiple_pings(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-multi-ping");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 

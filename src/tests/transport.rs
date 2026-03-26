@@ -4,6 +4,8 @@
 //! lossless, stream of bytes [MQTT-4.2-1].  These tests verify that the broker
 //! accepts CONNECT and returns CONNACK over each available transport.
 
+use anyhow::Result;
+
 use crate::client;
 use crate::codec::ConnectParams;
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
@@ -24,7 +26,7 @@ const TCP_TRANSPORT: TestContext = TestContext {
 };
 
 /// Verify the broker accepts an MQTT connection over plain TCP.
-async fn tcp_connect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn tcp_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-tcp-transport");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -45,7 +47,7 @@ const TLS_TRANSPORT: TestContext = TestContext {
 };
 
 /// Verify the broker accepts an MQTT connection over TLS.
-async fn tls_connect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn tls_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((tls_addr, tls)) = config.tls_info else {
         return Ok(Outcome::skip("TLS not configured"));
     };

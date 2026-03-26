@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 use std::time::Duration;
 
+use anyhow::Result;
 use clap::ValueEnum;
 use indicatif::{HumanDuration, ProgressBar};
 
@@ -275,7 +276,7 @@ fn requirement_section(id: &str) -> String {
 pub async fn run_test(
     ctx: TestContext,
     pb: &ProgressBar,
-    fut: impl std::future::Future<Output = anyhow::Result<Outcome>>,
+    fut: impl std::future::Future<Output = Result<Outcome>>,
 ) -> TestResult {
     tracing::debug!(id = ctx.primary_ref(), ctx.description, "running test");
     pb.set_message(ctx.primary_ref());

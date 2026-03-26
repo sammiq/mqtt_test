@@ -2,6 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+use anyhow::Result;
 use indicatif::ProgressBar;
 
 use crate::client::TlsConfig;
@@ -119,7 +120,7 @@ pub struct Suite {
 }
 
 /// A boxed, Send-safe test future.
-type TestFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Outcome>> + Send + 'a>>;
+type TestFuture<'a> = Pin<Box<dyn Future<Output = Result<Outcome>> + Send + 'a>>;
 
 /// Collects test futures before execution, deriving the count automatically.
 ///
@@ -142,7 +143,7 @@ impl<'a> SuiteRunner<'a> {
     pub fn add(
         &mut self,
         ctx: TestContext,
-        fut: impl Future<Output = anyhow::Result<Outcome>> + Send + 'a,
+        fut: impl Future<Output = Result<Outcome>> + Send + 'a,
     ) {
         self.tests.push((ctx, Box::pin(fut)));
     }

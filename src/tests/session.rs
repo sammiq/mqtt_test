@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use anyhow::Result;
+
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
 use crate::helpers::expect_suback;
@@ -44,7 +46,7 @@ const SESSION_PRESENT: TestContext = TestContext {
 
 /// If a session exists and the client reconnects with Clean Start=0,
 /// session_present MUST be 1 in the CONNACK [MQTT-3.1.2-5].
-async fn session_present_on_resume(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn session_present_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-present";
 
     // First connection: Clean Start=1, set Session Expiry so the session survives.
@@ -82,7 +84,7 @@ const QOS1_REDELIVER: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, any QoS 1 messages that were
 /// not acknowledged MUST be redelivered [MQTT-4.4.0-1].
-async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     let sub_id = "mqtt-test-qos1-redel-sub";
     let pub_id = "mqtt-test-qos1-redel-pub";
     let topic = "mqtt/test/session/qos1";
@@ -156,7 +158,7 @@ const QOS2_REDELIVER: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, incomplete QoS 2 flows
 /// MUST be resumed [MQTT-4.3.3 / MQTT-4.4].
-async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     let sub_id = "mqtt-test-qos2-redel-sub";
     let pub_id = "mqtt-test-qos2-redel-pub";
     let topic = "mqtt/test/session/qos2";
@@ -247,7 +249,7 @@ const SUB_PERSISTS: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, its subscriptions from
 /// the previous session MUST still be active [MQTT-3.1.2-6].
-async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> Result<Outcome> {
     let sub_id = "mqtt-test-sub-persist";
     let pub_id = "mqtt-test-sub-persist-pub";
     let topic = "mqtt/test/session/persist";
@@ -310,7 +312,7 @@ const SESSION_EXPIRY_ZERO: TestContext = TestContext {
 
 /// A Session Expiry Interval of 0 means the session state MUST be discarded
 /// when the connection closes [MQTT-3.1.2-10].
-async fn session_expiry_zero(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn session_expiry_zero(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-exp-zero";
 
     // First connection: Session Expiry Interval = 0 (explicit).
@@ -344,7 +346,7 @@ const SESSION_EXPIRY_MAX: TestContext = TestContext {
 
 /// Session Expiry Interval of 0xFFFFFFFF means the session does not expire.
 /// Reconnecting with Clean Start=0 should find the session [MQTT-3.1.2-11].
-async fn session_expiry_max(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn session_expiry_max(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-exp-max";
 
     // First connection with max session expiry.
@@ -379,7 +381,7 @@ const SESSION_TAKEOVER: TestContext = TestContext {
 
 /// If a client connects with a Client Identifier already in use, the server
 /// MUST disconnect the existing client [MQTT-3.1.4-3].
-async fn session_takeover(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-takeover";
 
     // First connection.
@@ -416,7 +418,7 @@ const SESSION_EXPIRY_DISCARD: TestContext = TestContext {
 /// The server MUST discard session state when the network connection is closed
 /// and the Session Expiry Interval has passed [MQTT-4.1.0-1/2]. Connect with a
 /// 2-second expiry, disconnect, wait 3 seconds, then verify the session is gone.
-async fn session_expiry_discard(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn session_expiry_discard(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-exp-discard";
     let topic = "mqtt/test/session/expiry_discard";
 
@@ -477,7 +479,7 @@ const SESSION_PRESENT_PERSISTENCE: TestContext = TestContext {
 /// the CONNACK MUST contain Session Present=1 [MQTT-3.2.2-2] and the subscription
 /// must deliver messages without re-subscribing. This verifies the end-to-end
 /// persistence guarantee beyond just the session_present flag.
-async fn session_present_verify_persistence(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn session_present_verify_persistence(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-pres-persist";
     let pub_id = "mqtt-test-session-pres-pub";
     let topic = "mqtt/test/session/present_persist";

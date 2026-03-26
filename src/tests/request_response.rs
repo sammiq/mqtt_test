@@ -4,6 +4,8 @@
 //! and Correlation Data properties. These tests verify the broker correctly
 //! forwards these properties.
 
+use anyhow::Result;
+
 use crate::client::{self, connect_and_subscribe};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS};
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
@@ -33,7 +35,7 @@ const RESPONSE_TOPIC: TestContext = TestContext {
 
 /// The broker SHOULD forward the Response Topic property from PUBLISH to
 /// subscribers without modification [MQTT-3.3.2-13].
-async fn response_topic_forwarded(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn response_topic_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-resp-topic-sub",
@@ -84,7 +86,7 @@ const CORRELATION_DATA: TestContext = TestContext {
 
 /// The broker SHOULD forward the Correlation Data property from PUBLISH to
 /// subscribers without modification [MQTT-3.3.2-14].
-async fn correlation_data_forwarded(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn correlation_data_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-corr-data-sub",
@@ -144,7 +146,7 @@ const FULL_RR: TestContext = TestContext {
 /// 3. Client A publishes request with Response Topic
 /// 4. Client B receives request, publishes response to Response Topic
 /// 5. Client A receives response
-async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn full_request_response(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client_a = connect_and_subscribe(
         config.addr,
         "mqtt-test-rr-requester",
@@ -230,7 +232,7 @@ const RESPONSE_TOPIC_WITH_CORR: TestContext = TestContext {
 
 /// Both Response Topic and Correlation Data MUST be forwarded together
 /// when present in a PUBLISH [MQTT-3.3.2-13/14].
-async fn response_topic_with_correlation(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn response_topic_with_correlation(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-rr-both-sub",
@@ -284,7 +286,7 @@ const MULTI_CORRELATION: TestContext = TestContext {
 
 /// Multiple messages with different Correlation Data values must each have
 /// their data preserved independently.
-async fn multiple_correlation_data(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn multiple_correlation_data(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-multi-corr-sub",

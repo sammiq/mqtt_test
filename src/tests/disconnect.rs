@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use anyhow::Result;
+
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillParams};
 use crate::helpers::expect_disconnect;
@@ -45,7 +47,7 @@ const DISCONNECT_CLOSE: TestContext = TestContext {
 };
 
 /// After receiving DISCONNECT from the client, the server MUST close the connection [MQTT-3.14.4-1].
-async fn server_closes_after_disconnect(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn server_closes_after_disconnect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-disconnect");
     let (client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
     let mut client = client.into_raw();
@@ -64,7 +66,7 @@ const DISCONNECT_WITH_WILL: TestContext = TestContext {
 
 /// DISCONNECT with reason code 0x04 (Disconnect with Will Message) MUST cause
 /// the server to publish the will message [MQTT-3.14.2-3].
-async fn disconnect_with_will(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn disconnect_with_will(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will04";
 
     // Set up a subscriber
@@ -107,7 +109,7 @@ const NORMAL_DISCONNECT_DISCARDS_WILL: TestContext = TestContext {
 
 /// A normal DISCONNECT (reason 0x00) MUST cause the server to discard any
 /// will message associated with the connection [MQTT-3.14.4-3].
-async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will_discard";
 
     // Set up a subscriber
@@ -149,7 +151,7 @@ const SESSION_EXPIRY_INCREASE: TestContext = TestContext {
 /// A client that connected with Session Expiry Interval of 0 MUST NOT set it
 /// to a non-zero value in the DISCONNECT packet [MQTT-3.14.2-3]. The server
 /// MUST treat this as a protocol error.
-async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> Result<Outcome> {
     // Connect with session_expiry_interval = 0 (or absent, which defaults to 0)
     let params = ConnectParams::new("mqtt-test-sei-increase");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -194,7 +196,7 @@ const WILL_DELAY: TestContext = TestContext {
 
 /// The server MUST delay publishing the will message by the Will Delay
 /// Interval after the network connection is closed [MQTT-3.1.3.2-2].
-async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will_delay";
 
     // Set up a subscriber for the will topic
@@ -255,7 +257,7 @@ const DISCONNECT_SESSION_TAKEOVER: TestContext = TestContext {
 /// When another client connects with the same Client ID, the server SHOULD
 /// send a DISCONNECT with reason code 0x8E (Session taken over) to the
 /// existing client [MQTT-3.14.2-1].
-async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-disc-takeover";
 
     let mut params = ConnectParams::new(client_id);
@@ -298,7 +300,7 @@ const DISCONNECT_PACKET_TOO_LARGE: TestContext = TestContext {
 /// Here we test the reverse: we tell the broker our max is small, then the
 /// broker should not send us oversized packets. To test server-side enforcement,
 /// we send a PUBLISH exceeding the broker's maximum (if advertised).
-async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> Result<Outcome> {
     // Connect and check if broker advertises a Maximum Packet Size.
     let params = ConnectParams::new("mqtt-test-disc-pkt-size");
     let (mut c, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -353,7 +355,7 @@ const DISCONNECT_REASON_STRING: TestContext = TestContext {
 /// When the server sends a DISCONNECT, it MAY include a Reason String
 /// property [MQTT-3.14.2-3]. We provoke a server DISCONNECT (via session
 /// takeover) and check for the property.
-async fn disconnect_reason_string(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn disconnect_reason_string(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-disc-reason-str";
 
     let mut params = ConnectParams::new(client_id);
@@ -395,7 +397,7 @@ const DISCONNECT_PROTOCOL_ERROR: TestContext = TestContext {
 /// packet with an appropriate reason code before closing the connection
 /// [MQTT-4.13.1-1]. We trigger this by sending a PUBLISH with Topic Alias = 0,
 /// which is explicitly invalid per the spec (protocol error).
-async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> anyhow::Result<Outcome> {
+async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-proto-err");
     let (client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
     let mut client = client.into_raw();

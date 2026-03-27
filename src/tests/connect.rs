@@ -1476,12 +1476,16 @@ async fn connack_before_close_on_error(config: TestConfig<'_>) -> Result<Outcome
             "CONNACK reason {:#04x} (expected >= 0x80 for malformed CONNECT)",
             connack.reason_code
         ))),
-        Err(_) | Ok(Packet::Disconnect(_)) => {
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => {
             // Server closed without sending CONNACK — allowed (it's a MAY)
             Ok(Outcome::unsupported(
                 "Server closed connection without sending CONNACK before closing",
             ))
         }
+        Err(RecvError::Timeout) => Ok(Outcome::unsupported(
+            "broker did not respond to malformed CONNECT (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }

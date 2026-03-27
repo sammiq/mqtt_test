@@ -359,7 +359,7 @@ async fn retain_flag_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     if p.retain {
         Ok(Outcome::Pass)
     } else {
-        Ok(Outcome::fail(
+        Ok(Outcome::unsupported(
             "Received PUBLISH but retain flag not set on delivery",
         ))
     }
@@ -376,7 +376,7 @@ async fn topic_alias_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-topic-alias");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.properties.topic_alias_maximum == Some(0) {
+    if connack.properties.topic_alias_maximum.unwrap_or(0) == 0 {
         return Ok(Outcome::skip(
             "Broker reported Topic Alias Maximum = 0 (not supported)",
         ));
@@ -847,8 +847,8 @@ async fn puback_no_matching_subscribers(config: TestConfig<'_>) -> Result<Outcom
             if ack.reason_code == 0x10 {
                 Ok(Outcome::Pass)
             } else {
-                Ok(Outcome::fail(format!(
-                    "PUBACK reason code {:#04x} (expected 0x10 for no matching subscribers)",
+                Ok(Outcome::unsupported(format!(
+                    "PUBACK reason code {:#04x} (broker did not report 0x10 for no matching subscribers)",
                     ack.reason_code
                 )))
             }
@@ -1512,8 +1512,8 @@ async fn payload_format_utf8_validated(config: TestConfig<'_>) -> Result<Outcome
             Ok(Outcome::Pass)
         }
         Ok(Packet::PubAck(_)) => {
-            // Server accepted without validation — MAY, so this is fine
-            Ok(Outcome::fail(
+            // Server accepted without validation — MAY, so this is not a failure
+            Ok(Outcome::unsupported(
                 "Server accepted invalid UTF-8 payload without validation (Payload Format Indicator=1)",
             ))
         }

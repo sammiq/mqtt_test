@@ -373,12 +373,12 @@ async fn disconnect_reason_string(config: TestConfig<'_>) -> Result<Outcome> {
             if d.properties.reason_string.is_some() {
                 Ok(Outcome::Pass)
             } else {
-                Ok(Outcome::fail(
+                Ok(Outcome::unsupported(
                     "DISCONNECT received but without Reason String property",
                 ))
             }
         }
-        Err(RecvError::Closed) => Ok(Outcome::fail(
+        Err(RecvError::Closed) => Ok(Outcome::unsupported(
             "Connection closed without sending DISCONNECT",
         )),
         Err(RecvError::Timeout) => Ok(Outcome::fail("No DISCONNECT received (timed out)")),

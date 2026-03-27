@@ -1375,8 +1375,8 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> Result<Outcome
         Ok(Outcome::Pass)
     } else {
         // Server did not deliver any buffered messages — also valid, but MAY not detected
-        Ok(Outcome::fail(
-            "Server did not deliver any buffered messages after UNSUBSCRIBE (MAY behaviour not detected)",
+        Ok(Outcome::unsupported(
+            "Server did not deliver any buffered messages after UNSUBSCRIBE",
         ))
     }
 }

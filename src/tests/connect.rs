@@ -176,11 +176,11 @@ async fn zero_length_client_id_no_clean_start(config: TestConfig<'_>) -> Result<
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => {
             let _ = client.send_disconnect(0x00).await;
-            Ok(Outcome::fail(
-                "Broker accepted empty client ID with Clean Start=0 (expected 0x85 rejection)",
+            Ok(Outcome::unsupported(
+                "Broker accepted empty client ID with Clean Start=0 (no 0x85 rejection)",
             ))
         }
-        Ok(Packet::ConnAck(connack)) => Ok(Outcome::fail(format!(
+        Ok(Packet::ConnAck(connack)) => Ok(Outcome::unsupported(format!(
             "Expected reason 0x85, got {:#04x}",
             connack.reason_code
         ))),
@@ -305,7 +305,7 @@ async fn server_keep_alive(config: TestConfig<'_>) -> Result<Outcome> {
     if connack.properties.server_keep_alive.is_some() {
         Ok(Outcome::Pass)
     } else {
-        Ok(Outcome::fail(
+        Ok(Outcome::unsupported(
             "Server did not include Server Keep Alive property in CONNACK",
         ))
     }
@@ -326,12 +326,12 @@ async fn topic_alias_maximum(config: TestConfig<'_>) -> Result<Outcome> {
         if max > 0 {
             Ok(Outcome::Pass)
         } else {
-            Ok(Outcome::fail(
+            Ok(Outcome::unsupported(
                 "Topic Alias Maximum is 0 (topic aliases not supported)",
             ))
         }
     } else {
-        Ok(Outcome::fail(
+        Ok(Outcome::unsupported(
             "Server did not include Topic Alias Maximum in CONNACK",
         ))
     }
@@ -432,10 +432,10 @@ async fn invalid_protocol_version(config: TestConfig<'_>) -> Result<Outcome> {
 
     match client.recv().await {
         Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x84 => Ok(Outcome::Pass),
-        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => Ok(Outcome::fail(
-            "Broker accepted MQTT v4 CONNECT with success (expected rejection)",
+        Ok(Packet::ConnAck(connack)) if connack.reason_code == 0x00 => Ok(Outcome::unsupported(
+            "Broker accepted MQTT v4 CONNECT (no 0x84 rejection)",
         )),
-        Ok(Packet::ConnAck(connack)) => Ok(Outcome::fail(format!(
+        Ok(Packet::ConnAck(connack)) => Ok(Outcome::unsupported(format!(
             "Expected CONNACK reason 0x84, got {:#04x}",
             connack.reason_code
         ))),
@@ -852,7 +852,7 @@ async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     // Should NOT arrive immediately (within 1 second)
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => {
-            return Ok(Outcome::fail(
+            return Ok(Outcome::unsupported(
                 "Will message arrived immediately despite Will Delay Interval = 2s",
             ));
         }
@@ -863,7 +863,7 @@ async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     match sub_client.recv_with_timeout(Duration::from_secs(4)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::Pass),
         Ok(other) => Ok(Outcome::fail_packet("PUBLISH (delayed will)", &other)),
-        Err(_) => Ok(Outcome::fail(
+        Err(_) => Ok(Outcome::unsupported(
             "Will message not received after delay interval expired",
         )),
     }
@@ -888,7 +888,7 @@ async fn request_response_information(config: TestConfig<'_>) -> Result<Outcome>
     if connack.properties.response_information.is_some() {
         Ok(Outcome::Pass)
     } else {
-        Ok(Outcome::fail(
+        Ok(Outcome::unsupported(
             "Server did not include Response Information despite request",
         ))
     }
@@ -936,11 +936,11 @@ async fn enhanced_auth_method(config: TestConfig<'_>) -> Result<Outcome> {
             let _ = client.send_disconnect(0x00).await;
             Ok(Outcome::Pass)
         }
-        Ok(Packet::ConnAck(connack)) => Ok(Outcome::fail(format!(
+        Ok(Packet::ConnAck(connack)) => Ok(Outcome::unsupported(format!(
             "CONNACK reason {:#04x} for enhanced auth CONNECT",
             connack.reason_code
         ))),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::fail(
+        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::unsupported(
             "Broker closed connection instead of sending CONNACK with auth error code",
         )),
         Ok(other) => Ok(Outcome::fail_packet("CONNACK or AUTH", &other)),
@@ -978,7 +978,7 @@ async fn reason_string_in_connack(config: TestConfig<'_>) -> Result<Outcome> {
             if connack.properties.reason_string.is_some() {
                 Ok(Outcome::Pass)
             } else {
-                Ok(Outcome::fail(
+                Ok(Outcome::unsupported(
                     "CONNACK rejection did not include Reason String",
                 ))
             }
@@ -986,7 +986,7 @@ async fn reason_string_in_connack(config: TestConfig<'_>) -> Result<Outcome> {
         Ok(Packet::ConnAck(_)) => Ok(Outcome::skip(
             "Broker accepted MQTT v4 CONNECT — cannot test error Reason String",
         )),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::fail(
+        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::unsupported(
             "Broker closed connection instead of sending CONNACK with Reason String",
         )),
         Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
@@ -1093,7 +1093,7 @@ async fn connack_maximum_qos(config: TestConfig<'_>) -> Result<Outcome> {
         Some(qos) => Ok(Outcome::fail(format!(
             "Maximum QoS property has invalid value {qos} (expected 0, 1, or 2)"
         ))),
-        None => Ok(Outcome::fail(
+        None => Ok(Outcome::unsupported(
             "CONNACK does not include Maximum QoS property (defaults to 2)",
         )),
     }
@@ -1112,7 +1112,7 @@ async fn connack_retain_available(config: TestConfig<'_>) -> Result<Outcome> {
 
     match connack.properties.retain_available {
         Some(_) => Ok(Outcome::Pass),
-        None => Ok(Outcome::fail(
+        None => Ok(Outcome::unsupported(
             "CONNACK does not include Retain Available property (defaults to true)",
         )),
     }
@@ -1131,7 +1131,7 @@ async fn connack_subscription_ids_available(config: TestConfig<'_>) -> Result<Ou
 
     match connack.properties.subscription_ids_available {
         Some(_) => Ok(Outcome::Pass),
-        None => Ok(Outcome::fail(
+        None => Ok(Outcome::unsupported(
             "CONNACK does not include Subscription Identifiers Available property (defaults to true)",
         )),
     }
@@ -1150,7 +1150,7 @@ async fn connack_shared_subscription_available(config: TestConfig<'_>) -> Result
 
     match connack.properties.shared_subscription_available {
         Some(_) => Ok(Outcome::Pass),
-        None => Ok(Outcome::fail(
+        None => Ok(Outcome::unsupported(
             "CONNACK does not include Shared Subscription Available property (defaults to true)",
         )),
     }
@@ -1185,7 +1185,7 @@ async fn connack_server_reference(config: TestConfig<'_>) -> Result<Outcome> {
             if connack.properties.server_reference.is_some() {
                 Ok(Outcome::Pass)
             } else {
-                Ok(Outcome::fail(
+                Ok(Outcome::unsupported(
                     "Rejected CONNACK does not include Server Reference property",
                 ))
             }
@@ -1226,9 +1226,9 @@ async fn server_redirection(config: TestConfig<'_>) -> Result<Outcome> {
             )))
         }
     } else {
-        // Normal connection — server is not redirecting. Not a failure for MAY.
-        Ok(Outcome::fail(
-            "Server did not redirect (no 0x9C/0x9D reason code in CONNACK)",
+        // Normal connection — server is not redirecting.
+        Ok(Outcome::unsupported(
+            "Broker did not redirect (no 0x9C/0x9D reason code in CONNACK)",
         ))
     }
 }
@@ -1478,8 +1478,8 @@ async fn connack_before_close_on_error(config: TestConfig<'_>) -> Result<Outcome
         ))),
         Err(_) | Ok(Packet::Disconnect(_)) => {
             // Server closed without sending CONNACK — allowed (it's a MAY)
-            Ok(Outcome::fail(
-                "Server closed connection without sending CONNACK (MAY behavior)",
+            Ok(Outcome::unsupported(
+                "Server closed connection without sending CONNACK before closing",
             ))
         }
         Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),

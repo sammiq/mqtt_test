@@ -133,7 +133,7 @@ impl Report {
                         c.total += 1;
                         c.pass += 1;
                     }
-                    Outcome::Fail { .. } => c.total += 1,
+                    Outcome::Fail { .. } | Outcome::Unsupported(_) => c.total += 1,
                 }
             }
         }
@@ -220,6 +220,7 @@ fn format_result(r: &TestResult, verbose: bool, color: bool) -> String {
             };
             (if is_may { "  NO" } else { "FAIL" }, format!(" — {msg}"))
         }
+        Outcome::Unsupported(msg) => ("  NO", format!(" — {msg}")),
         Outcome::Skip(msg) => ("SKIP", format!(" — {msg}")),
     };
     let status = if color {
@@ -227,6 +228,7 @@ fn format_result(r: &TestResult, verbose: bool, color: bool) -> String {
             Outcome::Pass => format!("\x1b[32m{status_text}\x1b[0m"),
             Outcome::Fail { .. } if is_may => format!("\x1b[90m{status_text}\x1b[0m"),
             Outcome::Fail { .. } => format!("\x1b[31m{status_text}\x1b[0m"),
+            Outcome::Unsupported(_) => format!("\x1b[90m{status_text}\x1b[0m"),
             Outcome::Skip(_) => format!("\x1b[90m{status_text}\x1b[0m"),
         }
     } else {
@@ -293,6 +295,7 @@ pub async fn run_test(
         (Outcome::Pass, true) => "\x1b[36m●\x1b[0m",  // cyan dot (supported)
         (Outcome::Fail { .. }, false) => "\x1b[31m✗\x1b[0m", // red cross
         (Outcome::Fail { .. }, true) => "\x1b[90m·\x1b[0m", // dim dot (not supported)
+        (Outcome::Unsupported(_), _) => "\x1b[90m·\x1b[0m", // dim dot (not supported)
         (Outcome::Skip(_), _) => "\x1b[90m○\x1b[0m",  // dim circle (skipped)
     };
     pb.println(format!("  {symbol} {}", ctx.description));
@@ -416,6 +419,36 @@ mod tests {
         };
         let s = format_result(&r, false, false);
         assert!(s.contains("NO"));
+    }
+
+    #[test]
+    fn format_result_unsupported_shows_no() {
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.3-8"],
+            description: "Optional feature",
+            compliance: Compliance::May,
+        };
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::unsupported("broker does not do this"),
+        };
+        let s = format_result(&r, false, false);
+        assert!(s.contains("NO"));
+        assert!(s.contains("broker does not do this"));
+    }
+
+    #[test]
+    fn format_result_unsupported_not_a_failure() {
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.3-8"],
+            description: "Optional feature",
+            compliance: Compliance::May,
+        };
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::unsupported("not supported"),
+        };
+        assert!(!is_failure(&r));
     }
 
     #[test]

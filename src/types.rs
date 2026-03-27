@@ -50,13 +50,37 @@ impl TestContext {
 }
 
 /// The result of running a single test.
+///
+/// For MUST/SHOULD tests the question is "did the broker comply?":
+///   Pass = yes, Fail = no (protocol violation).
+///
+/// For MAY tests the question is "does the broker do this?":
+///   Pass = yes (supported), Unsupported = no (not supported).
+///   Fail is still valid for MAY tests when something genuinely breaks
+///   (e.g. broker advertised support but then errored), but Unsupported
+///   is preferred when the broker simply doesn't exhibit the behaviour.
+///
+/// Skip applies to all compliance levels: the test couldn't run
+/// (missing config, prerequisite not met).
 #[derive(Debug, Clone)]
 pub enum Outcome {
+    /// The broker behaves as described.
+    /// For MAY tests, this means the broker supports the optional behaviour
+    /// and is displayed as "YES" in the report.
     Pass,
+    /// The broker violated a requirement or behaved incorrectly.
+    /// Displayed as "FAIL" for MUST/SHOULD tests, "NO" for MAY tests.
     Fail {
         message: String,
         verbose: Option<String>,
     },
+    /// The broker does not exhibit this optional (MAY) behaviour, and that's
+    /// fine — it's not a protocol violation. Prefer this over Fail for MAY
+    /// tests when the broker simply doesn't do the optional thing.
+    /// Displayed as "NO" in the report; not counted as a failure.
+    Unsupported(String),
+    /// The test could not run (missing config, prerequisite not met, etc.).
+    /// Excluded from pass/total counts in the summary.
     Skip(String),
 }
 
@@ -85,6 +109,10 @@ impl Outcome {
 
     pub fn skip(reason: impl Into<String>) -> Self {
         Outcome::Skip(reason.into())
+    }
+
+    pub fn unsupported(reason: impl Into<String>) -> Self {
+        Outcome::Unsupported(reason.into())
     }
 }
 

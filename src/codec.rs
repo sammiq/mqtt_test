@@ -278,9 +278,15 @@ macro_rules! decode_properties {
     };
 
     (@one $p:ident, $data:ident, $pos:ident, $field:ident, OneByte) => {
+        if *$pos >= $data.len() {
+            return Err(DecodeError::InsufficientData);
+        }
         $p.$field = Some($data[*$pos]); *$pos += 1;
     };
     (@one $p:ident, $data:ident, $pos:ident, $field:ident, BoolByte) => {
+        if *$pos >= $data.len() {
+            return Err(DecodeError::InsufficientData);
+        }
         $p.$field = Some($data[*$pos] != 0); *$pos += 1;
     };
     (@one $p:ident, $data:ident, $pos:ident, $field:ident, TwoByte) => {
@@ -331,14 +337,22 @@ impl Properties {
             return Err(DecodeError::InsufficientData);
         }
 
+        // Decode against the property sub-slice so that all bounds checks
+        // in read_u16/read_str/etc. naturally enforce the property boundary
+        // and cannot read into the following payload.
+        let props = &data[*pos..end];
         let mut p = Properties::default();
-
-        while *pos < end {
-            let id = data[*pos];
-            *pos += 1;
-            for_each_property!(decode_properties(p, data, pos, id));
+        {
+            let mut offset = 0usize;
+            let pos = &mut offset;
+            while *pos < props.len() {
+                let id = props[*pos];
+                *pos += 1;
+                for_each_property!(decode_properties(p, props, pos, id));
+            }
         }
 
+        *pos = end;
         Ok(p)
     }
 }
@@ -1328,6 +1342,46 @@ mod tests {
         assert_eq!(decoded.request_response_information, Some(true));
         assert_eq!(decoded.request_problem_information, Some(false));
         assert_eq!(decoded.will_delay_interval, Some(10));
+    }
+
+    #[test]
+    fn properties_decode_truncated_one_byte() {
+        // Property ID 0x01 (payload_format_indicator) = OneByte, but no byte follows.
+        // Properties length says 1 byte (just the ID), so the value is missing.
+        let data = [0x01, 0x01]; // VBI length=1, property ID=0x01, no value
+        let mut pos = 0;
+        assert!(matches!(
+            Properties::decode(&data, &mut pos),
+            Err(DecodeError::InsufficientData)
+        ));
+    }
+
+    #[test]
+    fn properties_decode_truncated_two_byte() {
+        // Property ID 0x21 (receive_maximum) = TwoByte, but only 1 byte follows.
+        let data = [0x02, 0x21, 0x00]; // VBI length=2, ID=0x21, one byte (needs two)
+        let mut pos = 0;
+        assert!(matches!(
+            Properties::decode(&data, &mut pos),
+            Err(DecodeError::InsufficientData)
+        ));
+    }
+
+    #[test]
+    fn properties_decode_does_not_read_past_boundary() {
+        // Properties block contains just ID 0x01 (payload_format_indicator)
+        // with value 0x01. After the properties block, there's a trailing
+        // byte 0xFF that must NOT be consumed.
+        let data = [
+            0x02, // VBI length = 2 (property ID + value)
+            0x01, // property ID: payload_format_indicator
+            0x01, // value: 1
+            0xFF, // trailing byte (payload) — must not be touched
+        ];
+        let mut pos = 0;
+        let props = Properties::decode(&data, &mut pos).unwrap();
+        assert_eq!(props.payload_format_indicator, Some(1));
+        assert_eq!(pos, 3); // should stop at end of properties, not read 0xFF
     }
 
     // ── Packet encode/decode roundtrip tests ─────────────────────────────────

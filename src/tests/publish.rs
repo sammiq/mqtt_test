@@ -74,12 +74,12 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const QOS0: TestContext = TestContext {
-    refs: &["MQTT-3.3.1-1"],
-    description: "QoS 0 PUBLISH MUST be delivered without acknowledgement",
+    refs: &["MQTT-4.3.1-1"],
+    description: "QoS 0 PUBLISH MUST be delivered with QoS=0 and DUP=0",
     compliance: Compliance::Must,
 };
 
-/// QoS 0 PUBLISH MUST be accepted without error.
+/// QoS 0 delivery protocol: PUBLISH with QoS=0, DUP=0 [MQTT-4.3.1-1].
 async fn qos0_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = client::connect_and_subscribe(
         config.addr,
@@ -277,13 +277,13 @@ async fn dup_on_qos0(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const QOS_DOWNGRADE: TestContext = TestContext {
-    refs: &["MQTT-4.3.1-1", "MQTT-3.8.4-7"],
+    refs: &["MQTT-3.8.4-7"],
     description: "Delivered QoS MUST NOT exceed the subscription's maximum QoS",
     compliance: Compliance::Must,
 };
 
 /// Server MUST deliver at the lower of the publisher's QoS and the subscriber's
-/// maximum QoS [MQTT-4.3.1-1]. Publishing QoS 2 to a QoS 0 subscription must
+/// maximum QoS [MQTT-3.8.4-7]. Publishing QoS 2 to a QoS 0 subscription must
 /// deliver at QoS 0.
 async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/qos_downgrade";

@@ -863,9 +863,13 @@ async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     match sub_client.recv_with_timeout(Duration::from_secs(4)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::Pass),
         Ok(other) => Ok(Outcome::fail_packet("PUBLISH (delayed will)", &other)),
-        Err(_) => Ok(Outcome::unsupported(
-            "Will message not received after delay interval expired",
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "Will message not received after delay interval expired (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(Outcome::fail(
+            "Connection closed before delayed will message arrived",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -940,9 +944,13 @@ async fn enhanced_auth_method(config: TestConfig<'_>) -> Result<Outcome> {
             "CONNACK reason {:#04x} for enhanced auth CONNECT",
             connack.reason_code
         ))),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::unsupported(
+        Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(Outcome::unsupported(
             "Broker closed connection instead of sending CONNACK with auth error code",
         )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "broker did not respond to enhanced auth CONNECT (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(Outcome::fail_packet("CONNACK or AUTH", &other)),
     }
 }
@@ -986,9 +994,13 @@ async fn reason_string_in_connack(config: TestConfig<'_>) -> Result<Outcome> {
         Ok(Packet::ConnAck(_)) => Ok(Outcome::skip(
             "Broker accepted MQTT v4 CONNECT — cannot test error Reason String",
         )),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::unsupported(
+        Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(Outcome::unsupported(
             "Broker closed connection instead of sending CONNACK with Reason String",
         )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "broker did not respond to CONNECT (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }

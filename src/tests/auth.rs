@@ -71,33 +71,38 @@ async fn complete_auth_exchange(
         .map_err(|e| Outcome::fail(format!("failed to send CONNECT: {e:#}")))?;
 
     loop {
-        match client
-            .recv()
-            .await
-            .map_err(|e| Outcome::fail(format!("auth exchange error: {e:#}")))?
-        {
-            Packet::Auth {
-                reason_code: 0x18, ..
-            } => {
-                client
-                    .send_auth(0x18, &auth_response(b"client-response"))
-                    .await
-                    .map_err(|e| Outcome::fail(format!("failed to send AUTH: {e:#}")))?;
+        match client.recv().await {
+            Err(RecvError::Closed) => return Err(Outcome::skip(SKIP_MSG)),
+            Err(RecvError::Timeout) => {
+                return Err(Outcome::fail("broker did not respond during auth exchange (timed out)"))
             }
-            Packet::ConnAck(connack) if connack.reason_code == 0x00 => {
-                return Ok(client);
+            Err(RecvError::Other(e)) => {
+                return Err(Outcome::fail(format!("auth exchange error: {e:#}")))
             }
-            Packet::ConnAck(connack)
-                if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
-            {
-                return Err(Outcome::skip(SKIP_MSG));
-            }
-            other => {
-                return Err(Outcome::fail_packet(
-                    "AUTH(0x18) or CONNACK(0x00/0x8C/0x87)",
-                    &other,
-                ));
-            }
+            Ok(packet) => match packet {
+                Packet::Auth {
+                    reason_code: 0x18, ..
+                } => {
+                    client
+                        .send_auth(0x18, &auth_response(b"client-response"))
+                        .await
+                        .map_err(|e| Outcome::fail(format!("failed to send AUTH: {e:#}")))?;
+                }
+                Packet::ConnAck(connack) if connack.reason_code == 0x00 => {
+                    return Ok(client);
+                }
+                Packet::ConnAck(connack)
+                    if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
+                {
+                    return Err(Outcome::skip(SKIP_MSG));
+                }
+                other => {
+                    return Err(Outcome::fail_packet(
+                        "AUTH(0x18) or CONNACK(0x00/0x8C/0x87)",
+                        &other,
+                    ));
+                }
+            },
         }
     }
 }

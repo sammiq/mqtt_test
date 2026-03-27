@@ -2,9 +2,12 @@
 
 use std::time::Duration;
 
+use anyhow::Result;
+
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillParams};
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::helpers::expect_disconnect;
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("DISCONNECT");
@@ -44,9 +47,7 @@ const DISCONNECT_CLOSE: TestContext = TestContext {
 };
 
 /// After receiving DISCONNECT from the client, the server MUST close the connection [MQTT-3.14.4-1].
-async fn server_closes_after_disconnect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DISCONNECT_CLOSE;
-
+async fn server_closes_after_disconnect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-disconnect");
     let (client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
     let mut client = client.into_raw();
@@ -54,19 +55,7 @@ async fn server_closes_after_disconnect(config: TestConfig<'_>) -> anyhow::Resul
     client.send_disconnect(0x00).await?;
 
     // After DISCONNECT, any further recv should fail (connection closed)
-    match client.recv().await {
-        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "connection close after DISCONNECT",
-            &other,
-        )),
-    }
+    Ok(expect_disconnect(&mut client).await)
 }
 
 const DISCONNECT_WITH_WILL: TestContext = TestContext {
@@ -77,9 +66,7 @@ const DISCONNECT_WITH_WILL: TestContext = TestContext {
 
 /// DISCONNECT with reason code 0x04 (Disconnect with Will Message) MUST cause
 /// the server to publish the will message [MQTT-3.14.2-3].
-async fn disconnect_with_will(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DISCONNECT_WITH_WILL;
-
+async fn disconnect_with_will(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will04";
 
     // Set up a subscriber
@@ -102,21 +89,15 @@ async fn disconnect_with_will(config: TestConfig<'_>) -> anyhow::Result<TestResu
     will_client.send_disconnect(0x04).await?;
 
     match sub_client.recv_with_timeout(Duration::from_secs(5)).await {
-        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH (will message)",
-            &other,
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::Pass),
+        Ok(other) => Ok(Outcome::fail_packet("PUBLISH (will message)", &other)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
             "Will message not received after DISCONNECT with reason 0x04 (timed out)",
         )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) => Ok(Outcome::fail(
             "Will message not received after DISCONNECT with reason 0x04 (connection closed)",
         )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -128,9 +109,7 @@ const NORMAL_DISCONNECT_DISCARDS_WILL: TestContext = TestContext {
 
 /// A normal DISCONNECT (reason 0x00) MUST cause the server to discard any
 /// will message associated with the connection [MQTT-3.14.4-3].
-async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = NORMAL_DISCONNECT_DISCARDS_WILL;
-
+async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will_discard";
 
     // Set up a subscriber
@@ -153,14 +132,13 @@ async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> anyhow::Resu
 
     // Wait briefly — should NOT receive the will message
     match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
-        Err(RecvError::Timeout) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::fail(
             "Will message was published despite normal DISCONNECT (0x00)",
         )),
-        Ok(_) => Ok(TestResult::pass(&ctx)),
+        Ok(_) => Ok(Outcome::Pass),
     }
 }
 
@@ -173,9 +151,7 @@ const SESSION_EXPIRY_INCREASE: TestContext = TestContext {
 /// A client that connected with Session Expiry Interval of 0 MUST NOT set it
 /// to a non-zero value in the DISCONNECT packet [MQTT-3.14.2-3]. The server
 /// MUST treat this as a protocol error.
-async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = SESSION_EXPIRY_INCREASE;
-
+async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> Result<Outcome> {
     // Connect with session_expiry_interval = 0 (or absent, which defaults to 0)
     let params = ConnectParams::new("mqtt-test-sei-increase");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -195,21 +171,17 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> anyhow::Res
             // We check if the server sends a DISCONNECT with protocol error first.
             // If it just closes, we can't distinguish — mark as pass since the
             // server at minimum didn't honor the invalid session expiry.
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
-            "broker did not disconnect (timed out)",
-        )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(Outcome::Pass),
         Ok(Packet::Disconnect(d)) if d.reason_code == 0x00 => {
             // Normal disconnect response — server may have just ignored the invalid
             // property. We can't verify the session wasn't extended, so pass cautiously.
-            Ok(TestResult::pass(&ctx))
+            Ok(Outcome::Pass)
         }
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
+        Ok(other) => Ok(Outcome::fail_packet(
             "disconnect with protocol error or connection close",
             &other,
         )),
@@ -224,9 +196,7 @@ const WILL_DELAY: TestContext = TestContext {
 
 /// The server MUST delay publishing the will message by the Will Delay
 /// Interval after the network connection is closed [MQTT-3.1.3.2-2].
-async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = WILL_DELAY;
-
+async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will_delay";
 
     // Set up a subscriber for the will topic
@@ -252,34 +222,27 @@ async fn will_delay_interval(config: TestConfig<'_>) -> anyhow::Result<TestResul
     // Will should NOT arrive within 1 second
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Ok(Packet::Publish(p)) if p.topic == will_topic => {
-            return Ok(TestResult::fail(
-                &ctx,
+            return Ok(Outcome::fail(
                 "Will message arrived immediately despite Will Delay Interval of 3s",
             ));
         }
         Err(RecvError::Other(e)) => {
-            return Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")));
+            return Ok(Outcome::fail(format!("unexpected error: {e:#}")));
         }
         _ => {} // Timeout or Closed or unrelated packet — expected, no message yet
     }
 
     // Will SHOULD arrive within 5 seconds total
     match sub_client.recv_with_timeout(Duration::from_secs(5)).await {
-        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(TestResult::pass(&ctx)),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
-            "delayed will PUBLISH",
-            &other,
-        )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(
-            &ctx,
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::Pass),
+        Ok(other) => Ok(Outcome::fail_packet("delayed will PUBLISH", &other)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
             "Will message not received within 5 seconds (delay was 3s)",
         )),
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) => Ok(Outcome::fail(
             "Will message not received — connection closed (delay was 3s)",
         )),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -294,9 +257,7 @@ const DISCONNECT_SESSION_TAKEOVER: TestContext = TestContext {
 /// When another client connects with the same Client ID, the server SHOULD
 /// send a DISCONNECT with reason code 0x8E (Session taken over) to the
 /// existing client [MQTT-3.14.2-1].
-async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DISCONNECT_SESSION_TAKEOVER;
-
+async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-disc-takeover";
 
     let mut params = ConnectParams::new(client_id);
@@ -311,24 +272,20 @@ async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> anyhow::R
 
     // c1 should receive DISCONNECT with reason 0x8E
     match c1.recv().await {
-        Ok(Packet::Disconnect(d)) if d.reason_code == 0x8E => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::Disconnect(d)) => Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "DISCONNECT received but reason was {:#04x} (expected 0x8E)",
-                d.reason_code
-            ),
-        )),
+        Ok(Packet::Disconnect(d)) if d.reason_code == 0x8E => Ok(Outcome::Pass),
+        Ok(Packet::Disconnect(d)) => Ok(Outcome::fail(format!(
+            "DISCONNECT received but reason was {:#04x} (expected 0x8E)",
+            d.reason_code
+        ))),
         Err(RecvError::Closed) => {
             // Connection closed without DISCONNECT — still acceptable
-            Ok(TestResult::fail(
-                &ctx,
+            Ok(Outcome::fail(
                 "Connection closed without sending DISCONNECT (expected 0x8E reason code)",
             ))
         }
-        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No DISCONNECT received (timed out)")),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("No DISCONNECT received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("DISCONNECT", &other)),
     }
 }
 
@@ -343,9 +300,7 @@ const DISCONNECT_PACKET_TOO_LARGE: TestContext = TestContext {
 /// Here we test the reverse: we tell the broker our max is small, then the
 /// broker should not send us oversized packets. To test server-side enforcement,
 /// we send a PUBLISH exceeding the broker's maximum (if advertised).
-async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DISCONNECT_PACKET_TOO_LARGE;
-
+async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> Result<Outcome> {
     // Connect and check if broker advertises a Maximum Packet Size.
     let params = ConnectParams::new("mqtt-test-disc-pkt-size");
     let (mut c, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -360,21 +315,17 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
 
         // Check if broker disconnects us
         match c.recv_with_timeout(Duration::from_secs(2)).await {
-            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
+            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(Outcome::Pass),
             Err(RecvError::Timeout) => {
                 // Broker accepted it — it has no practical limit
-                Ok(TestResult::skip(
-                    &ctx,
+                Ok(Outcome::skip(
                     "Broker accepted 1MB payload — no Maximum Packet Size enforced",
                 ))
             }
-            Err(RecvError::Other(e)) => {
-                Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
-            }
+            Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
             Ok(_) => {
                 // Broker accepted it — it has no practical limit
-                Ok(TestResult::skip(
-                    &ctx,
+                Ok(Outcome::skip(
                     "Broker accepted 1MB payload — no Maximum Packet Size enforced",
                 ))
             }
@@ -386,16 +337,11 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> anyhow::Resul
         c.send_publish(&publish).await?;
 
         match c.recv().await {
-            Ok(Packet::Disconnect(d)) if d.reason_code == 0x95 => Ok(TestResult::pass(&ctx)),
-            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(TestResult::pass(&ctx)),
-            Err(RecvError::Timeout) => Ok(TestResult::fail(
-                &ctx,
-                "broker did not disconnect (timed out)",
-            )),
-            Err(RecvError::Other(e)) => {
-                Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}")))
-            }
-            Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
+            Ok(Packet::Disconnect(d)) if d.reason_code == 0x95 => Ok(Outcome::Pass),
+            Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(Outcome::Pass),
+            Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
+            Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+            Ok(other) => Ok(Outcome::fail_packet("DISCONNECT", &other)),
         }
     }
 }
@@ -409,9 +355,7 @@ const DISCONNECT_REASON_STRING: TestContext = TestContext {
 /// When the server sends a DISCONNECT, it MAY include a Reason String
 /// property [MQTT-3.14.2-3]. We provoke a server DISCONNECT (via session
 /// takeover) and check for the property.
-async fn disconnect_reason_string(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DISCONNECT_REASON_STRING;
-
+async fn disconnect_reason_string(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-disc-reason-str";
 
     let mut params = ConnectParams::new(client_id);
@@ -427,21 +371,19 @@ async fn disconnect_reason_string(config: TestConfig<'_>) -> anyhow::Result<Test
     match c1.recv().await {
         Ok(Packet::Disconnect(d)) => {
             if d.properties.reason_string.is_some() {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
+                Ok(Outcome::unsupported(
                     "DISCONNECT received but without Reason String property",
                 ))
             }
         }
-        Err(RecvError::Closed) => Ok(TestResult::fail(
-            &ctx,
+        Err(RecvError::Closed) => Ok(Outcome::unsupported(
             "Connection closed without sending DISCONNECT",
         )),
-        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No DISCONNECT received (timed out)")),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(&ctx, "DISCONNECT", &other)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("No DISCONNECT received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("DISCONNECT", &other)),
     }
 }
 
@@ -455,9 +397,7 @@ const DISCONNECT_PROTOCOL_ERROR: TestContext = TestContext {
 /// packet with an appropriate reason code before closing the connection
 /// [MQTT-4.13.1-1]. We trigger this by sending a PUBLISH with Topic Alias = 0,
 /// which is explicitly invalid per the spec (protocol error).
-async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = DISCONNECT_PROTOCOL_ERROR;
-
+async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-proto-err");
     let (client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
     let mut client = client.into_raw();
@@ -470,25 +410,20 @@ async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> anyhow::Result<
 
     // Server SHOULD send DISCONNECT with a reason code before closing
     match client.recv().await {
-        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(TestResult::pass(&ctx)),
-        Ok(Packet::Disconnect(d)) => Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "DISCONNECT received but reason code {:#04x} does not indicate error (expected >= 0x80)",
-                d.reason_code
-            ),
-        )),
+        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(Outcome::Pass),
+        Ok(Packet::Disconnect(d)) => Ok(Outcome::fail(format!(
+            "DISCONNECT received but reason code {:#04x} does not indicate error (expected >= 0x80)",
+            d.reason_code
+        ))),
         Err(RecvError::Closed) => {
             // Connection closed without DISCONNECT — server did not send one
-            Ok(TestResult::fail(
-                &ctx,
+            Ok(Outcome::fail(
                 "Connection closed without sending DISCONNECT (server SHOULD send DISCONNECT before closing)",
             ))
         }
-        Err(RecvError::Timeout) => Ok(TestResult::fail(&ctx, "No DISCONNECT received (timed out)")),
-        Err(RecvError::Other(e)) => Ok(TestResult::fail(&ctx, format!("unexpected error: {e:#}"))),
-        Ok(other) => Ok(TestResult::fail_packet(
-            &ctx,
+        Err(RecvError::Timeout) => Ok(Outcome::fail("No DISCONNECT received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet(
             "DISCONNECT with error reason code",
             &other,
         )),

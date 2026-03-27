@@ -21,11 +21,8 @@ use tokio_rustls::rustls;
 use tokio_rustls::rustls::pki_types as rustls_pki_types;
 
 use crate::codec::{
-    self, ConnectParams, Packet, Properties, Publish, PublishParams, SubscribeParams,
-    UnsubscribeParams,
+    self, ConnectParams, Packet, Properties, PublishParams, SubscribeParams, UnsubscribeParams,
 };
-use crate::types::{TestContext, TestResult};
-
 // ── RecvError ────────────────────────────────────────────────────────────────
 
 /// Distinguishes the reasons a [`RawClient::recv`] call can fail.
@@ -538,39 +535,4 @@ pub async fn sub_pub_pair(
     let pub_params = ConnectParams::new(&pub_id);
     let (pub_client, _) = connect(addr, &pub_params, recv_timeout).await?;
     Ok((sub, pub_client))
-}
-
-/// Receive the next packet and expect a PUBLISH on `topic`.
-///
-/// Returns `Ok(publish)` when a PUBLISH with a matching topic arrives.
-/// Returns `Err(TestResult)` with an appropriate failure for:
-/// - wrong packet type / topic mismatch
-/// - `RecvError::Timeout` (broker did not deliver)
-/// - `RecvError::Closed` (broker disconnected)
-/// - `RecvError::Other` (I/O error)
-///
-/// Callers inspect the returned [`Publish`] for test-specific assertions
-/// and only need to handle the success path.
-pub async fn expect_publish(
-    client: &mut RawClient,
-    ctx: &TestContext,
-    topic: &str,
-) -> Result<Publish, TestResult> {
-    match client.recv().await {
-        Ok(Packet::Publish(p)) if p.topic == topic => Ok(p),
-        Ok(other) => Err(TestResult::fail_packet(
-            ctx,
-            &format!("PUBLISH on topic \"{topic}\""),
-            &other,
-        )),
-        Err(RecvError::Timeout) => Err(TestResult::fail(
-            ctx,
-            format!("no message on topic \"{topic}\" (timed out)"),
-        )),
-        Err(RecvError::Closed) => Err(TestResult::fail(
-            ctx,
-            format!("no message on topic \"{topic}\" (connection closed)"),
-        )),
-        Err(RecvError::Other(e)) => Err(TestResult::fail(ctx, format!("unexpected error: {e:#}"))),
-    }
 }

@@ -4,9 +4,12 @@
 //! lossless, stream of bytes [MQTT-4.2-1].  These tests verify that the broker
 //! accepts CONNECT and returns CONNACK over each available transport.
 
+use anyhow::Result;
+
 use crate::client;
 use crate::codec::ConnectParams;
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::helpers::expect_connack_success;
+use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("TRANSPORT");
@@ -24,22 +27,11 @@ const TCP_TRANSPORT: TestContext = TestContext {
 };
 
 /// Verify the broker accepts an MQTT connection over plain TCP.
-async fn tcp_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TCP_TRANSPORT;
+async fn tcp_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-tcp-transport");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
-    } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} (expected 0x00)",
-                connack.reason_code
-            ),
-        ))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }
 
 const TLS_TRANSPORT: TestContext = TestContext {
@@ -49,24 +41,13 @@ const TLS_TRANSPORT: TestContext = TestContext {
 };
 
 /// Verify the broker accepts an MQTT connection over TLS.
-async fn tls_connect(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = TLS_TRANSPORT;
+async fn tls_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((tls_addr, tls)) = config.tls_info else {
-        return Ok(TestResult::skip(&ctx, "TLS not configured"));
+        return Ok(Outcome::skip("TLS not configured"));
     };
     let params = ConnectParams::new("mqtt-test-tls-transport");
     let (_client, connack) =
         client::connect_tls(tls_addr, &params, tls, config.recv_timeout).await?;
 
-    if connack.reason_code == 0x00 {
-        Ok(TestResult::pass(&ctx))
-    } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!(
-                "CONNACK reason code {:#04x} (expected 0x00)",
-                connack.reason_code
-            ),
-        ))
-    }
+    Ok(expect_connack_success(connack).into_outcome())
 }

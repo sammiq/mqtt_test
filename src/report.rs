@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 use std::time::Duration;
 
+use anyhow::Result;
 use clap::ValueEnum;
 use indicatif::{HumanDuration, ProgressBar};
 
@@ -132,7 +133,7 @@ impl Report {
                         c.total += 1;
                         c.pass += 1;
                     }
-                    Outcome::Fail { .. } => c.total += 1,
+                    Outcome::Fail { .. } | Outcome::Unsupported(_) => c.total += 1,
                 }
             }
         }
@@ -219,6 +220,7 @@ fn format_result(r: &TestResult, verbose: bool, color: bool) -> String {
             };
             (if is_may { "  NO" } else { "FAIL" }, format!(" — {msg}"))
         }
+        Outcome::Unsupported(msg) => ("  NO", format!(" — {msg}")),
         Outcome::Skip(msg) => ("SKIP", format!(" — {msg}")),
     };
     let status = if color {
@@ -226,6 +228,7 @@ fn format_result(r: &TestResult, verbose: bool, color: bool) -> String {
             Outcome::Pass => format!("\x1b[32m{status_text}\x1b[0m"),
             Outcome::Fail { .. } if is_may => format!("\x1b[90m{status_text}\x1b[0m"),
             Outcome::Fail { .. } => format!("\x1b[31m{status_text}\x1b[0m"),
+            Outcome::Unsupported(_) => format!("\x1b[90m{status_text}\x1b[0m"),
             Outcome::Skip(_) => format!("\x1b[90m{status_text}\x1b[0m"),
         }
     } else {
@@ -275,14 +278,15 @@ fn requirement_section(id: &str) -> String {
 pub async fn run_test(
     ctx: TestContext,
     pb: &ProgressBar,
-    fut: impl std::future::Future<Output = anyhow::Result<TestResult>>,
+    fut: impl std::future::Future<Output = Result<Outcome>>,
 ) -> TestResult {
     tracing::debug!(id = ctx.primary_ref(), ctx.description, "running test");
     pb.set_message(ctx.primary_ref());
-    let result = match fut.await {
-        Ok(r) => r,
-        Err(e) => TestResult::fail(&ctx, format!("test error: {e:#}")),
+    let outcome = match fut.await {
+        Ok(o) => o,
+        Err(e) => Outcome::fail(format!("test error: {e:#}")),
     };
+    let result = TestResult { ctx, outcome };
     tracing::debug!(id = ctx.primary_ref(), outcome = ?result.outcome, "test complete");
 
     let is_may = ctx.compliance == Compliance::May;
@@ -291,6 +295,7 @@ pub async fn run_test(
         (Outcome::Pass, true) => "\x1b[36m●\x1b[0m",  // cyan dot (supported)
         (Outcome::Fail { .. }, false) => "\x1b[31m✗\x1b[0m", // red cross
         (Outcome::Fail { .. }, true) => "\x1b[90m·\x1b[0m", // dim dot (not supported)
+        (Outcome::Unsupported(_), _) => "\x1b[90m·\x1b[0m", // dim dot (not supported)
         (Outcome::Skip(_), _) => "\x1b[90m○\x1b[0m",  // dim circle (skipped)
     };
     pb.println(format!("  {symbol} {}", ctx.description));
@@ -358,7 +363,10 @@ mod tests {
             description: "Test desc",
             compliance: Compliance::Must,
         };
-        let r = TestResult::pass(&ctx);
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::Pass,
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("PASS"));
         assert!(s.contains("MUST"));
@@ -373,7 +381,10 @@ mod tests {
             description: "Test desc",
             compliance: Compliance::Must,
         };
-        let r = TestResult::fail(&ctx, "bad thing");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::fail("bad thing"),
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("FAIL"));
         assert!(s.contains("bad thing"));
@@ -386,7 +397,10 @@ mod tests {
             description: "Optional feature",
             compliance: Compliance::May,
         };
-        let r = TestResult::pass(&ctx);
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::Pass,
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("YES"));
         assert!(s.contains("MAY"));
@@ -399,9 +413,42 @@ mod tests {
             description: "Optional feature",
             compliance: Compliance::May,
         };
-        let r = TestResult::fail(&ctx, "not supported");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::fail("not supported"),
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("NO"));
+    }
+
+    #[test]
+    fn format_result_unsupported_shows_no() {
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.3-8"],
+            description: "Optional feature",
+            compliance: Compliance::May,
+        };
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::unsupported("broker does not do this"),
+        };
+        let s = format_result(&r, false, false);
+        assert!(s.contains("NO"));
+        assert!(s.contains("broker does not do this"));
+    }
+
+    #[test]
+    fn format_result_unsupported_not_a_failure() {
+        let ctx = TestContext {
+            refs: &["MQTT-3.1.3-8"],
+            description: "Optional feature",
+            compliance: Compliance::May,
+        };
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::unsupported("not supported"),
+        };
+        assert!(!is_failure(&r));
     }
 
     #[test]
@@ -411,7 +458,10 @@ mod tests {
             description: "Test",
             compliance: Compliance::Must,
         };
-        let r = TestResult::skip(&ctx, "prereq not met");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::skip("prereq not met"),
+        };
         let s = format_result(&r, false, false);
         assert!(s.contains("SKIP"));
         assert!(s.contains("prereq not met"));
@@ -424,7 +474,10 @@ mod tests {
             description: "Test",
             compliance: Compliance::Must,
         };
-        let r = TestResult::fail_verbose(&ctx, "short", "long detailed message");
+        let r = TestResult {
+            ctx,
+            outcome: Outcome::fail_verbose("short", "long detailed message"),
+        };
         let short = format_result(&r, false, false);
         let long = format_result(&r, true, false);
         assert!(short.contains("short"));

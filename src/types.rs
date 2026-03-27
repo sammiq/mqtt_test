@@ -2,6 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+use anyhow::Result;
 use indicatif::ProgressBar;
 
 use crate::client::TlsConfig;
@@ -49,14 +50,88 @@ impl TestContext {
 }
 
 /// The result of running a single test.
+///
+/// For MUST/SHOULD tests the question is "did the broker comply?":
+///   Pass = yes, Fail = no (protocol violation).
+///
+/// For MAY tests the question is "does the broker do this?":
+///   Pass = yes (supported), Unsupported = no (not supported).
+///   Fail is still valid for MAY tests when something genuinely breaks
+///   (e.g. broker advertised support but then errored), but Unsupported
+///   is preferred when the broker simply doesn't exhibit the behaviour.
+///
+/// Skip applies to all compliance levels: the test couldn't run
+/// (missing config, prerequisite not met).
 #[derive(Debug, Clone)]
 pub enum Outcome {
+    /// The broker behaves as described.
+    /// For MAY tests, this means the broker supports the optional behaviour
+    /// and is displayed as "YES" in the report.
     Pass,
+    /// The broker violated a requirement or behaved incorrectly.
+    /// Displayed as "FAIL" for MUST/SHOULD tests, "NO" for MAY tests.
     Fail {
         message: String,
         verbose: Option<String>,
     },
+    /// The broker does not exhibit this optional (MAY) behaviour, and that's
+    /// fine — it's not a protocol violation. Prefer this over Fail for MAY
+    /// tests when the broker simply doesn't do the optional thing.
+    /// Displayed as "NO" in the report; not counted as a failure.
+    Unsupported(String),
+    /// The test could not run (missing config, prerequisite not met, etc.).
+    /// Excluded from pass/total counts in the summary.
     Skip(String),
+}
+
+impl Outcome {
+    pub fn fail(reason: impl Into<String>) -> Self {
+        Outcome::Fail {
+            message: reason.into(),
+            verbose: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn fail_verbose(reason: impl Into<String>, verbose: impl Into<String>) -> Self {
+        Outcome::Fail {
+            message: reason.into(),
+            verbose: Some(verbose.into()),
+        }
+    }
+
+    pub fn fail_packet(expected: &str, got: &Packet) -> Self {
+        Outcome::Fail {
+            message: format!("Expected {expected}, got {got}"),
+            verbose: Some(format!("Expected {expected}, got {got:?}")),
+        }
+    }
+
+    pub fn skip(reason: impl Into<String>) -> Self {
+        Outcome::Skip(reason.into())
+    }
+
+    pub fn unsupported(reason: impl Into<String>) -> Self {
+        Outcome::Unsupported(reason.into())
+    }
+}
+
+/// Extension trait for `Result<T, Outcome>` — collapses a helper result into
+/// a plain `Outcome` when the caller doesn't need the success value.
+///
+/// - `Ok(_)` → `Outcome::Pass`
+/// - `Err(outcome)` → `outcome`
+pub trait IntoOutcome {
+    fn into_outcome(self) -> Outcome;
+}
+
+impl<T> IntoOutcome for Result<T, Outcome> {
+    fn into_outcome(self) -> Outcome {
+        match self {
+            Ok(_) => Outcome::Pass,
+            Err(o) => o,
+        }
+    }
 }
 
 /// A single compliance test result.
@@ -66,57 +141,6 @@ pub struct TestResult {
     pub outcome: Outcome,
 }
 
-impl TestResult {
-    pub fn pass(ctx: &TestContext) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Pass,
-        }
-    }
-
-    pub fn fail(ctx: &TestContext, reason: impl Into<String>) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Fail {
-                message: reason.into(),
-                verbose: None,
-            },
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn fail_verbose(
-        ctx: &TestContext,
-        reason: impl Into<String>,
-        verbose: impl Into<String>,
-    ) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Fail {
-                message: reason.into(),
-                verbose: Some(verbose.into()),
-            },
-        }
-    }
-
-    pub fn fail_packet(ctx: &TestContext, expected: &str, got: &Packet) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Fail {
-                message: format!("Expected {expected}, got {got}"),
-                verbose: Some(format!("Expected {expected}, got {got:?}")),
-            },
-        }
-    }
-
-    pub fn skip(ctx: &TestContext, reason: impl Into<String>) -> Self {
-        Self {
-            ctx: *ctx,
-            outcome: Outcome::Skip(reason.into()),
-        }
-    }
-}
-
 /// A named group of related test results.
 pub struct Suite {
     pub name: &'static str,
@@ -124,7 +148,7 @@ pub struct Suite {
 }
 
 /// A boxed, Send-safe test future.
-type TestFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<TestResult>> + Send + 'a>>;
+type TestFuture<'a> = Pin<Box<dyn Future<Output = Result<Outcome>> + Send + 'a>>;
 
 /// Collects test futures before execution, deriving the count automatically.
 ///
@@ -147,7 +171,7 @@ impl<'a> SuiteRunner<'a> {
     pub fn add(
         &mut self,
         ctx: TestContext,
-        fut: impl Future<Output = anyhow::Result<TestResult>> + Send + 'a,
+        fut: impl Future<Output = Result<Outcome>> + Send + 'a,
     ) {
         self.tests.push((ctx, Box::pin(fut)));
     }
@@ -183,18 +207,8 @@ mod tests {
     };
 
     #[test]
-    fn pass_preserves_context() {
-        let r = TestResult::pass(&CTX);
-        assert_eq!(r.ctx.primary_ref(), "TEST-1");
-        assert_eq!(r.ctx.description, "test description");
-        assert!(matches!(r.ctx.compliance, Compliance::Must));
-        assert!(matches!(r.outcome, Outcome::Pass));
-    }
-
-    #[test]
     fn fail_stores_message() {
-        let r = TestResult::fail(&CTX, "something broke");
-        match r.outcome {
+        match Outcome::fail("something broke") {
             Outcome::Fail { message, verbose } => {
                 assert_eq!(message, "something broke");
                 assert!(verbose.is_none());
@@ -205,8 +219,7 @@ mod tests {
 
     #[test]
     fn fail_verbose_stores_both() {
-        let r = TestResult::fail_verbose(&CTX, "short", "long details");
-        match r.outcome {
+        match Outcome::fail_verbose("short", "long details") {
             Outcome::Fail { message, verbose } => {
                 assert_eq!(message, "short");
                 assert_eq!(verbose.as_deref(), Some("long details"));
@@ -222,8 +235,7 @@ mod tests {
             reason_code: 0x85,
             properties: Properties::default(),
         });
-        let r = TestResult::fail_packet(&CTX, "SUBACK(1)", &connack);
-        match r.outcome {
+        match Outcome::fail_packet("SUBACK(1)", &connack) {
             Outcome::Fail { message, verbose } => {
                 assert!(message.contains("SUBACK(1)"));
                 assert!(message.contains("CONNACK"));
@@ -237,8 +249,7 @@ mod tests {
 
     #[test]
     fn skip_stores_reason() {
-        let r = TestResult::skip(&CTX, "broker does not support feature");
-        match r.outcome {
+        match Outcome::skip("broker does not support feature") {
             Outcome::Skip(reason) => {
                 assert_eq!(reason, "broker does not support feature");
             }
@@ -265,9 +276,18 @@ mod tests {
         let suite = Suite {
             name: "test-suite",
             results: vec![
-                TestResult::pass(&CTX),
-                TestResult::fail(&CTX, "oops"),
-                TestResult::skip(&CTX, "n/a"),
+                TestResult {
+                    ctx: CTX,
+                    outcome: Outcome::Pass,
+                },
+                TestResult {
+                    ctx: CTX,
+                    outcome: Outcome::fail("oops"),
+                },
+                TestResult {
+                    ctx: CTX,
+                    outcome: Outcome::skip("n/a"),
+                },
             ],
         };
         assert_eq!(suite.name, "test-suite");
@@ -275,5 +295,30 @@ mod tests {
         assert!(matches!(suite.results[0].outcome, Outcome::Pass));
         assert!(matches!(suite.results[1].outcome, Outcome::Fail { .. }));
         assert!(matches!(suite.results[2].outcome, Outcome::Skip(_)));
+    }
+
+    #[test]
+    fn unsupported_stores_reason() {
+        match Outcome::unsupported("broker does not do this") {
+            Outcome::Unsupported(reason) => {
+                assert_eq!(reason, "broker does not do this");
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn into_outcome_ok_is_pass() {
+        let r: Result<&str, Outcome> = Ok("data");
+        assert!(matches!(r.into_outcome(), Outcome::Pass));
+    }
+
+    #[test]
+    fn into_outcome_err_is_fail() {
+        let r: Result<(), Outcome> = Err(Outcome::fail("broken"));
+        match r.into_outcome() {
+            Outcome::Fail { message, .. } => assert_eq!(message, "broken"),
+            other => panic!("expected Fail, got {other:?}"),
+        }
     }
 }

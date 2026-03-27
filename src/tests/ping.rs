@@ -1,8 +1,10 @@
 //! PINGREQ / PINGRESP compliance tests [MQTT-3.12 / MQTT-3.13].
 
+use anyhow::Result;
+
 use crate::client;
 use crate::codec::{ConnectParams, Packet};
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("PINGREQ / PINGRESP");
@@ -20,16 +22,15 @@ const PINGRESP: TestContext = TestContext {
 };
 
 /// Server MUST send PINGRESP in response to PINGREQ [MQTT-3.12.4-1].
-async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = PINGRESP;
+async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-ping");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     client.send_pingreq().await?;
 
     match client.recv().await? {
-        Packet::PingResp => Ok(TestResult::pass(&ctx)),
-        other => Ok(TestResult::fail_packet(&ctx, "PINGRESP", &other)),
+        Packet::PingResp => Ok(Outcome::Pass),
+        other => Ok(Outcome::fail_packet("PINGRESP", &other)),
     }
 }
 
@@ -40,8 +41,7 @@ const MULTI_PING: TestContext = TestContext {
 };
 
 /// Server MUST respond to each PINGREQ [MQTT-3.12.4-1] (multiple pings).
-async fn multiple_pings(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MULTI_PING;
+async fn multiple_pings(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-multi-ping");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
@@ -50,8 +50,7 @@ async fn multiple_pings(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         match client.recv().await? {
             Packet::PingResp => {}
             other => {
-                return Ok(TestResult::fail_packet(
-                    &ctx,
+                return Ok(Outcome::fail_packet(
                     format!("Ping {i}: expected PINGRESP").as_str(),
                     &other,
                 ));
@@ -59,5 +58,5 @@ async fn multiple_pings(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
         }
     }
 
-    Ok(TestResult::pass(&ctx))
+    Ok(Outcome::Pass)
 }

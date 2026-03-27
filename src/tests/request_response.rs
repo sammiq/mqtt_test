@@ -4,9 +4,11 @@
 //! and Correlation Data properties. These tests verify the broker correctly
 //! forwards these properties.
 
+use anyhow::Result;
+
 use crate::client::{self, connect_and_subscribe};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS};
-use crate::types::{Compliance, SuiteRunner, TestConfig, TestContext, TestResult};
+use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("REQUEST / RESPONSE");
@@ -33,9 +35,7 @@ const RESPONSE_TOPIC: TestContext = TestContext {
 
 /// The broker SHOULD forward the Response Topic property from PUBLISH to
 /// subscribers without modification [MQTT-3.3.2-13].
-async fn response_topic_forwarded(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RESPONSE_TOPIC;
-
+async fn response_topic_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-resp-topic-sub",
@@ -66,22 +66,15 @@ async fn response_topic_forwarded(config: TestConfig<'_>) -> anyhow::Result<Test
     match sub.recv().await? {
         Packet::Publish(msg) => {
             if msg.properties.response_topic.as_deref() == Some("reply/to/me") {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Response Topic not preserved: got {:?}",
-                        msg.properties.response_topic
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Response Topic not preserved: got {:?}",
+                    msg.properties.response_topic
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH with Response Topic",
-            &other,
-        )),
+        other => Ok(Outcome::fail_packet("PUBLISH with Response Topic", &other)),
     }
 }
 
@@ -93,9 +86,7 @@ const CORRELATION_DATA: TestContext = TestContext {
 
 /// The broker SHOULD forward the Correlation Data property from PUBLISH to
 /// subscribers without modification [MQTT-3.3.2-14].
-async fn correlation_data_forwarded(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = CORRELATION_DATA;
-
+async fn correlation_data_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-corr-data-sub",
@@ -126,19 +117,15 @@ async fn correlation_data_forwarded(config: TestConfig<'_>) -> anyhow::Result<Te
     match sub.recv().await? {
         Packet::Publish(msg) => {
             if msg.properties.correlation_data.as_deref() == Some(b"\x01\x02\x03\xAB\xCD") {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Correlation Data not preserved: got {:?}",
-                        msg.properties.correlation_data
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Correlation Data not preserved: got {:?}",
+                    msg.properties.correlation_data
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
+        other => Ok(Outcome::fail_packet(
             "PUBLISH with Correlation Data",
             &other,
         )),
@@ -159,9 +146,7 @@ const FULL_RR: TestContext = TestContext {
 /// 3. Client A publishes request with Response Topic
 /// 4. Client B receives request, publishes response to Response Topic
 /// 5. Client A receives response
-async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = FULL_RR;
-
+async fn full_request_response(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client_a = connect_and_subscribe(
         config.addr,
         "mqtt-test-rr-requester",
@@ -200,7 +185,7 @@ async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<TestRes
     // Client B receives the request
     let req_msg = match client_b.recv().await? {
         Packet::Publish(msg) => msg,
-        other => return Ok(TestResult::fail_packet(&ctx, "PUBLISH (request)", &other)),
+        other => return Ok(Outcome::fail_packet("PUBLISH (request)", &other)),
     };
 
     // Client B sends a response to the Response Topic
@@ -226,19 +211,16 @@ async fn full_request_response(config: TestConfig<'_>) -> anyhow::Result<TestRes
             let corr_ok = msg.properties.correlation_data.as_deref() == Some(b"req-1");
             let payload_ok = msg.payload == b"4";
             if corr_ok && payload_ok {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Response mismatch: correlation={:?} payload={:?}",
-                        msg.properties.correlation_data,
-                        String::from_utf8_lossy(&msg.payload)
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Response mismatch: correlation={:?} payload={:?}",
+                    msg.properties.correlation_data,
+                    String::from_utf8_lossy(&msg.payload)
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(&ctx, "PUBLISH (response)", &other)),
+        other => Ok(Outcome::fail_packet("PUBLISH (response)", &other)),
     }
 }
 
@@ -250,9 +232,7 @@ const RESPONSE_TOPIC_WITH_CORR: TestContext = TestContext {
 
 /// Both Response Topic and Correlation Data MUST be forwarded together
 /// when present in a PUBLISH [MQTT-3.3.2-13/14].
-async fn response_topic_with_correlation(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = RESPONSE_TOPIC_WITH_CORR;
-
+async fn response_topic_with_correlation(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-rr-both-sub",
@@ -286,22 +266,15 @@ async fn response_topic_with_correlation(config: TestConfig<'_>) -> anyhow::Resu
             let rt_ok = msg.properties.response_topic.as_deref() == Some("test/rr/response");
             let cd_ok = msg.properties.correlation_data.as_deref() == Some(b"corr-42");
             if rt_ok && cd_ok {
-                Ok(TestResult::pass(&ctx))
+                Ok(Outcome::Pass)
             } else {
-                Ok(TestResult::fail(
-                    &ctx,
-                    format!(
-                        "Properties not forwarded: response_topic={:?}, correlation_data={:?}",
-                        msg.properties.response_topic, msg.properties.correlation_data
-                    ),
-                ))
+                Ok(Outcome::fail(format!(
+                    "Properties not forwarded: response_topic={:?}, correlation_data={:?}",
+                    msg.properties.response_topic, msg.properties.correlation_data
+                )))
             }
         }
-        other => Ok(TestResult::fail_packet(
-            &ctx,
-            "PUBLISH with both properties",
-            &other,
-        )),
+        other => Ok(Outcome::fail_packet("PUBLISH with both properties", &other)),
     }
 }
 
@@ -313,9 +286,7 @@ const MULTI_CORRELATION: TestContext = TestContext {
 
 /// Multiple messages with different Correlation Data values must each have
 /// their data preserved independently.
-async fn multiple_correlation_data(config: TestConfig<'_>) -> anyhow::Result<TestResult> {
-    let ctx = MULTI_CORRELATION;
-
+async fn multiple_correlation_data(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
         "mqtt-test-multi-corr-sub",
@@ -353,17 +324,17 @@ async fn multiple_correlation_data(config: TestConfig<'_>) -> anyhow::Result<Tes
             Packet::Publish(msg) => {
                 received_corrs.push(msg.properties.correlation_data.unwrap_or_default());
             }
-            other => return Ok(TestResult::fail_packet(&ctx, "PUBLISH", &other)),
+            other => return Ok(Outcome::fail_packet("PUBLISH", &other)),
         }
     }
 
     received_corrs.sort();
     if received_corrs == vec![b"AAA".to_vec(), b"BBB".to_vec()] {
-        Ok(TestResult::pass(&ctx))
+        Ok(Outcome::Pass)
     } else {
-        Ok(TestResult::fail(
-            &ctx,
-            format!("Correlation data not preserved: got {:?}", received_corrs),
-        ))
+        Ok(Outcome::fail(format!(
+            "Correlation data not preserved: got {:?}",
+            received_corrs
+        )))
     }
 }

@@ -1,5 +1,6 @@
 mod client;
 mod codec;
+mod helpers;
 mod report;
 mod tests;
 mod types;

@@ -224,15 +224,13 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
         ));
     }
 
-    // 5. Should receive the queued QoS 2 message (as PUBLISH or PUBREL depending on state).
+    // 5. Should receive the queued QoS 2 message as a PUBLISH. A PUBREL would only
+    //    be valid if the subscriber had previously received the PUBLISH and sent
+    //    PUBREC — but the subscriber was offline when the message was published.
     let result = match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
-        Ok(Packet::PubRel(_)) => {
-            // The broker may resume at the PUBREL stage — this is also valid.
-            Outcome::Pass
-        }
         Ok(other) => {
-            Outcome::fail_packet("redelivered PUBLISH or PUBREL on session resume", &other)
+            Outcome::fail_packet("PUBLISH on session resume", &other)
         }
         Err(RecvError::Timeout) | Err(RecvError::Closed) => {
             Outcome::fail("No queued QoS 2 message redelivered after session resume")

@@ -53,33 +53,51 @@ fn auth_connect_params(client_id: &str) -> ConnectParams {
 }
 
 /// Drive the initial auth exchange to completion, returning the connected client.
-/// Returns `None` (skip) if the broker rejects the auth method.
+///
+/// Returns `Ok(client)` on successful authentication.
+/// Returns `Err(Outcome::Skip)` if the broker rejects the auth method.
+/// Returns `Err(Outcome::Fail)` if the handshake fails unexpectedly or I/O fails.
 async fn complete_auth_exchange(
     config: TestConfig<'_>,
     client_id: &str,
-) -> Result<Option<RawClient>> {
+) -> std::result::Result<RawClient, Outcome> {
     let params = auth_connect_params(client_id);
-    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
-    client.send_connect(&params).await?;
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout)
+        .await
+        .map_err(|e| Outcome::fail(format!("failed to connect: {e:#}")))?;
+    client
+        .send_connect(&params)
+        .await
+        .map_err(|e| Outcome::fail(format!("failed to send CONNECT: {e:#}")))?;
 
     loop {
-        match client.recv().await? {
+        match client
+            .recv()
+            .await
+            .map_err(|e| Outcome::fail(format!("auth exchange error: {e:#}")))?
+        {
             Packet::Auth {
                 reason_code: 0x18, ..
             } => {
                 client
                     .send_auth(0x18, &auth_response(b"client-response"))
-                    .await?;
+                    .await
+                    .map_err(|e| Outcome::fail(format!("failed to send AUTH: {e:#}")))?;
             }
             Packet::ConnAck(connack) if connack.reason_code == 0x00 => {
-                return Ok(Some(client));
+                return Ok(client);
             }
             Packet::ConnAck(connack)
                 if connack.reason_code == 0x8C || connack.reason_code == 0x87 =>
             {
-                return Ok(None);
+                return Err(Outcome::skip(SKIP_MSG));
             }
-            _ => return Ok(None),
+            other => {
+                return Err(Outcome::fail_packet(
+                    "AUTH(0x18) or CONNACK(0x00/0x8C/0x87)",
+                    &other,
+                ));
+            }
         }
     }
 }
@@ -331,8 +349,9 @@ const REAUTH: TestContext = TestContext {
 /// by sending AUTH rc=0x19 [MQTT-4.12.1-1]. The server should respond with
 /// AUTH rc=0x00 (success) or rc=0x18 (continue).
 async fn reauth(config: TestConfig<'_>) -> Result<Outcome> {
-    let Some(mut client) = complete_auth_exchange(config, "mqtt-test-auth-reauth").await? else {
-        return Ok(Outcome::skip(SKIP_MSG));
+    let mut client = match complete_auth_exchange(config, "mqtt-test-auth-reauth").await {
+        Ok(c) => c,
+        Err(outcome) => return Ok(outcome),
     };
 
     // Initiate re-authentication
@@ -391,9 +410,9 @@ const REAUTH_FAIL: TestContext = TestContext {
 /// code before closing [MQTT-4.12.1-2]. We trigger this by sending a re-auth
 /// with a different (unsupported) method.
 async fn reauth_fail(config: TestConfig<'_>) -> Result<Outcome> {
-    let Some(mut client) = complete_auth_exchange(config, "mqtt-test-auth-reauth-fail").await?
-    else {
-        return Ok(Outcome::skip(SKIP_MSG));
+    let mut client = match complete_auth_exchange(config, "mqtt-test-auth-reauth-fail").await {
+        Ok(c) => c,
+        Err(outcome) => return Ok(outcome),
     };
 
     // Send re-auth with a *different* method — this violates MQTT-4.12.1-1

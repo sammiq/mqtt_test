@@ -32,6 +32,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
         SESSION_PRESENT_PERSISTENCE,
         session_present_verify_persistence(config),
     );
+    suite.add(QOS1_DUP_FLAG, qos1_dup_on_redelivery(config));
 
     suite
 }
@@ -84,6 +85,10 @@ const QOS1_REDELIVER: TestContext = TestContext {
 
 /// When a client reconnects with Clean Start=0, any QoS 1 messages that were
 /// not acknowledged MUST be redelivered [MQTT-4.4.0-1].
+///
+/// Note: this test publishes while the subscriber is offline, so the redelivered
+/// message is a *first* delivery — DUP=0 is correct. See `qos1_dup_on_redelivery`
+/// for the DUP=1 check when the client previously received the message.
 async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     let sub_id = "mqtt-test-qos1-redel-sub";
     let pub_id = "mqtt-test-qos1-redel-pub";
@@ -537,6 +542,102 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> Result<Ou
     };
 
     cleanup_session(config.addr, client_id, config.recv_timeout).await;
+
+    Ok(result)
+}
+
+const QOS1_DUP_FLAG: TestContext = TestContext {
+    refs: &["MQTT-3.3.1-1"],
+    description: "DUP MUST be 1 when re-delivering a QoS 1 PUBLISH the client already received",
+    compliance: Compliance::Must,
+};
+
+/// When a QoS 1 PUBLISH was delivered to a connected client but not acknowledged,
+/// the broker MUST set DUP=1 when re-delivering it after session resume [MQTT-3.3.1-1].
+///
+/// This differs from `qos1_redelivery_on_resume` which publishes while the subscriber
+/// is offline (first delivery, DUP=0 is correct). Here the subscriber is online when
+/// the message arrives, does not PUBACK, disconnects abruptly, and reconnects.
+async fn qos1_dup_on_redelivery(config: TestConfig<'_>) -> Result<Outcome> {
+    let sub_id = "mqtt-test-qos1-dup-sub";
+    let pub_id = "mqtt-test-qos1-dup-pub";
+    let topic = "mqtt/test/session/qos1dup";
+
+    // 1. Connect subscriber with persistent session and subscribe at QoS 1.
+    let mut sub_params = ConnectParams::new(sub_id);
+    sub_params.properties.session_expiry_interval = Some(60);
+    let (mut sub_client, _) =
+        client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+
+    let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+    sub_client.send_subscribe(&sub).await?;
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
+
+    // 2. Publish a QoS 1 message from another client while subscriber is online.
+    let pub_conn = ConnectParams::new(pub_id);
+    let (mut pub_client, _) =
+        client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+    pub_client
+        .send_publish(&PublishParams::qos1(topic, b"dup-test".to_vec(), 1))
+        .await?;
+    for _ in 0..5 {
+        if let Ok(Packet::PubAck(_)) = pub_client.recv().await {
+            break;
+        }
+    }
+    drop(pub_client);
+
+    // 3. Subscriber receives the PUBLISH but does NOT send PUBACK.
+    match sub_client.recv().await {
+        Ok(Packet::Publish(p)) if p.topic == topic => {}
+        Ok(other) => return Ok(Outcome::fail_packet("PUBLISH", &other)),
+        Err(RecvError::Timeout) => {
+            cleanup_session(config.addr, sub_id, config.recv_timeout).await;
+            return Ok(Outcome::fail("subscriber did not receive PUBLISH (timed out)"));
+        }
+        Err(RecvError::Closed) => {
+            cleanup_session(config.addr, sub_id, config.recv_timeout).await;
+            return Ok(Outcome::fail("connection closed before PUBLISH received"));
+        }
+        Err(RecvError::Other(e)) => return Err(e),
+    }
+
+    // 4. Disconnect abruptly (no PUBACK, no DISCONNECT) so the message is unacknowledged.
+    drop(sub_client.into_raw());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // 5. Reconnect with Clean Start=0 — broker should redeliver with DUP=1.
+    let mut sub_params2 = ConnectParams::new(sub_id);
+    sub_params2.clean_start = false;
+    sub_params2.properties.session_expiry_interval = Some(60);
+    let (mut sub_client2, connack) =
+        client::connect(config.addr, &sub_params2, config.recv_timeout).await?;
+
+    if !connack.session_present {
+        cleanup_session(config.addr, sub_id, config.recv_timeout).await;
+        return Ok(Outcome::fail(
+            "Broker did not preserve session (session_present=0); cannot test DUP redelivery",
+        ));
+    }
+
+    let result = match sub_client2.recv().await {
+        Ok(Packet::Publish(p)) if p.topic == topic => {
+            if p.dup {
+                Outcome::Pass
+            } else {
+                Outcome::fail("Redelivered QoS 1 PUBLISH has DUP=0, expected DUP=1")
+            }
+        }
+        Ok(other) => Outcome::fail_packet("redelivered PUBLISH with DUP=1", &other),
+        Err(RecvError::Timeout) | Err(RecvError::Closed) => {
+            Outcome::fail("No QoS 1 message redelivered after session resume")
+        }
+        Err(RecvError::Other(e)) => Outcome::fail(format!("unexpected error: {e:#}")),
+    };
+
+    cleanup_session(config.addr, sub_id, config.recv_timeout).await;
 
     Ok(result)
 }

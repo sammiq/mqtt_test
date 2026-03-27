@@ -298,6 +298,16 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_stores_reason() {
+        match Outcome::unsupported("broker does not do this") {
+            Outcome::Unsupported(reason) => {
+                assert_eq!(reason, "broker does not do this");
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn into_outcome_ok_is_pass() {
         let r: Result<&str, Outcome> = Ok("data");
         assert!(matches!(r.into_outcome(), Outcome::Pass));

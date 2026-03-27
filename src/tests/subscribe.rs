@@ -461,7 +461,7 @@ async fn no_local_flag(config: TestConfig<'_>) -> Result<Outcome> {
     // Expect NO message — short timeout is sufficient to confirm absence.
     match client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(RecvError::Timeout) => Ok(Outcome::Pass),
-        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::fail("broker closed connection unexpectedly")),
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/no_local" => {
             Ok(Outcome::fail("Received own PUBLISH despite no_local=true"))
@@ -595,7 +595,7 @@ async fn retain_handling_1(config: TestConfig<'_>) -> Result<Outcome> {
     // Should NOT receive retained message again — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(RecvError::Timeout) => Ok(Outcome::Pass),
-        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::fail("broker closed connection unexpectedly")),
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh1" => Ok(Outcome::fail(
             "Retained message sent again on re-subscription",
@@ -652,7 +652,7 @@ async fn retain_handling_2(config: TestConfig<'_>) -> Result<Outcome> {
     // Should NOT receive any retained message — short timeout.
     match sub_client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(RecvError::Timeout) => Ok(Outcome::Pass),
-        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::fail("broker closed connection unexpectedly")),
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == "mqtt/test/sub/rh2" => Ok(Outcome::fail(
             "Retained message delivered despite retain_handling=2",
@@ -705,12 +705,12 @@ async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> Result<Outcome> {
 
     match client.recv_with_timeout(Duration::from_secs(1)).await {
         Err(RecvError::Timeout) => Ok(Outcome::Pass),
-        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::fail("broker closed connection unexpectedly")),
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == topic => {
             Ok(Outcome::fail("Message delivered after UNSUBSCRIBE"))
         }
-        Ok(_) => Ok(Outcome::Pass),
+        Ok(other) => Ok(Outcome::fail_packet("no packet after UNSUBSCRIBE", &other)),
     }
 }
 
@@ -1278,12 +1278,15 @@ async fn unsubscribe_stops_new_messages(config: TestConfig<'_>) -> Result<Outcom
     // Step 5: Verify none arrive
     match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
         Err(RecvError::Timeout) => Ok(Outcome::Pass),
-        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::fail("broker closed connection unexpectedly")),
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(Outcome::fail(
             "Message delivered after UNSUBSCRIBE + UNSUBACK",
         )),
-        Ok(_) => Ok(Outcome::Pass),
+        Ok(other) => Ok(Outcome::fail_packet(
+            "no packet after UNSUBSCRIBE + UNSUBACK",
+            &other,
+        )),
     }
 }
 
@@ -1735,9 +1738,12 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> Result<Outcome> {
     // Collect messages from both subscribers.
     let short_timeout = Duration::from_millis(500);
     let mut qos_violation = false;
+    let mut count_a = 0u32;
+    let mut count_b = 0u32;
 
     // Drain subscriber A — should all be QoS 0.
     while let Ok(Packet::Publish(p)) = sub_a.recv_with_timeout(short_timeout).await {
+        count_a += 1;
         if p.qos != QoS::AtMostOnce {
             qos_violation = true;
         }
@@ -1745,6 +1751,7 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> Result<Outcome> {
 
     // Drain subscriber B — should be QoS 0 or QoS 1.
     while let Ok(Packet::Publish(p)) = sub_b.recv_with_timeout(short_timeout).await {
+        count_b += 1;
         if p.qos == QoS::ExactlyOnce {
             qos_violation = true;
         }
@@ -1754,6 +1761,13 @@ async fn shared_sub_qos_respected(config: TestConfig<'_>) -> Result<Outcome> {
         {
             sub_b.send_puback(pid, 0x00).await?;
         }
+    }
+
+    let total = count_a + count_b;
+    if total == 0 {
+        return Ok(Outcome::fail(
+            "No messages delivered to either shared subscriber",
+        ));
     }
 
     if qos_violation {
@@ -1936,15 +1950,12 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> Result<Outco
             // Timeout — no message received. This is correct.
             Ok(Outcome::Pass)
         }
-        Err(RecvError::Closed) => Ok(Outcome::Pass),
+        Err(RecvError::Closed) => Ok(Outcome::fail("broker closed connection unexpectedly")),
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(Packet::Publish(_)) => Ok(Outcome::fail(
             "Server redirected NACKed message to another subscriber (should have discarded)",
         )),
-        Ok(_) => {
-            // Some other packet — not the message, pass.
-            Ok(Outcome::Pass)
-        }
+        Ok(other) => Ok(Outcome::fail_packet("no packet (NACKed message check)", &other)),
     }
 }
 

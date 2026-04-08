@@ -22,7 +22,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 
 const TCP_TRANSPORT: TestContext = TestContext {
     refs: &["MQTT-4.2-1"],
-    description: "TCP transport MUST provide ordered, lossless byte stream (CONNECT/CONNACK)",
+    description: "A Client or Server MUST support the use of one or more underlying transport protocols that provide an ordered, lossless, stream of bytes from client to Server and Server to Client",
     compliance: Compliance::Must,
 };
 
@@ -36,7 +36,7 @@ async fn tcp_connect(config: TestConfig<'_>) -> Result<Outcome> {
 
 const TLS_TRANSPORT: TestContext = TestContext {
     refs: &["MQTT-4.2-1"],
-    description: "TLS transport MUST provide ordered, lossless byte stream (CONNECT/CONNACK)",
+    description: "A Client or Server MUST support the use of one or more underlying transport protocols that provide an ordered, lossless, stream of bytes from client to Server and Server to Client",
     compliance: Compliance::Must,
 };
 

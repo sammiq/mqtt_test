@@ -41,12 +41,12 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 
 const SESSION_PRESENT: TestContext = TestContext {
     refs: &["MQTT-3.1.2-5"],
-    description: "Clean Start=0 with prior session: session_present MUST be 1",
+    description: "If a CONNECT packet is received with Clean Start set to 0 and there is a Session associated with client Identifier, server MUST resume communications with client based on state from the existing Session",
     compliance: Compliance::Must,
 };
 
 /// If a session exists and the client reconnects with Clean Start=0,
-/// session_present MUST be 1 in the CONNACK [MQTT-3.1.2-5].
+/// If a CONNECT packet is received with Clean Start set to 0 and there is a Session associated with the Client Identifier, the Server MUST resume communications with the Client based on state from the existing Session. [MQTT-3.1.2-5].
 async fn session_present_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-present";
 
@@ -79,12 +79,12 @@ async fn session_present_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
 
 const QOS1_REDELIVER: TestContext = TestContext {
     refs: &["MQTT-4.4.0-1", "MQTT-4.5.0-1"],
-    description: "Unacknowledged QoS 1 messages MUST be redelivered on session resume",
+    description: "When a Client reconnects with Clean Start set to 0 and a session is present, both client and Server MUST resend any unacknowledged PUBLISH packets (where QoS > 0) and PUBREL packets using their original Packet Identifiers",
     compliance: Compliance::Must,
 };
 
 /// When a client reconnects with Clean Start=0, any QoS 1 messages that were
-/// not acknowledged MUST be redelivered [MQTT-4.4.0-1].
+/// When a Client reconnects with Clean Start set to 0 and a session is present, both the Client and Server MUST resend any unacknowledged PUBLISH packets (where QoS > 0) and PUBREL packets using their original Packet Identifiers. This is the only circumstance where a Client or Server is REQUIRED to resend messages. Clients and Servers MUST NOT resend messages at any other time. [MQTT-4.4.0-1].
 ///
 /// Note: this test publishes while the subscriber is offline, so the redelivered
 /// message is a *first* delivery — DUP=0 is correct. See `qos1_dup_on_redelivery`
@@ -157,12 +157,12 @@ async fn qos1_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
 
 const QOS2_REDELIVER: TestContext = TestContext {
     refs: &["MQTT-4.4.0-2"],
-    description: "Incomplete QoS 2 flows MUST be resumed on session reconnect",
+    description: "If PUBACK or PUBREC is received containing a Reason Code of 0x80 or greater the corresponding PUBLISH packet is treated as acknowledged",
     compliance: Compliance::Must,
 };
 
 /// When a client reconnects with Clean Start=0, incomplete QoS 2 flows
-/// MUST be resumed [MQTT-4.3.3 / MQTT-4.4].
+/// If PUBACK or PUBREC is received containing a Reason Code of 0x80 or greater the corresponding PUBLISH packet is treated as acknowledged, and MUST NOT be retransmitted. [MQTT-4.4.0-2].
 async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     let sub_id = "mqtt-test-qos2-redel-sub";
     let pub_id = "mqtt-test-qos2-redel-pub";
@@ -244,12 +244,12 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SUB_PERSISTS: TestContext = TestContext {
     refs: &["MQTT-3.1.2-6"],
-    description: "Subscriptions MUST persist across session reconnects",
+    description: "If a CONNECT packet is received with Clean Start set to 0 and there is no Session associated with client Identifier, server MUST create a new Session",
     compliance: Compliance::Must,
 };
 
 /// When a client reconnects with Clean Start=0, its subscriptions from
-/// the previous session MUST still be active [MQTT-3.1.2-6].
+/// If a CONNECT packet is received with Clean Start set to 0 and there is no Session associated with the Client Identifier, the Server MUST create a new Session. [MQTT-3.1.2-6].
 async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> Result<Outcome> {
     let sub_id = "mqtt-test-sub-persist";
     let pub_id = "mqtt-test-sub-persist-pub";
@@ -307,12 +307,12 @@ async fn subscription_persists_across_sessions(config: TestConfig<'_>) -> Result
 
 const SESSION_EXPIRY_ZERO: TestContext = TestContext {
     refs: &["MQTT-3.1.2-10"],
-    description: "Session Expiry Interval of 0 means session ends on disconnect",
+    description: "Will Message MUST be removed from the stored Session State in server once it has been published or server has received a DISCONNECT packet with a Reason Code of 0x00 (Normal disconnection) from client",
     compliance: Compliance::Must,
 };
 
 /// A Session Expiry Interval of 0 means the session state MUST be discarded
-/// when the connection closes [MQTT-3.1.2-10].
+/// The Will Message MUST be removed from the stored Session State in the Server once it has been published or the Server has received a DISCONNECT packet with a Reason Code of 0x00 (Normal disconnection) from the Client. [MQTT-3.1.2-10].
 async fn session_expiry_zero(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-exp-zero";
 
@@ -341,12 +341,12 @@ async fn session_expiry_zero(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SESSION_EXPIRY_MAX: TestContext = TestContext {
     refs: &["MQTT-4.1.0-1"],
-    description: "Session Expiry Interval of 0xFFFFFFFF means session never expires",
+    description: "Client and Server MUST NOT discard the Session State while the Network Connection is open",
     compliance: Compliance::Must,
 };
 
 /// Session Expiry Interval of 0xFFFFFFFF means the session does not expire.
-/// Reconnecting with Clean Start=0 should find the session [MQTT-3.1.2-11].
+/// The Client and Server MUST NOT discard the Session State while the Network Connection is open. [MQTT-4.1.0-1].
 async fn session_expiry_max(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-exp-max";
 
@@ -376,12 +376,12 @@ async fn session_expiry_max(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SESSION_TAKEOVER: TestContext = TestContext {
     refs: &["MQTT-3.1.4-3"],
-    description: "Server MUST disconnect existing client when new client uses same Client ID",
+    description: "If clientID represents a Client already connected to server, server sends a DISCONNECT packet to the existing Client with Reason Code of 0x8E (Session taken over) as described in section 4.13 and MUST close the Network Connection of the existing Client",
     compliance: Compliance::Must,
 };
 
 /// If a client connects with a Client Identifier already in use, the server
-/// MUST disconnect the existing client [MQTT-3.1.4-3].
+/// If the ClientID represents a Client already connected to the Server, the Server sends a DISCONNECT packet to the existing Client with Reason Code of 0x8E (Session taken over) as described in section 4.13 and MUST close the Network Connection of the existing Client. [MQTT-3.1.4-3].
 async fn session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-takeover";
 
@@ -412,12 +412,12 @@ async fn session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SESSION_EXPIRY_DISCARD: TestContext = TestContext {
     refs: &["MQTT-4.1.0-1", "MQTT-4.1.0-2"],
-    description: "Server MUST discard session state when Session Expiry Interval has passed",
+    description: "Client and Server MUST NOT discard the Session State while the Network Connection is open",
     compliance: Compliance::Must,
 };
 
 /// The server MUST discard session state when the network connection is closed
-/// and the Session Expiry Interval has passed [MQTT-4.1.0-1/2]. Connect with a
+/// The Client and Server MUST NOT discard the Session State while the Network Connection is open. [MQTT-4.1.0-1].
 /// 2-second expiry, disconnect, wait 3 seconds, then verify the session is gone.
 async fn session_expiry_discard(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-exp-discard";
@@ -472,12 +472,12 @@ async fn session_expiry_discard(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SESSION_PRESENT_PERSISTENCE: TestContext = TestContext {
     refs: &["MQTT-3.2.2-2"],
-    description: "Session Present=1 when Clean Start=0 and session exists, verifying subscription persistence",
+    description: "If server accepts a connection with Clean Start set to 1, server MUST set Session Present to 0 in the CONNACK packet in addition to setting a 0x00 (Success) Reason Code in the CONNACK packet",
     compliance: Compliance::Must,
 };
 
 /// When a client reconnects with Clean Start=0 and the server has session state,
-/// the CONNACK MUST contain Session Present=1 [MQTT-3.2.2-2] and the subscription
+/// If the Server accepts a connection with Clean Start set to 1, the Server MUST set Session Present to 0 in the CONNACK packet in addition to setting a 0x00 (Success) Reason Code in the CONNACK packet. [MQTT-3.2.2-2].
 /// must deliver messages without re-subscribing. This verifies the end-to-end
 /// persistence guarantee beyond just the session_present flag.
 async fn session_present_verify_persistence(config: TestConfig<'_>) -> Result<Outcome> {
@@ -544,12 +544,12 @@ async fn session_present_verify_persistence(config: TestConfig<'_>) -> Result<Ou
 
 const QOS1_DUP_FLAG: TestContext = TestContext {
     refs: &["MQTT-3.3.1-1"],
-    description: "DUP MUST be 1 when re-delivering a QoS 1 PUBLISH the client already received",
+    description: "DUP flag MUST be set to 1 by client or Server when it attempts to re-deliver a PUBLISH packet",
     compliance: Compliance::Must,
 };
 
 /// When a QoS 1 PUBLISH was delivered to a connected client but not acknowledged,
-/// the broker MUST set DUP=1 when re-delivering it after session resume [MQTT-3.3.1-1].
+/// The DUP flag MUST be set to 1 by the Client or Server when it attempts to re-deliver a PUBLISH packet. [MQTT-3.3.1-1].
 ///
 /// This differs from `qos1_redelivery_on_resume` which publishes while the subscriber
 /// is offline (first delivery, DUP=0 is correct). Here the subscriber is online when

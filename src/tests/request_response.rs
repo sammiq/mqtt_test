@@ -226,12 +226,12 @@ async fn full_request_response(config: TestConfig<'_>) -> Result<Outcome> {
 
 const RESPONSE_TOPIC_WITH_CORR: TestContext = TestContext {
     refs: &["MQTT-3.3.2-9"],
-    description: "Response Topic and Correlation Data MUST both be forwarded together",
+    description: "A Client MUST NOT send a PUBLISH packet with a Topic Alias greater than the Topic Alias Maximum value returned by server in the CONNACK packet",
     compliance: Compliance::Must,
 };
 
 /// Both Response Topic and Correlation Data MUST be forwarded together
-/// when present in a PUBLISH [MQTT-3.3.2-13/14].
+/// A Client MUST NOT send a PUBLISH packet with a Topic Alias greater than the Topic Alias Maximum value returned by the Server in the CONNACK packet. [MQTT-3.3.2-9].
 async fn response_topic_with_correlation(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,

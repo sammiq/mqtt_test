@@ -42,11 +42,11 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 
 const DISCONNECT_CLOSE: TestContext = TestContext {
     refs: &["MQTT-3.14.4-1"],
-    description: "After receiving DISCONNECT, server MUST close the network connection",
+    description: "After sending a DISCONNECT packet the sender MUST NOT send any more MQTT Control Packets on that Network Connection",
     compliance: Compliance::Must,
 };
 
-/// After receiving DISCONNECT from the client, the server MUST close the connection [MQTT-3.14.4-1].
+/// After sending a DISCONNECT packet the sender MUST NOT send any more MQTT Control Packets on that Network Connection. [MQTT-3.14.4-1].
 async fn server_closes_after_disconnect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-disconnect");
     let (client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -60,12 +60,12 @@ async fn server_closes_after_disconnect(config: TestConfig<'_>) -> Result<Outcom
 
 const DISCONNECT_WITH_WILL: TestContext = TestContext {
     refs: &["MQTT-3.14.1-1"],
-    description: "DISCONNECT with reason 0x04 MUST trigger will message publication",
+    description: "Client or Server MUST validate that reserved bits are set to 0",
     compliance: Compliance::Must,
 };
 
 /// DISCONNECT with reason code 0x04 (Disconnect with Will Message) MUST cause
-/// the server to publish the will message [MQTT-3.14.2-3].
+/// The Client or Server MUST validate that reserved bits are set to 0. If they are not zero it sends a DISCONNECT packet with a Reason code of 0x81 (Malformed Packet). [MQTT-3.14.1-1].
 async fn disconnect_with_will(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will04";
 
@@ -103,12 +103,12 @@ async fn disconnect_with_will(config: TestConfig<'_>) -> Result<Outcome> {
 
 const NORMAL_DISCONNECT_DISCARDS_WILL: TestContext = TestContext {
     refs: &["MQTT-3.14.4-3", "MQTT-3.14.4-2"],
-    description: "Normal DISCONNECT (0x00) MUST discard the will message",
+    description: "On receipt of DISCONNECT with a Reason Code of 0x00 (Success) server MUST discard any Will Message associated with the current Connection without publishing it",
     compliance: Compliance::Must,
 };
 
 /// A normal DISCONNECT (reason 0x00) MUST cause the server to discard any
-/// will message associated with the connection [MQTT-3.14.4-3].
+/// On receipt of DISCONNECT with a Reason Code of 0x00 (Success) the Server MUST discard any Will Message associated with the current Connection without publishing it. [MQTT-3.14.4-3].
 async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will_discard";
 
@@ -144,12 +144,12 @@ async fn normal_disconnect_discards_will(config: TestConfig<'_>) -> Result<Outco
 
 const SESSION_EXPIRY_INCREASE: TestContext = TestContext {
     refs: &["MQTT-3.14.2-2"],
-    description: "Session Expiry MUST NOT increase from 0 to non-zero on DISCONNECT",
+    description: "Session Expiry Interval MUST NOT be sent on a DISCONNECT by server",
     compliance: Compliance::Must,
 };
 
 /// A client that connected with Session Expiry Interval of 0 MUST NOT set it
-/// to a non-zero value in the DISCONNECT packet [MQTT-3.14.2-3]. The server
+/// The Session Expiry Interval MUST NOT be sent on a DISCONNECT by the Server. [MQTT-3.14.2-2].
 /// MUST treat this as a protocol error.
 async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> Result<Outcome> {
     // Connect with session_expiry_interval = 0 (or absent, which defaults to 0)
@@ -174,12 +174,12 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> Result<Outc
 
 const WILL_DELAY: TestContext = TestContext {
     refs: &["MQTT-3.1.3-9"],
-    description: "Will Delay Interval MUST delay will message publication after disconnect",
+    description: "If a new Network Connection to this Session is made before the Will Delay Interval has passed, server MUST NOT send the Will Message",
     compliance: Compliance::Must,
 };
 
 /// The server MUST delay publishing the will message by the Will Delay
-/// Interval after the network connection is closed [MQTT-3.1.3.2-2].
+/// If a new Network Connection to this Session is made before the Will Delay Interval has passed, the Server MUST NOT send the Will Message. [MQTT-3.1.3-9].
 async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will_delay";
 
@@ -234,13 +234,13 @@ async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
 
 const DISCONNECT_SESSION_TAKEOVER: TestContext = TestContext {
     refs: &["MQTT-3.14.2-1"],
-    description: "Server SHOULD send DISCONNECT with reason 0x8E on session takeover",
+    description: "Client or Server sending the DISCONNECT packet MUST use one of the DISCONNECT Reason Codes",
     compliance: Compliance::Should,
 };
 
 /// When another client connects with the same Client ID, the server SHOULD
 /// send a DISCONNECT with reason code 0x8E (Session taken over) to the
-/// existing client [MQTT-3.14.2-1].
+/// The Client or Server sending the DISCONNECT packet MUST use one of the DISCONNECT Reason Codes. [MQTT-3.14.2-1].
 async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-disc-takeover";
 
@@ -275,12 +275,12 @@ async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> Result<Ou
 
 const DISCONNECT_PACKET_TOO_LARGE: TestContext = TestContext {
     refs: &["MQTT-3.1.2-24"],
-    description: "Server MUST disconnect if client sends packet exceeding Maximum Packet Size",
+    description: "Server MUST NOT send packets exceeding Maximum Packet Size to client",
     compliance: Compliance::Must,
 };
 
 /// If the client advertises a Maximum Packet Size in CONNECT and then sends
-/// a packet exceeding that size, the server MUST disconnect [MQTT-3.1.2-24].
+/// The Server MUST NOT send packets exceeding Maximum Packet Size to the Client. [MQTT-3.1.2-24].
 /// Here we test the reverse: we tell the broker our max is small, then the
 /// broker should not send us oversized packets. To test server-side enforcement,
 /// we send a PUBLISH exceeding the broker's maximum (if advertised).
@@ -332,12 +332,12 @@ async fn disconnect_on_packet_too_large(config: TestConfig<'_>) -> Result<Outcom
 
 const DISCONNECT_REASON_STRING: TestContext = TestContext {
     refs: &["MQTT-3.14.2-3"],
-    description: "Server-sent DISCONNECT MAY include a Reason String property",
+    description: "sender MUST NOT use this Property if it would increase the size of the DISCONNECT packet beyond the Maximum Packet Size specified by the receiver",
     compliance: Compliance::May,
 };
 
 /// When the server sends a DISCONNECT, it MAY include a Reason String
-/// property [MQTT-3.14.2-3]. We provoke a server DISCONNECT (via session
+/// The sender MUST NOT use this Property if it would increase the size of the DISCONNECT packet beyond the Maximum Packet Size specified by the receiver. [MQTT-3.14.2-3].
 /// takeover) and check for the property.
 async fn disconnect_reason_string(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-disc-reason-str";
@@ -373,13 +373,13 @@ async fn disconnect_reason_string(config: TestConfig<'_>) -> Result<Outcome> {
 
 const DISCONNECT_PROTOCOL_ERROR: TestContext = TestContext {
     refs: &["MQTT-4.13.1-1"],
-    description: "Server SHOULD send DISCONNECT with Reason Code before closing on protocol error",
+    description: "When a Server detects a Malformed Packet or Protocol Error",
     compliance: Compliance::Should,
 };
 
 /// When the server detects a protocol error, it SHOULD send a DISCONNECT
 /// packet with an appropriate reason code before closing the connection
-/// [MQTT-4.13.1-1]. We trigger this by sending a PUBLISH with Topic Alias = 0,
+/// When a Server detects a Malformed Packet or Protocol Error, and a Reason Code is given in the specification, it MUST close the Network Connection. [MQTT-4.13.1-1].
 /// which is explicitly invalid per the spec (protocol error).
 async fn disconnect_on_protocol_error(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-proto-err");

@@ -26,7 +26,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 
 const WS_SUBPROTOCOL: TestContext = TestContext {
     refs: &["MQTT-6.0.0-4"],
-    description: "WebSocket subprotocol returned by server MUST be \"mqtt\"",
+    description: "WebSocket Subprotocol name selected and returned by server MUST be �mqtt�",
     compliance: Compliance::Must,
 };
 
@@ -61,7 +61,7 @@ async fn ws_subprotocol(config: TestConfig<'_>) -> Result<Outcome> {
 
 const WS_PACKET_SPANNING: TestContext = TestContext {
     refs: &["MQTT-6.0.0-2"],
-    description: "Server MUST NOT assume MQTT packets are aligned on WebSocket frame boundaries",
+    description: "A single WebSocket data frame can contain multiple or partial MQTT Control Packets",
     compliance: Compliance::Must,
 };
 
@@ -131,7 +131,7 @@ async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<Outcome> {
 
 const WS_TEXT_FRAME_REJECTED: TestContext = TestContext {
     refs: &["MQTT-6.0.0-1"],
-    description: "Server MUST close connection on non-binary WebSocket frame",
+    description: "MQTT Control Packets MUST be sent in WebSocket binary data frames",
     compliance: Compliance::Must,
 };
 

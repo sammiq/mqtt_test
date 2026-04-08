@@ -58,12 +58,12 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 
 const RESERVED_FLAGS: TestContext = TestContext {
     refs: &["MQTT-3.1.4-1", "MQTT-3.1.2-3"],
-    description: "Server MUST validate CONNECT reserved flag is zero",
+    description: "Server MUST validate that the CONNECT packet matches the format described in section 3.1 and close the Network Connection if it does not match",
     compliance: Compliance::Must,
 };
 
 /// The CONNECT packet's connect-flags byte has a reserved bit (bit 0) that
-/// MUST be 0. Sending it as 1 is a malformed packet [MQTT-3.1.2-3].
+/// The Server MUST validate that the CONNECT packet matches the format described in section 3.1 and close the Network Connection if it does not match. [MQTT-3.1.4-1].
 async fn reserved_connect_flags(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -87,12 +87,12 @@ async fn reserved_connect_flags(config: TestConfig<'_>) -> Result<Outcome> {
 
 const BAD_REMAINING_LEN: TestContext = TestContext {
     refs: &["MQTT-1.5.5-1"],
-    description: "Server MUST close connection on malformed remaining length",
+    description: "encoded value MUST use the minimum number of bytes necessary to represent the value",
     compliance: Compliance::Must,
 };
 
 /// A packet with a remaining-length field that uses more than 4 bytes
-/// (continuation bit set on all 4 bytes) is malformed [MQTT-1.5.5-1].
+/// The encoded value MUST use the minimum number of bytes necessary to represent the value. [MQTT-1.5.5-1].
 async fn malformed_remaining_length(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -110,12 +110,12 @@ async fn malformed_remaining_length(config: TestConfig<'_>) -> Result<Outcome> {
 
 const EMPTY_TOPIC_NO_ALIAS: TestContext = TestContext {
     refs: &["MQTT-3.3.2-1"],
-    description: "PUBLISH with empty topic and no Topic Alias MUST be rejected",
+    description: "Topic Name MUST be present as the first field in the PUBLISH packet Variable Header",
     compliance: Compliance::Must,
 };
 
 /// A PUBLISH with an empty topic string and no Topic Alias property is
-/// a protocol error [MQTT-3.3.2-8].
+/// The Topic Name MUST be present as the first field in the PUBLISH packet Variable Header. It MUST be a UTF-8 Encoded String. [MQTT-3.3.2-1].
 async fn publish_empty_topic_no_alias(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-empty-topic");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -136,11 +136,11 @@ async fn publish_empty_topic_no_alias(config: TestConfig<'_>) -> Result<Outcome>
 
 const TOPIC_ALIAS_ZERO: TestContext = TestContext {
     refs: &["MQTT-3.3.2-2"],
-    description: "PUBLISH with Topic Alias of 0 MUST be a protocol error",
+    description: "Topic Name in the PUBLISH packet MUST NOT contain wildcard characters",
     compliance: Compliance::Must,
 };
 
-/// A Topic Alias of 0 is not permitted — the server MUST disconnect [MQTT-3.3.2-8].
+/// The Topic Name in the PUBLISH packet MUST NOT contain wildcard characters. [MQTT-3.3.2-2].
 async fn publish_topic_alias_zero(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-alias-zero");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -162,11 +162,11 @@ async fn publish_topic_alias_zero(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SUB_NO_FILTERS: TestContext = TestContext {
     refs: &["MQTT-3.8.3-1"],
-    description: "SUBSCRIBE with no topic filters MUST be rejected",
+    description: "Topic Filters MUST be a UTF-8 Encoded String",
     compliance: Compliance::Must,
 };
 
-/// A SUBSCRIBE packet MUST contain at least one topic filter [MQTT-3.8.3-3].
+/// The Topic Filters MUST be a UTF-8 Encoded String. [MQTT-3.8.3-1].
 /// The payload must be non-empty.
 async fn subscribe_no_filters(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-empty");
@@ -188,12 +188,12 @@ async fn subscribe_no_filters(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SUB_INVALID_QOS: TestContext = TestContext {
     refs: &["MQTT-3.8.3-2"],
-    description: "SUBSCRIBE with reserved QoS bits set MUST be rejected",
+    description: "Payload MUST contain at least one Topic Filter and Subscription Options pair",
     compliance: Compliance::Must,
 };
 
 /// The subscription options byte's upper 2 QoS bits (6-7) are reserved and
-/// MUST be 0. Setting them is a protocol error [MQTT-3.8.3-5].
+/// The Payload MUST contain at least one Topic Filter and Subscription Options pair. [MQTT-3.8.3-2].
 async fn subscribe_invalid_qos(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-bad-qos");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -215,11 +215,11 @@ async fn subscribe_invalid_qos(config: TestConfig<'_>) -> Result<Outcome> {
 
 const INVALID_WILDCARD: TestContext = TestContext {
     refs: &["MQTT-4.7.1-1"],
-    description: "'#' wildcard MUST only be the last character in a topic filter",
+    description: "multi-level wildcard character MUST be specified either on its own or following a topic level separator",
     compliance: Compliance::Must,
 };
 
-/// '#' wildcard not at the end of a topic filter is a protocol error [MQTT-4.7.1-1].
+/// The multi-level wildcard character MUST be specified either on its own or following a topic level separator. In either case it MUST be the last character specified in the Topic Filter. [MQTT-4.7.1-1].
 /// The server MUST treat a SUBSCRIBE with such a filter as a protocol error.
 async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-bad-wildcard");
@@ -259,11 +259,11 @@ async fn subscribe_invalid_wildcard(config: TestConfig<'_>) -> Result<Outcome> {
 
 const UNSUB_NO_FILTERS: TestContext = TestContext {
     refs: &["MQTT-3.10.3-1", "MQTT-3.10.3-2"],
-    description: "UNSUBSCRIBE with no topic filters MUST be rejected",
+    description: "Topic Filters in an UNSUBSCRIBE packet MUST be UTF-8 Encoded Strings",
     compliance: Compliance::Must,
 };
 
-/// An UNSUBSCRIBE packet MUST contain at least one topic filter [MQTT-3.10.3-2].
+/// The Topic Filters in an UNSUBSCRIBE packet MUST be UTF-8 Encoded Strings. [MQTT-3.10.3-1].
 async fn unsubscribe_no_filters(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-unsub-empty");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -284,12 +284,12 @@ async fn unsubscribe_no_filters(config: TestConfig<'_>) -> Result<Outcome> {
 
 const UNSUB_RESERVED_BITS: TestContext = TestContext {
     refs: &["MQTT-3.10.1-1"],
-    description: "UNSUBSCRIBE fixed header reserved bits MUST be 0010",
+    description: "Bits 3,2,1 and 0 of the Fixed Header of the UNSUBSCRIBE packet are reserved and MUST be set to 0,0,1 and 0 respectively",
     compliance: Compliance::Must,
 };
 
 /// The UNSUBSCRIBE fixed header byte must have bits 3-0 = 0010.
-/// Sending wrong reserved bits is a malformed packet [MQTT-3.10.1-1].
+/// Bits 3,2,1 and 0 of the Fixed Header of the UNSUBSCRIBE packet are reserved and MUST be set to 0,0,1 and 0 respectively. The Server MUST treat any other value as malformed and close the Network Connection [MQTT-3.10.1-1].
 async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-unsub-reserved");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -311,12 +311,12 @@ async fn unsubscribe_reserved_bits(config: TestConfig<'_>) -> Result<Outcome> {
 
 const TOPIC_ALIAS_EXCEEDS_MAX: TestContext = TestContext {
     refs: &["MQTT-3.3.2-4"],
-    description: "Topic Alias exceeding server's maximum MUST be a protocol error",
+    description: "A Server MUST send the Payload Format Indicator unaltered to all subscribers receiving the message",
     compliance: Compliance::Must,
 };
 
 /// A Topic Alias value that exceeds the server's Topic Alias Maximum is a
-/// protocol error — the server MUST disconnect [MQTT-3.3.2-9].
+/// A Server MUST send the Payload Format Indicator unaltered to all subscribers receiving the message. [MQTT-3.3.2-4].
 async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-alias-exceed");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -344,11 +344,11 @@ async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> Result<Outcome> 
 
 const INVALID_PLUS_WILDCARD: TestContext = TestContext {
     refs: &["MQTT-4.7.1-2"],
-    description: "'+' wildcard MUST occupy an entire level of a topic filter",
+    description: "single-level wildcard can be used at any level in the Topic Filter, including first and last levels",
     compliance: Compliance::Must,
 };
 
-/// '+' wildcard not occupying an entire topic level is a protocol error [MQTT-4.7.1-1].
+/// The single-level wildcard can be used at any level in the Topic Filter, including first and last levels. Where it is used, it MUST occupy an entire level of the filter. [MQTT-4.7.1-2].
 /// E.g., "mqtt/te+st" is invalid.
 async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-bad-plus");
@@ -388,12 +388,12 @@ async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> Result<Outco
 
 const NULL_IN_TOPIC: TestContext = TestContext {
     refs: &["MQTT-1.5.4-2"],
-    description: "PUBLISH with null character in topic name MUST be rejected",
+    description: "A UTF-8 Encoded String MUST NOT include an encoding of the null character U+0000",
     compliance: Compliance::Must,
 };
 
 /// A UTF-8 Encoded String MUST NOT include an encoding of the null character
-/// U+0000 [MQTT-1.5.4-2]. A topic containing \0 is malformed.
+/// A UTF-8 Encoded String MUST NOT include an encoding of the null character U+0000. [MQTT-1.5.4-2].
 async fn publish_topic_with_null_char(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-null-topic");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -416,12 +416,12 @@ async fn publish_topic_with_null_char(config: TestConfig<'_>) -> Result<Outcome>
 
 const SUB_WRONG_FIXED: TestContext = TestContext {
     refs: &["MQTT-3.8.1-1"],
-    description: "SUBSCRIBE fixed header reserved bits MUST be 0010",
+    description: "Bits 3,2,1 and 0 of the Fixed Header of the SUBSCRIBE packet are reserved and MUST be set to 0,0,1 and 0 respectively",
     compliance: Compliance::Must,
 };
 
 /// The SUBSCRIBE fixed header byte MUST have bits 3-0 set to 0010.
-/// Sending 0x80 (bits = 0000) instead of 0x82 is malformed [MQTT-3.8.1-1].
+/// Bits 3,2,1 and 0 of the Fixed Header of the SUBSCRIBE packet are reserved and MUST be set to 0,0,1 and 0 respectively. The Server MUST treat any other value as malformed and close the Network Connection [MQTT-3.8.1-1].
 async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-fixed-bits");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -445,12 +445,12 @@ async fn subscribe_wrong_fixed_header_bits(config: TestConfig<'_>) -> Result<Out
 
 const NO_CLIENT_ID: TestContext = TestContext {
     refs: &["MQTT-3.1.3-3"],
-    description: "CONNECT with no Client ID in payload MUST be rejected",
+    description: "ClientID MUST be present and is the first field in the CONNECT packet Payload",
     compliance: Compliance::Must,
 };
 
 /// The Client Identifier MUST be present and is the first field in the
-/// CONNECT payload [MQTT-3.1.3-3]. A CONNECT whose payload is empty
+/// The ClientID MUST be present and is the first field in the CONNECT packet Payload. [MQTT-3.1.3-3].
 /// (remaining length only covers the variable header) is malformed.
 async fn connect_missing_client_id(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -477,12 +477,12 @@ async fn connect_missing_client_id(config: TestConfig<'_>) -> Result<Outcome> {
 
 const USERNAME_TRUNCATED: TestContext = TestContext {
     refs: &["MQTT-3.1.2-17"],
-    description: "CONNECT with Username flag set but truncated payload MUST be rejected",
+    description: "If the User Name Flag is set to 1, a User Name MUST be present in the Payload",
     compliance: Compliance::Must,
 };
 
 /// Username flag is set but the payload ends before the username field.
-/// The broker MUST treat this as a malformed packet [MQTT-3.1.2-15].
+/// If the User Name Flag is set to 1, a User Name MUST be present in the Payload. [MQTT-3.1.2-17].
 async fn username_flag_truncated_payload(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -506,12 +506,12 @@ async fn username_flag_truncated_payload(config: TestConfig<'_>) -> Result<Outco
 
 const UTF8_SURROGATE: TestContext = TestContext {
     refs: &["MQTT-1.5.4-1"],
-    description: "Server MUST reject ill-formed UTF-8 (surrogate pairs D800-DFFF) in strings",
+    description: "character data in a UTF-8 Encoded String MUST be well-formed UTF-8 as defined by the Unicode specification [Unicode] and restated in RFC 3629 [RFC3629]",
     compliance: Compliance::Must,
 };
 
 /// A UTF-8 Encoded String MUST NOT include encodings of UTF-16 surrogates
-/// (U+D800..U+DFFF) [MQTT-1.5.4-1]. Send a PUBLISH with a topic containing
+/// The character data in a UTF-8 Encoded String MUST be well-formed UTF-8 as defined by the Unicode specification [Unicode] and restated in RFC 3629 [RFC3629]. In particular, the character data MUST NOT include encodings of code points between U+D800 and U+DFFF. [MQTT-1.5.4-1].
 /// the ill-formed byte sequence 0xED 0xA0 0x80 (surrogate U+D800).
 async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-utf8-surrogate");
@@ -536,11 +536,11 @@ async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> Result<Outcome>
 
 const PUBACK_BAD_FLAGS: TestContext = TestContext {
     refs: &["MQTT-2.1.3-1"],
-    description: "Server MUST reject PUBACK with non-zero reserved fixed header flags",
+    description: "Where a flag bit is marked as �Reserved� it is reserved for future use and MUST be set to the value listed",
     compliance: Compliance::Must,
 };
 
-/// The fixed header flags for PUBACK (packet type 4) MUST be 0000 [MQTT-2.1.3-1].
+/// Where a flag bit is marked as �Reserved� it is reserved for future use and MUST be set to the value listed. [MQTT-2.1.3-1].
 /// Sending 0x41 (flags = 0001) instead of 0x40 is a malformed packet.
 async fn puback_invalid_fixed_header_flags(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-puback-flags");
@@ -561,11 +561,11 @@ async fn puback_invalid_fixed_header_flags(config: TestConfig<'_>) -> Result<Out
 
 const WILL_QOS_THREE: TestContext = TestContext {
     refs: &["MQTT-3.1.2-12"],
-    description: "CONNECT with Will QoS=3 MUST be rejected as malformed",
+    description: "If the Will Flag is set to 1, the value of Will QoS can be 0 (0x00), 1 (0x01), or 2 (0x02)",
     compliance: Compliance::Must,
 };
 
-/// If Will QoS bits are both set (value 3), the CONNECT is malformed [MQTT-3.1.2-12].
+/// If the Will Flag is set to 1, the value of Will QoS can be 0 (0x00), 1 (0x01), or 2 (0x02). [MQTT-3.1.2-12].
 /// Connect flags byte: will_flag=1, will_qos=3, clean_start=1 → 0b_0001_1110 = 0x1E.
 async fn will_qos_three(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -594,11 +594,11 @@ async fn will_qos_three(config: TestConfig<'_>) -> Result<Outcome> {
 
 const DISCONNECT_BAD_RESERVED: TestContext = TestContext {
     refs: &["MQTT-3.14.0-1"],
-    description: "DISCONNECT reserved bits MUST be zero; non-zero is malformed",
+    description: "A Server MUST NOT send a DISCONNECT until after it has sent a CONNACK with Reason Code of less than 0x80",
     compliance: Compliance::Must,
 };
 
-/// The DISCONNECT fixed header byte MUST have reserved bits 3-0 = 0000 [MQTT-3.14.0-1].
+/// A Server MUST NOT send a DISCONNECT until after it has sent a CONNACK with Reason Code of less than 0x80. [MQTT-3.14.0-1].
 /// Sending 0xE1 (reserved bit 0 set) instead of 0xE0 is a malformed packet.
 async fn disconnect_reserved_bits(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-disc-reserved");
@@ -617,7 +617,7 @@ async fn disconnect_reserved_bits(config: TestConfig<'_>) -> Result<Outcome> {
 
 const PASSWORD_TRUNCATED: TestContext = TestContext {
     refs: &["MQTT-3.1.2-19"],
-    description: "CONNECT with Password flag set but truncated payload MUST be rejected",
+    description: "If the Password Flag is set to 1, a Password MUST be present in the Payload",
     compliance: Compliance::Must,
 };
 
@@ -650,13 +650,13 @@ async fn password_flag_truncated_payload(config: TestConfig<'_>) -> Result<Outco
 
 const WILL_TRUNCATED: TestContext = TestContext {
     refs: &["MQTT-3.1.2-9"],
-    description: "CONNECT with Will Flag=1 but missing will fields MUST be rejected",
+    description: "If the Will Flag is set to 1, the Will QoS and Will Retain fields in the Connect Flags will be used by server",
     compliance: Compliance::Must,
 };
 
 /// Will Flag is set but the payload contains only the client ID — no will
 /// properties, will topic, or will payload. The broker MUST reject this as
-/// a malformed packet [MQTT-3.1.2-9].
+/// If the Will Flag is set to 1, the Will QoS and Will Retain fields in the Connect Flags will be used by the Server, and the Will Properties, Will Topic and Will Message fields MUST be present in the Payload. [MQTT-3.1.2-9].
 async fn will_flag_truncated_payload(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -680,13 +680,13 @@ async fn will_flag_truncated_payload(config: TestConfig<'_>) -> Result<Outcome> 
 
 const USERNAME_FLAG_MISMATCH: TestContext = TestContext {
     refs: &["MQTT-3.1.2-16"],
-    description: "CONNECT with Username Flag=0 but extra payload data MUST be rejected",
+    description: "If the User Name Flag is set to 0, a User Name MUST NOT be present in the Payload",
     compliance: Compliance::Must,
 };
 
 /// Username Flag is 0 but the remaining length includes extra bytes beyond the
 /// client ID. The server should detect unconsumed payload bytes and reject the
-/// packet as malformed [MQTT-3.1.2-16].
+/// If the User Name Flag is set to 0, a User Name MUST NOT be present in the Payload. [MQTT-3.1.2-16].
 async fn username_flag_clear_but_data_present(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -711,13 +711,13 @@ async fn username_flag_clear_but_data_present(config: TestConfig<'_>) -> Result<
 
 const PASSWORD_FLAG_MISMATCH: TestContext = TestContext {
     refs: &["MQTT-3.1.2-18"],
-    description: "CONNECT with Password Flag=0 but extra payload data MUST be rejected",
+    description: "If the Password Flag is set to 0, a Password MUST NOT be present in the Payload",
     compliance: Compliance::Must,
 };
 
 /// Password Flag is 0 but the remaining length includes extra bytes after the
 /// username. The server should detect unconsumed payload bytes and reject the
-/// packet as malformed [MQTT-3.1.2-18].
+/// If the Password Flag is set to 0, a Password MUST NOT be present in the Payload. [MQTT-3.1.2-18].
 async fn password_flag_clear_but_data_present(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -745,11 +745,11 @@ async fn password_flag_clear_but_data_present(config: TestConfig<'_>) -> Result<
 
 const WILL_TOPIC_BAD_UTF8: TestContext = TestContext {
     refs: &["MQTT-3.1.3-11"],
-    description: "Will Topic containing ill-formed UTF-8 MUST be rejected",
+    description: "Will Topic MUST be a UTF-8 Encoded String",
     compliance: Compliance::Must,
 };
 
-/// The Will Topic is a UTF-8 Encoded String [MQTT-3.1.3-11]. A topic
+/// The Will Topic MUST be a UTF-8 Encoded String. [MQTT-3.1.3-11].
 /// containing a UTF-16 surrogate (U+D800) is ill-formed and MUST be rejected.
 async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -776,11 +776,11 @@ async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
 
 const USERNAME_BAD_UTF8: TestContext = TestContext {
     refs: &["MQTT-3.1.3-12"],
-    description: "Username containing ill-formed UTF-8 MUST be rejected",
+    description: "If the User Name Flag is set to 1, the User Name is the next field in the Payload",
     compliance: Compliance::Must,
 };
 
-/// The Username is a UTF-8 Encoded String [MQTT-3.1.3-12]. A username
+/// If the User Name Flag is set to 1, the User Name is the next field in the Payload. The User Name MUST be a UTF-8 Encoded String. [MQTT-3.1.3-12].
 /// containing a UTF-16 surrogate (U+D800) is ill-formed and MUST be rejected.
 async fn username_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -805,11 +805,11 @@ async fn username_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
 
 const USER_PROP_BAD_UTF8: TestContext = TestContext {
     refs: &["MQTT-1.5.7-1"],
-    description: "User Property with ill-formed UTF-8 key MUST be rejected",
+    description: "Both strings MUST comply with the requirements for UTF-8 Encoded Strings",
     compliance: Compliance::Must,
 };
 
-/// A String Pair's key and value must both be valid UTF-8 [MQTT-1.5.7-1].
+/// Both strings MUST comply with the requirements for UTF-8 Encoded Strings. [MQTT-1.5.7-1].
 /// Send a CONNECT with a User Property whose key contains surrogate U+D800.
 async fn user_property_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;

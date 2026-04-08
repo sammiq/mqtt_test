@@ -117,6 +117,35 @@ pub async fn expect_disconnect(client: &mut RawClient) -> Outcome {
     }
 }
 
+/// Expect a protocol-error DISCONNECT (reason >= 0x80), with close treated as inconclusive.
+///
+/// This is stricter than [`expect_disconnect`]: some MUST tests require not only
+/// a disconnect, but an explicit protocol-error signal from the broker.
+///
+/// - DISCONNECT with reason >= 0x80 -> pass.
+/// - DISCONNECT with reason < 0x80 -> fail.
+/// - Connection close without DISCONNECT -> skip (inconclusive for reason-code checks).
+/// - Timeout / Other error / wrong packet -> fail.
+pub async fn expect_protocol_error_disconnect(client: &mut RawClient, context: &str) -> Outcome {
+    match client.recv().await {
+        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Outcome::Pass,
+        Ok(Packet::Disconnect(d)) => Outcome::fail(format!(
+            "{context}: expected DISCONNECT with error reason (>= 0x80), got {:#04x}",
+            d.reason_code
+        )),
+        Err(RecvError::Closed) => Outcome::skip(format!(
+            "{context}: connection closed without DISCONNECT; cannot verify reason code"
+        )),
+        Err(RecvError::Timeout) => {
+            Outcome::fail(format!("{context}: broker did not disconnect (timed out)"))
+        }
+        Err(RecvError::Other(e)) => {
+            Outcome::fail(format!("{context}: unexpected transport error: {e:#}"))
+        }
+        Ok(other) => Outcome::fail_packet("DISCONNECT with error reason code", &other),
+    }
+}
+
 /// Expect the broker to reject a malformed CONNECT packet.
 ///
 /// For malformed CONNECT packets, the server MUST close the Network Connection

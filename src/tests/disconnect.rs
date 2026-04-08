@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, WillParams};
-use crate::helpers::expect_disconnect;
+use crate::helpers::{expect_disconnect, expect_protocol_error_disconnect};
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
@@ -163,29 +163,13 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> Result<Outc
     };
     client.send_disconnect_with_properties(0x00, &props).await?;
 
-    // Server MUST treat this as a protocol error — disconnect with 0x82 or close.
-    match client.recv().await {
-        Err(RecvError::Closed) => {
-            // Connection closed — could be normal close or protocol error close.
-            // Since we just sent a DISCONNECT, the server closing is expected.
-            // We check if the server sends a DISCONNECT with protocol error first.
-            // If it just closes, we can't distinguish — mark as pass since the
-            // server at minimum didn't honor the invalid session expiry.
-            Ok(Outcome::Pass)
-        }
-        Err(RecvError::Timeout) => Ok(Outcome::fail("broker did not disconnect (timed out)")),
-        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
-        Ok(Packet::Disconnect(d)) if d.reason_code >= 0x80 => Ok(Outcome::Pass),
-        Ok(Packet::Disconnect(d)) if d.reason_code == 0x00 => {
-            // Normal disconnect response — server may have just ignored the invalid
-            // property. We can't verify the session wasn't extended, so pass cautiously.
-            Ok(Outcome::Pass)
-        }
-        Ok(other) => Ok(Outcome::fail_packet(
-            "disconnect with protocol error or connection close",
-            &other,
-        )),
-    }
+    // MUST-level check: require explicit error DISCONNECT when provided,
+    // and treat close-only as inconclusive (skip), not pass.
+    Ok(expect_protocol_error_disconnect(
+        &mut client,
+        "session-expiry increase from 0 to non-zero on DISCONNECT",
+    )
+    .await)
 }
 
 const WILL_DELAY: TestContext = TestContext {

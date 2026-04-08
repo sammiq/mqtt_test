@@ -156,8 +156,6 @@ async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<Outcome> {
     tcp.write_all(&text_frame).await?;
 
     // The broker should close the connection. Try reading — we expect
-    // either EOF or a WebSocket close frame.
-    // The broker should close the connection. Try reading — we expect
     // either EOF, a WebSocket close frame, or a connection reset.
     let mut tmp = [0u8; 4096];
     let closed = timeout(config.recv_timeout, async {
@@ -177,7 +175,17 @@ async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<Outcome> {
                         return false;
                     }
                 }
-                Err(_) => return true, // Connection reset counts as closed
+                Err(e) => {
+                    // Treat connection reset/broken pipe as expected closure.
+                    use std::io::ErrorKind;
+                    return matches!(
+                        e.kind(),
+                        ErrorKind::ConnectionReset
+                            | ErrorKind::BrokenPipe
+                            | ErrorKind::ConnectionAborted
+                            | ErrorKind::NotConnected
+                    );
+                }
             }
         }
     })

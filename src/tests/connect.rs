@@ -487,12 +487,13 @@ async fn session_present_zero_on_reject(config: TestConfig<'_>) -> Result<Outcom
                 "Broker accepted MQTT v4 CONNECT; cannot provoke rejection",
             ))
         }
-        Err(_) => {
-            // Broker closed connection — acceptable but can't verify session_present.
-            Ok(Outcome::skip(
-                "Broker closed connection without CONNACK; cannot verify session_present",
-            ))
-        }
+        Err(RecvError::Closed) => Ok(Outcome::skip(
+            "Broker closed connection without CONNACK; cannot verify session_present",
+        )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "Broker did not respond with CONNACK rejection (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }
@@ -565,9 +566,13 @@ async fn will_message_on_unexpected_close(config: TestConfig<'_>) -> Result<Outc
             }
         }
         Ok(other) => Ok(Outcome::fail_packet("PUBLISH (will message)", &other)),
-        Err(_) => Ok(Outcome::fail(
-            "Will message not received after unexpected disconnect",
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "Will message not received after unexpected disconnect (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(Outcome::fail(
+            "Will message not received after unexpected disconnect (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -672,9 +677,13 @@ async fn will_retain_flag(config: TestConfig<'_>) -> Result<Outcome> {
             "Will message received but retain flag was not set",
         )),
         Ok(other) => Ok(Outcome::fail_packet("retained PUBLISH (will)", &other)),
-        Err(_) => Ok(Outcome::fail(
-            "Retained will message not delivered to new subscriber",
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "Retained will message not delivered to new subscriber (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(Outcome::fail(
+            "Retained will message not delivered to new subscriber (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 
@@ -1205,9 +1214,13 @@ async fn connack_server_reference(config: TestConfig<'_>) -> Result<Outcome> {
         Ok(Packet::ConnAck(_)) => Ok(Outcome::skip(
             "Broker accepted MQTT v4 CONNECT — cannot test rejected CONNACK properties",
         )),
-        Err(_) | Ok(Packet::Disconnect(_)) => Ok(Outcome::skip(
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::skip(
             "Broker closed connection without CONNACK — cannot inspect Server Reference",
         )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "Broker did not respond to invalid CONNECT (timed out)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
         Ok(other) => Ok(Outcome::fail_packet("CONNACK", &other)),
     }
 }
@@ -1386,9 +1399,13 @@ async fn will_non_retained(config: TestConfig<'_>) -> Result<Outcome> {
             }
         }
         Ok(other) => Ok(Outcome::fail_packet("PUBLISH (will message)", &other)),
-        Err(_) => Ok(Outcome::fail(
-            "Will message not published after ungraceful disconnect",
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "Will message not published after ungraceful disconnect (timed out)",
         )),
+        Err(RecvError::Closed) => Ok(Outcome::fail(
+            "Will message not published after ungraceful disconnect (connection closed)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }
 }
 

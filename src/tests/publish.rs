@@ -533,7 +533,7 @@ async fn content_type_preserved(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RESPONSE_TOPIC: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-13"],
+    refs: &["MQTT-3.3.2-13", "MQTT-3.3.2-15"],
     description: "Response Topic SHOULD be forwarded unchanged",
     compliance: Compliance::Should,
 };
@@ -555,7 +555,7 @@ async fn response_topic_preserved(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const CORRELATION_DATA: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-14"],
+    refs: &["MQTT-3.3.2-14", "MQTT-3.3.2-16"],
     description: "Correlation Data SHOULD be forwarded unchanged",
     compliance: Compliance::Should,
 };
@@ -767,7 +767,7 @@ async fn retained_deletion(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RETAIN_REPLACE: TestContext = TestContext {
-    refs: &["MQTT-3.3.1-5b"],
+    refs: &["MQTT-3.3.1-5"],
     description: "New retained message MUST replace existing retained message for same topic",
     compliance: Compliance::Must,
 };
@@ -1142,7 +1142,7 @@ async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> Result<Outcom
 // ── Receive Maximum flow control ────────────────────────────────────────────
 
 const RECV_MAX_FLOW: TestContext = TestContext {
-    refs: &["MQTT-3.3.4-7"],
+    refs: &["MQTT-3.3.4-7", "MQTT-3.3.4-9"],
     description: "Server MUST NOT send more than Receive Maximum unacknowledged QoS>0 messages",
     compliance: Compliance::Must,
 };
@@ -1796,7 +1796,7 @@ async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> Result<O
 // ── QoS 1 initial delivery DUP=0 ─────────────────────────────────────────
 
 const QOS1_DUP_ZERO: TestContext = TestContext {
-    refs: &["MQTT-4.3.2-2b"],
+    refs: &["MQTT-4.3.2-2"],
     description: "Server MUST forward QoS 1 PUBLISH with DUP=0 on initial delivery",
     compliance: Compliance::Must,
 };
@@ -1842,7 +1842,7 @@ async fn qos1_initial_delivery_dup_zero(config: TestConfig<'_>) -> Result<Outcom
 // ── Control packets when quota is zero ────────────────────────────────────
 
 const QUOTA_ZERO_CONTROL: TestContext = TestContext {
-    refs: &["MQTT-4.9.0-3"],
+    refs: &["MQTT-4.9.0-3", "MQTT-3.3.4-10"],
     description: "Server MUST process control packets even when send quota is zero",
     compliance: Compliance::Must,
 };
@@ -2068,7 +2068,7 @@ async fn ordered_topic_qos0(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const CONTENT_TYPE_FORWARDED: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-19"],
+    refs: &["MQTT-3.3.2-19", "MQTT-3.3.2-20"],
     description: "Content Type MUST be forwarded unaltered by the server",
     compliance: Compliance::Must,
 };

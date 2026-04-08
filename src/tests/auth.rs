@@ -74,10 +74,12 @@ async fn complete_auth_exchange(
         match client.recv().await {
             Err(RecvError::Closed) => return Err(Outcome::skip(SKIP_MSG)),
             Err(RecvError::Timeout) => {
-                return Err(Outcome::fail("broker did not respond during auth exchange (timed out)"))
+                return Err(Outcome::fail(
+                    "broker did not respond during auth exchange (timed out)",
+                ));
             }
             Err(RecvError::Other(e)) => {
-                return Err(Outcome::fail(format!("auth exchange error: {e:#}")))
+                return Err(Outcome::fail(format!("auth exchange error: {e:#}")));
             }
             Ok(packet) => match packet {
                 Packet::Auth {
@@ -110,7 +112,7 @@ async fn complete_auth_exchange(
 // ── Tests that work without an auth plugin ──────────────────────────────────
 
 const BAD_AUTH_METHOD: TestContext = TestContext {
-    refs: &["MQTT-4.12.0-1"],
+    refs: &["MQTT-4.12.0-1", "MQTT-4.12.0-4"],
     description: "Server MUST close connection if it does not support the Authentication Method",
     compliance: Compliance::Must,
 };

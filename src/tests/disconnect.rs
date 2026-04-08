@@ -189,7 +189,7 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> Result<Outc
 }
 
 const WILL_DELAY: TestContext = TestContext {
-    refs: &["MQTT-3.1.3.2-2"],
+    refs: &["MQTT-3.1.3-9"],
     description: "Will Delay Interval MUST delay will message publication after disconnect",
     compliance: Compliance::Must,
 };
@@ -290,7 +290,7 @@ async fn disconnect_reason_session_takeover(config: TestConfig<'_>) -> Result<Ou
 }
 
 const DISCONNECT_PACKET_TOO_LARGE: TestContext = TestContext {
-    refs: &["MQTT-3.2.2-17a"],
+    refs: &["MQTT-3.1.2-24"],
     description: "Server MUST disconnect if client sends packet exceeding Maximum Packet Size",
     compliance: Compliance::Must,
 };

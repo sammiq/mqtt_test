@@ -35,7 +35,7 @@ async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const MULTI_PING: TestContext = TestContext {
-    refs: &["MQTT-3.12.4-1b"],
+    refs: &["MQTT-3.12.4-1"],
     description: "Server MUST respond to each successive PINGREQ",
     compliance: Compliance::Must,
 };

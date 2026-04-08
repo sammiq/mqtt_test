@@ -75,7 +75,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const BASIC_CONNECT: TestContext = TestContext {
-    refs: &["MQTT-3.2.0-1", "MQTT-3.1.4-4"],
+    refs: &["MQTT-3.2.0-1", "MQTT-3.1.4-4", "MQTT-3.1.4-5"],
     description: "Server MUST send CONNACK in response to CONNECT",
     compliance: Compliance::Must,
 };
@@ -447,7 +447,7 @@ async fn invalid_protocol_version(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const SESSION_PRESENT_ZERO_ON_REJECT: TestContext = TestContext {
-    refs: &["MQTT-3.2.2-3"],
+    refs: &["MQTT-3.2.2-3", "MQTT-3.2.2-6"],
     description: "Session Present MUST be 0 when CONNACK reason code is non-zero",
     compliance: Compliance::Must,
 };
@@ -901,7 +901,7 @@ async fn request_response_information(config: TestConfig<'_>) -> Result<Outcome>
 // ── Enhanced authentication ─────────────────────────────────────────────────
 
 const ENHANCED_AUTH: TestContext = TestContext {
-    refs: &["MQTT-3.15"],
+    refs: &["MQTT-3.15.1-1"],
     description: "Enhanced authentication via AUTH packets is supported",
     compliance: Compliance::May,
 };
@@ -1395,7 +1395,7 @@ async fn will_non_retained(config: TestConfig<'_>) -> Result<Outcome> {
 // ── Topic Alias Maximum=0 ───────────────────────────────────────────────
 
 const TOPIC_ALIAS_MAX_ZERO: TestContext = TestContext {
-    refs: &["MQTT-3.1.2-26"],
+    refs: &["MQTT-3.1.2-26", "MQTT-3.1.2-27"],
     description: "Topic Alias Maximum=0: server MUST NOT send Topic Aliases to client",
     compliance: Compliance::Must,
 };

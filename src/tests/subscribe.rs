@@ -21,11 +21,14 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(UNSUB, unsubscribe(config));
     suite.add(DOLLAR_TOPIC, dollar_topic_no_wildcard_match(config));
     suite.add(SUBACK_REASON_COUNT, suback_reason_code_count(config));
+    suite.add(SUBACK_REASON_ORDER, suback_reason_code_order(config));
     suite.add(UNSUBACK_REASON_COUNT, unsuback_reason_code_count(config));
+    suite.add(UNSUBACK_REASON_ORDER, unsuback_reason_code_order(config));
     suite.add(SHARED_SUB, shared_subscription(config));
     suite.add(SUB_ID, subscription_identifier(config));
     suite.add(NO_LOCAL, no_local_flag(config));
     suite.add(RETAIN_AS_PUB, retain_as_published(config));
+    suite.add(RETAIN_AS_PUB_FALSE, retain_as_published_false(config));
     suite.add(RETAIN_HANDLING_1, retain_handling_1(config));
     suite.add(RETAIN_HANDLING_2, retain_handling_2(config));
     suite.add(UNSUB_STOPS, unsubscribe_stops_delivery(config));
@@ -105,7 +108,7 @@ async fn wildcard_plus(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const WILDCARD_HASH: TestContext = TestContext {
-    refs: &["MQTT-4.7.1-3"],
+    refs: &["MQTT-4.7.1-1"],
     description: "'#' wildcard MUST match all sub-levels",
     compliance: Compliance::Must,
 };
@@ -221,7 +224,7 @@ async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> Result<Outcom
 }
 
 const SUBACK_REASON_COUNT: TestContext = TestContext {
-    refs: &["MQTT-3.8.4-6"],
+    refs: &["MQTT-3.8.4-6", "MQTT-3.9.3-1"],
     description: "SUBACK MUST contain one reason code for each topic filter",
     compliance: Compliance::Must,
 };
@@ -275,8 +278,85 @@ async fn suback_reason_code_count(config: TestConfig<'_>) -> Result<Outcome> {
     }
 }
 
+const SUBACK_REASON_ORDER: TestContext = TestContext {
+    refs: &["MQTT-3.9.3-1"],
+    description: "SUBACK reason codes MUST preserve Topic Filter order",
+    compliance: Compliance::Must,
+};
+
+/// SUBACK reason codes MUST match the order of Topic Filters in SUBSCRIBE [MQTT-3.9.3-1].
+///
+/// This uses three filters where the middle one is intentionally invalid
+/// (`$share/group` missing "/<TopicFilter>"), so expected outcome is:
+/// success, failure, success — in that order.
+async fn suback_reason_code_order(config: TestConfig<'_>) -> Result<Outcome> {
+    let params = ConnectParams::new("mqtt-test-suback-order");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    let sub = SubscribeParams {
+        packet_id: 11,
+        filters: vec![
+            (
+                "mqtt/test/sub/order/a".to_string(),
+                SubscribeOptions {
+                    qos: QoS::AtMostOnce,
+                    ..Default::default()
+                },
+            ),
+            (
+                "$share/group".to_string(), // invalid shared-sub filter format
+                SubscribeOptions {
+                    qos: QoS::AtMostOnce,
+                    ..Default::default()
+                },
+            ),
+            (
+                "mqtt/test/sub/order/c".to_string(),
+                SubscribeOptions {
+                    qos: QoS::AtMostOnce,
+                    ..Default::default()
+                },
+            ),
+        ],
+        properties: Properties::default(),
+    };
+    client.send_subscribe(&sub).await?;
+
+    match client.recv().await {
+        Ok(Packet::SubAck(ack)) if ack.packet_id == 11 => {
+            if ack.reason_codes.len() != 3 {
+                return Ok(Outcome::fail(format!(
+                    "Expected 3 reason codes, got {}",
+                    ack.reason_codes.len()
+                )));
+            }
+            let first_ok = ack.reason_codes[0] < 0x80;
+            let middle_fail = ack.reason_codes[1] >= 0x80;
+            let third_ok = ack.reason_codes[2] < 0x80;
+            if first_ok && middle_fail && third_ok {
+                Ok(Outcome::Pass)
+            } else if ack.reason_codes.iter().all(|&c| c >= 0x80) {
+                Ok(Outcome::skip(
+                    "Broker rejected all filters; cannot verify per-filter reason-code ordering",
+                ))
+            } else {
+                Ok(Outcome::fail(format!(
+                    "Unexpected SUBACK reason-code pattern (expected [success, failure, success]): {:?}",
+                    ack.reason_codes
+                )))
+            }
+        }
+        Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(Outcome::skip(
+            "Broker closed connection for mixed valid/invalid filters; cannot verify SUBACK ordering",
+        )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("No SUBACK received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("SUBACK(11)", &other)),
+    }
+}
+
 const UNSUBACK_REASON_COUNT: TestContext = TestContext {
-    refs: &["MQTT-3.10.4-5"],
+    refs: &["MQTT-3.10.4-5", "MQTT-3.11.3-1"],
     description: "UNSUBACK MUST contain one reason code for each topic filter",
     compliance: Compliance::Must,
 };
@@ -346,6 +426,90 @@ async fn unsuback_reason_code_count(config: TestConfig<'_>) -> Result<Outcome> {
     }
 }
 
+const UNSUBACK_REASON_ORDER: TestContext = TestContext {
+    refs: &["MQTT-3.11.3-1"],
+    description: "UNSUBACK reason codes MUST preserve Topic Filter order",
+    compliance: Compliance::Must,
+};
+
+/// UNSUBACK reason codes MUST match the order of Topic Filters in UNSUBSCRIBE [MQTT-3.11.3-1].
+///
+/// Similar to SUBACK ordering test, this uses an intentionally invalid middle
+/// filter so expected pattern is success, failure, success in order.
+async fn unsuback_reason_code_order(config: TestConfig<'_>) -> Result<Outcome> {
+    let params = ConnectParams::new("mqtt-test-unsuback-order");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    // Create subscriptions for first/third filters.
+    let sub = SubscribeParams {
+        packet_id: 21,
+        filters: vec![
+            (
+                "mqtt/test/unsub/order/a".to_string(),
+                SubscribeOptions {
+                    qos: QoS::AtMostOnce,
+                    ..Default::default()
+                },
+            ),
+            (
+                "mqtt/test/unsub/order/c".to_string(),
+                SubscribeOptions {
+                    qos: QoS::AtMostOnce,
+                    ..Default::default()
+                },
+            ),
+        ],
+        properties: Properties::default(),
+    };
+    client.send_subscribe(&sub).await?;
+    if let Err(r) = expect_suback(&mut client).await {
+        return Ok(r);
+    }
+
+    let unsub = UnsubscribeParams {
+        packet_id: 22,
+        filters: vec![
+            "mqtt/test/unsub/order/a".to_string(),
+            "$share/group".to_string(), // invalid shared-sub filter format
+            "mqtt/test/unsub/order/c".to_string(),
+        ],
+        properties: Properties::default(),
+    };
+    client.send_unsubscribe(&unsub).await?;
+
+    match client.recv().await {
+        Ok(Packet::UnsubAck(ack)) if ack.packet_id == 22 => {
+            if ack.reason_codes.len() != 3 {
+                return Ok(Outcome::fail(format!(
+                    "Expected 3 reason codes, got {}",
+                    ack.reason_codes.len()
+                )));
+            }
+            let first_ok = ack.reason_codes[0] < 0x80;
+            let middle_fail = ack.reason_codes[1] >= 0x80;
+            let third_ok = ack.reason_codes[2] < 0x80;
+            if first_ok && middle_fail && third_ok {
+                Ok(Outcome::Pass)
+            } else if ack.reason_codes.iter().all(|&c| c >= 0x80) {
+                Ok(Outcome::skip(
+                    "Broker rejected all filters; cannot verify per-filter reason-code ordering",
+                ))
+            } else {
+                Ok(Outcome::fail(format!(
+                    "Unexpected UNSUBACK reason-code pattern (expected [success, failure, success]): {:?}",
+                    ack.reason_codes
+                )))
+            }
+        }
+        Ok(Packet::Disconnect(_)) | Err(RecvError::Closed) => Ok(Outcome::skip(
+            "Broker closed connection for mixed valid/invalid filters; cannot verify UNSUBACK ordering",
+        )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail("No UNSUBACK received (timed out)")),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+        Ok(other) => Ok(Outcome::fail_packet("UNSUBACK(22)", &other)),
+    }
+}
+
 // ── MAY ──────────────────────────────────────────────────────────────────────
 
 const SHARED_SUB: TestContext = TestContext {
@@ -374,7 +538,7 @@ async fn shared_subscription(config: TestConfig<'_>) -> Result<Outcome> {
 // ── Subscribe options ───────────────────────────────────────────────────────
 
 const SUB_ID: TestContext = TestContext {
-    refs: &["MQTT-3.8.2-2"],
+    refs: &["MQTT-3.3.4-3"],
     description: "Subscription Identifier MUST be returned in matching PUBLISH",
     compliance: Compliance::Must,
 };
@@ -471,7 +635,7 @@ async fn no_local_flag(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RETAIN_AS_PUB: TestContext = TestContext {
-    refs: &["MQTT-3.8.3-4"],
+    refs: &["MQTT-3.8.3-4", "MQTT-3.3.1-13"],
     description: "retain_as_published=true: retain flag MUST be preserved on delivery",
     compliance: Compliance::Must,
 };
@@ -524,8 +688,62 @@ async fn retain_as_published(config: TestConfig<'_>) -> Result<Outcome> {
     }
 }
 
+const RETAIN_AS_PUB_FALSE: TestContext = TestContext {
+    refs: &["MQTT-3.3.1-12"],
+    description: "retain_as_published=false: server MUST clear retain flag on forwarded message",
+    compliance: Compliance::Must,
+};
+
+/// With retain_as_published=false, forwarded retained messages MUST be sent
+/// with RETAIN=0 [MQTT-3.3.1-12].
+async fn retain_as_published_false(config: TestConfig<'_>) -> Result<Outcome> {
+    let topic = "mqtt/test/sub/rap_false";
+
+    // Publish retained message
+    let pub_conn = ConnectParams::new("mqtt-test-rapf-pub");
+    let (mut pub_client, connack) =
+        client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+
+    if connack.properties.retain_available == Some(false) {
+        return Ok(Outcome::skip("Broker reported Retain Available = false"));
+    }
+
+    pub_client
+        .send_publish(&PublishParams::retained(topic, b"rap-false-test".to_vec()))
+        .await?;
+
+    // New client subscribes with retain_as_published=false explicitly
+    let sub_conn = ConnectParams::new("mqtt-test-rapf-sub");
+    let (mut sub_client, _) = client::connect(config.addr, &sub_conn, config.recv_timeout).await?;
+
+    let sub = SubscribeParams {
+        packet_id: 1,
+        filters: vec![(
+            topic.to_string(),
+            SubscribeOptions {
+                qos: QoS::AtMostOnce,
+                retain_as_published: false,
+                ..Default::default()
+            },
+        )],
+        properties: Properties::default(),
+    };
+    sub_client.send_subscribe(&sub).await?;
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
+
+    match expect_publish(&mut sub_client, topic).await {
+        Ok(p) if !p.retain => Ok(Outcome::Pass),
+        Ok(_) => Ok(Outcome::fail(
+            "Received retained message with retain flag set despite retain_as_published=false",
+        )),
+        Err(r) => Ok(r),
+    }
+}
+
 const RETAIN_HANDLING_1: TestContext = TestContext {
-    refs: &["MQTT-3.8.3-5a"],
+    refs: &["MQTT-3.8.3-5", "MQTT-3.3.1-10"],
     description: "retain_handling=1: retained messages only on new subscription",
     compliance: Compliance::Must,
 };
@@ -605,7 +823,7 @@ async fn retain_handling_1(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RETAIN_HANDLING_2: TestContext = TestContext {
-    refs: &["MQTT-3.8.3-5b"],
+    refs: &["MQTT-3.8.3-5"],
     description: "retain_handling=2: retained messages MUST NOT be sent on subscribe",
     compliance: Compliance::Must,
 };
@@ -781,7 +999,7 @@ async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> Result<Out
 // ── Subscription Identifier with overlapping subscriptions ─────────────────
 
 const SUB_ID_OVERLAP: TestContext = TestContext {
-    refs: &["MQTT-3.3.4-3"],
+    refs: &["MQTT-3.3.4-3", "MQTT-3.3.4-4"],
     description: "Overlapping subscriptions with Subscription IDs MUST include all IDs",
     compliance: Compliance::Must,
 };
@@ -877,7 +1095,7 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> Result<Outcome> 
 // ── Topic edge cases ────────────────────────────────────────────────────────
 
 const MULTI_LEVEL_TOPIC: TestContext = TestContext {
-    refs: &["MQTT-4.7.1-6"],
+    refs: &["MQTT-4.7.1-1"],
     description: "Multi-level topic filter MUST match deep topic hierarchies",
     compliance: Compliance::Must,
 };
@@ -902,7 +1120,7 @@ async fn multi_level_topic(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const WILDCARD_MIDDLE: TestContext = TestContext {
-    refs: &["MQTT-4.7.1-7"],
+    refs: &["MQTT-4.7.1-2"],
     description: "'+' wildcard in middle position MUST match exactly one level",
     compliance: Compliance::Must,
 };
@@ -1385,7 +1603,7 @@ async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> Result<Outcome
 }
 
 const RETAIN_HANDLING_0: TestContext = TestContext {
-    refs: &["MQTT-3.8.4-4"],
+    refs: &["MQTT-3.8.4-4", "MQTT-3.3.1-9"],
     description: "retain_handling=0: existing retained messages MUST be re-sent on subscribe",
     compliance: Compliance::Must,
 };
@@ -1955,7 +2173,10 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> Result<Outco
         Ok(Packet::Publish(_)) => Ok(Outcome::fail(
             "Server redirected NACKed message to another subscriber (should have discarded)",
         )),
-        Ok(other) => Ok(Outcome::fail_packet("no packet (NACKed message check)", &other)),
+        Ok(other) => Ok(Outcome::fail_packet(
+            "no packet (NACKed message check)",
+            &other,
+        )),
     }
 }
 

@@ -229,9 +229,7 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     //    PUBREC — but the subscriber was offline when the message was published.
     let result = match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
-        Ok(other) => {
-            Outcome::fail_packet("PUBLISH on session resume", &other)
-        }
+        Ok(other) => Outcome::fail_packet("PUBLISH on session resume", &other),
         Err(RecvError::Timeout) | Err(RecvError::Closed) => {
             Outcome::fail("No queued QoS 2 message redelivered after session resume")
         }
@@ -342,7 +340,7 @@ async fn session_expiry_zero(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const SESSION_EXPIRY_MAX: TestContext = TestContext {
-    refs: &["MQTT-3.1.2-11a"],
+    refs: &["MQTT-4.1.0-1"],
     description: "Session Expiry Interval of 0xFFFFFFFF means session never expires",
     compliance: Compliance::Must,
 };
@@ -413,7 +411,7 @@ async fn session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const SESSION_EXPIRY_DISCARD: TestContext = TestContext {
-    refs: &["MQTT-4.1.0-1"],
+    refs: &["MQTT-4.1.0-1", "MQTT-4.1.0-2"],
     description: "Server MUST discard session state when Session Expiry Interval has passed",
     compliance: Compliance::Must,
 };
@@ -575,8 +573,7 @@ async fn qos1_dup_on_redelivery(config: TestConfig<'_>) -> Result<Outcome> {
 
     // 2. Publish a QoS 1 message from another client while subscriber is online.
     let pub_conn = ConnectParams::new(pub_id);
-    let (mut pub_client, _) =
-        client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"dup-test".to_vec(), 1))
         .await?;
@@ -593,7 +590,9 @@ async fn qos1_dup_on_redelivery(config: TestConfig<'_>) -> Result<Outcome> {
         Ok(other) => return Ok(Outcome::fail_packet("PUBLISH", &other)),
         Err(RecvError::Timeout) => {
             cleanup_session(config.addr, sub_id, config.recv_timeout).await;
-            return Ok(Outcome::fail("subscriber did not receive PUBLISH (timed out)"));
+            return Ok(Outcome::fail(
+                "subscriber did not receive PUBLISH (timed out)",
+            ));
         }
         Err(RecvError::Closed) => {
             cleanup_session(config.addr, sub_id, config.recv_timeout).await;

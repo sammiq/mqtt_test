@@ -22,6 +22,39 @@ Uses a custom MQTT v5 packet codec — no external MQTT client library — givin
 
 See [REQUIREMENTS_TABLE.md](REQUIREMENTS_TABLE.md) for a full mapping of every normative spec requirement to its test coverage status.
 
+## Requirement reference validation
+
+To keep requirement coverage traceable, this repo validates requirement IDs used in tests against `REQUIREMENTS_TABLE.md`.
+
+Run locally:
+
+```sh
+python3 scripts/validate_requirements_refs.py
+```
+
+The validator enforces:
+
+- every `TestContext.refs` entry in `src/tests/*.rs` is a known canonical requirement ID from `REQUIREMENTS_TABLE.md`
+- every requirement marked `Implemented` in `REQUIREMENTS_TABLE.md` is referenced by at least one test
+
+The CI workflow also runs this validation (`.github/workflows/build.yml`).
+
+### Waivers
+
+If a requirement is marked `Implemented` but currently has no direct `refs` mapping, add it to:
+
+- `scripts/requirements_implemented_waivers.txt`
+
+Guidelines:
+
+- keep waivers temporary and minimal
+- include one requirement ID per line
+- remove a waiver as soon as a matching test ref is added
+
+### Canonical ID note
+
+The MQTT v5 spec uses `MQTT-4.2-1` in prose and `MQTT-4.2.0-1` in the conformance statement table; the validator treats these as equivalent.
+
 ## Requirements
 
 - Rust (edition 2024)

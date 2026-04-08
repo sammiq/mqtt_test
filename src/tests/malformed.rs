@@ -57,7 +57,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 // ── MUST ─────────────────────────────────────────────────────────────────────
 
 const RESERVED_FLAGS: TestContext = TestContext {
-    refs: &["MQTT-3.1.4-1"],
+    refs: &["MQTT-3.1.4-1", "MQTT-3.1.2-3"],
     description: "Server MUST validate CONNECT reserved flag is zero",
     compliance: Compliance::Must,
 };
@@ -86,7 +86,7 @@ async fn reserved_connect_flags(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const BAD_REMAINING_LEN: TestContext = TestContext {
-    refs: &["MQTT-2.1.4-1"],
+    refs: &["MQTT-1.5.5-1"],
     description: "Server MUST close connection on malformed remaining length",
     compliance: Compliance::Must,
 };
@@ -343,7 +343,7 @@ async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> Result<Outcome> 
 }
 
 const INVALID_PLUS_WILDCARD: TestContext = TestContext {
-    refs: &["MQTT-4.7.1-4"],
+    refs: &["MQTT-4.7.1-2"],
     description: "'+' wildcard MUST occupy an entire level of a topic filter",
     compliance: Compliance::Must,
 };

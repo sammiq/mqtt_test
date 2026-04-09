@@ -117,9 +117,11 @@ const BAD_AUTH_METHOD: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Send CONNECT with an unsupported Authentication Method. The server MAY send
-/// CONNACK with 0x8C (Bad authentication method) or 0x87 (Not Authorized) and
-/// MUST close the Network Connection [MQTT-4.12.0-1].
+/// If the Server does not support the Authentication Method supplied by the Client, it MAY send a CONNACK with a
+/// Reason Code of 0x8C (Bad authentication method) or 0x87 (Not Authorized) and MUST close the Network
+/// Connection [MQTT-4.12.0-1].
+///
+/// This test sends a CONNECT with a bogus Authentication Method and verifies the broker rejects it.
 async fn bad_auth_method(config: TestConfig<'_>) -> Result<Outcome> {
     // Probe: verify the broker is accepting MQTT connections before testing.
     // Without this, a connection reset from an unready broker would be
@@ -165,9 +167,10 @@ const NO_AUTH_NO_AUTH_PACKET: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// A plain CONNECT (no Authentication Method) must never trigger an AUTH packet
-/// from the server [MQTT-4.12.0-6]. We connect normally and verify that the
-/// first response is CONNACK, not AUTH.
+/// If the Client does not include an Authentication Method in the CONNECT, the Server MUST NOT send an AUTH
+/// packet, and it MUST NOT send an Authentication Method in the CONNACK packet [MQTT-4.12.0-6].
+///
+/// This test sends a plain CONNECT without Authentication Method and verifies the server responds with CONNACK, not AUTH.
 async fn no_auth_no_auth_packet(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-auth-no-method");
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -205,8 +208,10 @@ const AUTH_CONTINUE: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Server sends AUTH rc=0x18 to request additional authentication data
-/// [MQTT-4.12.0-2]. This is the first step of a challenge-response exchange.
+/// If the Server requires additional information to complete the authentication, it can send an AUTH packet to the
+/// Client. This packet MUST contain a Reason Code of 0x18 (Continue authentication) [MQTT-4.12.0-2].
+///
+/// This test sends a CONNECT with an Authentication Method and verifies the server responds with AUTH rc=0x18.
 async fn auth_continue(config: TestConfig<'_>) -> Result<Outcome> {
     let params = auth_connect_params("mqtt-test-auth-continue");
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -239,8 +244,11 @@ const AUTH_METHOD_CONSISTENT: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Every AUTH packet and the final CONNACK must carry the same Authentication
-/// Method that the client specified in CONNECT [MQTT-4.12.0-5].
+/// If the initial CONNECT packet included an Authentication Method property then all AUTH packets, and any
+/// successful CONNACK packet MUST include an Authentication Method Property with the same value as in the CONNECT
+/// packet [MQTT-4.12.0-5].
+///
+/// This test verifies that every AUTH and the final CONNACK carry the same Authentication Method as the CONNECT.
 async fn auth_method_consistent(config: TestConfig<'_>) -> Result<Outcome> {
     let params = auth_connect_params("mqtt-test-auth-consistent");
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -302,8 +310,12 @@ const FULL_EXCHANGE: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Walk through a full challenge-response exchange until CONNACK [MQTT-4.12.0-2, -3].
-/// The exact data values are auth-method-specific; we send placeholder responses.
+/// If the Server requires additional information to complete the authentication, it can send an AUTH packet to the
+/// Client. This packet MUST contain a Reason Code of 0x18 (Continue authentication) [MQTT-4.12.0-2]. The Client
+/// responds to an AUTH packet from the Server by sending a further AUTH packet. This packet MUST contain a Reason
+/// Code of 0x18 (Continue authentication) [MQTT-4.12.0-3].
+///
+/// This test walks through a full challenge-response exchange until CONNACK success, using placeholder auth data.
 async fn full_exchange(config: TestConfig<'_>) -> Result<Outcome> {
     let params = auth_connect_params("mqtt-test-auth-exchange");
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
@@ -352,9 +364,12 @@ const REAUTH: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// After a successful enhanced-auth connection, initiate re-authentication
-/// by sending AUTH rc=0x19 [MQTT-4.12.1-1]. The server should respond with
-/// AUTH rc=0x00 (success) or rc=0x18 (continue).
+/// If the Client supplied an Authentication Method in the CONNECT packet it can initiate a re-authentication at any
+/// time after receiving a CONNACK. It does this by sending an AUTH packet with a Reason Code of 0x19
+/// (Re-authentication). The Client MUST set the Authentication Method to the same value as the Authentication
+/// Method originally used to authenticate the Network Connection [MQTT-4.12.1-1].
+///
+/// This test completes an initial auth exchange, then initiates re-authentication with AUTH rc=0x19.
 async fn reauth(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = match complete_auth_exchange(config, "mqtt-test-auth-reauth").await {
         Ok(c) => c,
@@ -413,9 +428,10 @@ const REAUTH_FAIL: TestContext = TestContext {
     compliance: Compliance::Should,
 };
 
-/// If re-authentication fails, the server SHOULD send DISCONNECT with a reason
-/// code before closing [MQTT-4.12.1-2]. We trigger this by sending a re-auth
-/// with a different (unsupported) method.
+/// If the re-authentication fails, the Client or Server SHOULD send DISCONNECT with an appropriate Reason Code, and
+/// MUST close the Network Connection [MQTT-4.12.1-2].
+///
+/// This test triggers a re-auth failure by sending AUTH rc=0x19 with a different (unsupported) method.
 async fn reauth_fail(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = match complete_auth_exchange(config, "mqtt-test-auth-reauth-fail").await {
         Ok(c) => c,

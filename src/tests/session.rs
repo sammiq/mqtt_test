@@ -356,13 +356,14 @@ async fn session_expiry_zero(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const SESSION_EXPIRY_MAX: TestContext = TestContext {
-    refs: &["MQTT-4.1.0-2"],
+    refs: &["MQTT-3.1.2-23"],
     description: "Session Expiry Interval of 0xFFFFFFFF means session never expires",
     compliance: Compliance::Must,
 };
 
-/// The Server MUST discard the Session State when the Network Connection is closed and the Session Expiry Interval
-/// has passed [MQTT-4.1.0-2]. If the Session Expiry Interval is 0xFFFFFFFF (UINT_MAX), the Session does not expire.
+/// The Client and Server MUST store the Session State after the Network Connection is closed if the Session Expiry
+/// Interval is greater than 0 [MQTT-3.1.2-23]. If the Session Expiry Interval is 0xFFFFFFFF (UINT_MAX), the Session
+/// does not expire.
 ///
 /// This test connects with Session Expiry Interval=0xFFFFFFFF, disconnects, then reconnects with Clean Start=0 and
 /// verifies the session persists (session_present=1).

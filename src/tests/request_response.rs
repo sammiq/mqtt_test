@@ -28,13 +28,15 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 // ── SHOULD ──────────────────────────────────────────────────────────────────
 
 const RESPONSE_TOPIC: TestContext = TestContext {
-    refs: &["MQTT-4.10.0-1"],
-    description: "Response Topic property SHOULD be forwarded unchanged by the broker",
-    compliance: Compliance::Should,
+    refs: &["MQTT-3.3.2-15"],
+    description: "Response Topic property MUST be forwarded unchanged by the broker",
+    compliance: Compliance::Must,
 };
 
-/// The broker SHOULD forward the Response Topic property from PUBLISH to
-/// subscribers without modification [MQTT-3.3.2-13].
+/// The Server MUST send the Response Topic unaltered to all subscribers receiving the Application
+/// Message [MQTT-3.3.2-15].
+///
+/// This test publishes a message with a Response Topic and verifies the subscriber receives it unchanged.
 async fn response_topic_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
@@ -79,13 +81,15 @@ async fn response_topic_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const CORRELATION_DATA: TestContext = TestContext {
-    refs: &["MQTT-4.10.0-2"],
-    description: "Correlation Data property SHOULD be forwarded unchanged by the broker",
-    compliance: Compliance::Should,
+    refs: &["MQTT-3.3.2-16"],
+    description: "Correlation Data property MUST be forwarded unchanged by the broker",
+    compliance: Compliance::Must,
 };
 
-/// The broker SHOULD forward the Correlation Data property from PUBLISH to
-/// subscribers without modification [MQTT-3.3.2-14].
+/// The Server MUST send the Correlation Data unaltered to all subscribers receiving the Application
+/// Message [MQTT-3.3.2-16].
+///
+/// This test publishes a message with Correlation Data and verifies the subscriber receives it unchanged.
 async fn correlation_data_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
@@ -135,17 +139,18 @@ async fn correlation_data_forwarded(config: TestConfig<'_>) -> Result<Outcome> {
 // ── MUST ────────────────────────────────────────────────────────────────────
 
 const FULL_RR: TestContext = TestContext {
-    refs: &["MQTT-4.10.0-3"],
+    refs: &["MQTT-3.3.2-15", "MQTT-3.3.2-16"],
     description: "Full request/response: requester receives response on Response Topic",
     compliance: Compliance::Must,
 };
 
-/// Complete request/response pattern:
-/// 1. Client A subscribes to response topic
-/// 2. Client B subscribes to request topic
-/// 3. Client A publishes request with Response Topic
-/// 4. Client B receives request, publishes response to Response Topic
-/// 5. Client A receives response
+/// The Server MUST send the Response Topic unaltered to all subscribers receiving the Application
+/// Message [MQTT-3.3.2-15]. The Server MUST send the Correlation Data unaltered to all subscribers receiving the
+/// Application Message [MQTT-3.3.2-16].
+///
+/// This test exercises the full request/response pattern: Client A publishes a request with Response Topic and
+/// Correlation Data, Client B receives it and responds on the Response Topic, and Client A receives the response
+/// with Correlation Data intact.
 async fn full_request_response(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client_a = connect_and_subscribe(
         config.addr,
@@ -225,13 +230,17 @@ async fn full_request_response(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RESPONSE_TOPIC_WITH_CORR: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-9"],
+    refs: &["MQTT-3.3.2-15", "MQTT-3.3.2-16"],
     description: "Response Topic and Correlation Data MUST both be forwarded together",
     compliance: Compliance::Must,
 };
 
-/// Both Response Topic and Correlation Data MUST be forwarded together
-/// when present in a PUBLISH [MQTT-3.3.2-13/14].
+/// The Server MUST send the Response Topic unaltered to all subscribers receiving the Application
+/// Message [MQTT-3.3.2-15]. The Server MUST send the Correlation Data unaltered to all subscribers receiving the
+/// Application Message [MQTT-3.3.2-16].
+///
+/// This test publishes a message with both Response Topic and Correlation Data and verifies the subscriber receives
+/// both properties unchanged.
 async fn response_topic_with_correlation(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,
@@ -279,13 +288,16 @@ async fn response_topic_with_correlation(config: TestConfig<'_>) -> Result<Outco
 }
 
 const MULTI_CORRELATION: TestContext = TestContext {
-    refs: &["MQTT-4.10.0-4"],
+    refs: &["MQTT-3.3.2-16"],
     description: "Different Correlation Data values MUST be independently preserved",
     compliance: Compliance::Must,
 };
 
-/// Multiple messages with different Correlation Data values must each have
-/// their data preserved independently.
+/// The Server MUST send the Correlation Data unaltered to all subscribers receiving the Application
+/// Message [MQTT-3.3.2-16].
+///
+/// This test sends multiple messages with different Correlation Data values and verifies each is preserved
+/// independently by the broker.
 async fn multiple_correlation_data(config: TestConfig<'_>) -> Result<Outcome> {
     let mut sub = connect_and_subscribe(
         config.addr,

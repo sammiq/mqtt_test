@@ -26,7 +26,10 @@ const TCP_TRANSPORT: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Verify the broker accepts an MQTT connection over plain TCP.
+/// A Client or Server MUST support the use of one or more underlying transport protocols that provide an ordered,
+/// lossless, stream of bytes from the Client to Server and Server to Client [MQTT-4.2-1].
+///
+/// This test verifies the broker accepts an MQTT CONNECT and returns CONNACK over plain TCP.
 async fn tcp_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-tcp-transport");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -40,7 +43,10 @@ const TLS_TRANSPORT: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Verify the broker accepts an MQTT connection over TLS.
+/// A Client or Server MUST support the use of one or more underlying transport protocols that provide an ordered,
+/// lossless, stream of bytes from the Client to Server and Server to Client [MQTT-4.2-1].
+///
+/// This test verifies the broker accepts an MQTT CONNECT and returns CONNACK over TLS.
 async fn tls_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((tls_addr, tls)) = config.tls_info else {
         return Ok(Outcome::skip("TLS not configured"));

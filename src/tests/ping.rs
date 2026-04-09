@@ -21,7 +21,9 @@ const PINGRESP: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Server MUST send PINGRESP in response to PINGREQ [MQTT-3.12.4-1].
+/// The Server MUST send a PINGRESP packet in response to a PINGREQ packet [MQTT-3.12.4-1].
+///
+/// This test sends a single PINGREQ and verifies the server responds with PINGRESP.
 async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-ping");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -35,12 +37,14 @@ async fn pingreq_gets_pingresp(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const MULTI_PING: TestContext = TestContext {
-    refs: &["MQTT-3.12.4-1b"],
+    refs: &["MQTT-3.12.4-1"],
     description: "Server MUST respond to each successive PINGREQ",
     compliance: Compliance::Must,
 };
 
-/// Server MUST respond to each PINGREQ [MQTT-3.12.4-1] (multiple pings).
+/// The Server MUST send a PINGRESP packet in response to a PINGREQ packet [MQTT-3.12.4-1].
+///
+/// This test sends three successive PINGREQs and verifies the server responds to each one with PINGRESP.
 async fn multiple_pings(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-multi-ping");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;

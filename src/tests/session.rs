@@ -229,9 +229,7 @@ async fn qos2_redelivery_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     //    PUBREC — but the subscriber was offline when the message was published.
     let result = match sub_client2.recv().await {
         Ok(Packet::Publish(p)) if p.topic == topic => Outcome::Pass,
-        Ok(other) => {
-            Outcome::fail_packet("PUBLISH on session resume", &other)
-        }
+        Ok(other) => Outcome::fail_packet("PUBLISH on session resume", &other),
         Err(RecvError::Timeout) | Err(RecvError::Closed) => {
             Outcome::fail("No queued QoS 2 message redelivered after session resume")
         }
@@ -575,8 +573,7 @@ async fn qos1_dup_on_redelivery(config: TestConfig<'_>) -> Result<Outcome> {
 
     // 2. Publish a QoS 1 message from another client while subscriber is online.
     let pub_conn = ConnectParams::new(pub_id);
-    let (mut pub_client, _) =
-        client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"dup-test".to_vec(), 1))
         .await?;
@@ -593,7 +590,9 @@ async fn qos1_dup_on_redelivery(config: TestConfig<'_>) -> Result<Outcome> {
         Ok(other) => return Ok(Outcome::fail_packet("PUBLISH", &other)),
         Err(RecvError::Timeout) => {
             cleanup_session(config.addr, sub_id, config.recv_timeout).await;
-            return Ok(Outcome::fail("subscriber did not receive PUBLISH (timed out)"));
+            return Ok(Outcome::fail(
+                "subscriber did not receive PUBLISH (timed out)",
+            ));
         }
         Err(RecvError::Closed) => {
             cleanup_session(config.addr, sub_id, config.recv_timeout).await;

@@ -1955,7 +1955,10 @@ async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> Result<Outco
         Ok(Packet::Publish(_)) => Ok(Outcome::fail(
             "Server redirected NACKed message to another subscriber (should have discarded)",
         )),
-        Ok(other) => Ok(Outcome::fail_packet("no packet (NACKed message check)", &other)),
+        Ok(other) => Ok(Outcome::fail_packet(
+            "no packet (NACKed message check)",
+            &other,
+        )),
     }
 }
 

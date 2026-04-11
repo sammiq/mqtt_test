@@ -79,7 +79,9 @@ const QOS0: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// QoS 0 delivery protocol: PUBLISH with QoS=0, DUP=0 [MQTT-4.3.1-1].
+/// [The sender] MUST send a PUBLISH packet with QoS 0 and DUP flag set to 0 [MQTT-4.3.1-1].
+///
+/// This test publishes a QoS 0 message and verifies the broker accepts it and forwards it to a matching subscriber.
 async fn qos0_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = client::connect_and_subscribe(
         config.addr,
@@ -98,12 +100,16 @@ async fn qos0_accepted(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const QOS1: TestContext = TestContext {
-    refs: &["MQTT-4.3.2-1"],
+    refs: &["MQTT-4.3.2-4"],
     description: "QoS 1 PUBLISH MUST be acknowledged with PUBACK",
     compliance: Compliance::Must,
 };
 
-/// QoS 1 PUBLISH MUST receive a PUBACK [MQTT-4.3.2-1].
+/// [The receiver of a QoS 1 PUBLISH] MUST respond with a PUBACK packet containing the Packet Identifier from the
+/// incoming PUBLISH packet, having accepted ownership of the Application Message [MQTT-4.3.2-4].
+///
+/// This test sends a QoS 1 PUBLISH and verifies the broker responds with a PUBACK containing the same Packet
+/// Identifier.
 async fn qos1_gets_puback(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos1-pub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -132,8 +138,10 @@ const QOS1_DELIVERY: TestContext = TestContext {
     compliance: Compliance::Should,
 };
 
-/// QoS 1 message published to a QoS 1 subscription SHOULD be delivered at
-/// QoS 1 with the same packet payload [MQTT-4.3.2-2].
+/// [The sender] MUST send a PUBLISH packet containing this Packet Identifier with QoS 1 and DUP flag set to 0
+/// [MQTT-4.3.2-2].
+///
+/// This test publishes a QoS 1 message to a QoS 1 subscription and verifies the subscriber receives it at QoS 1.
 async fn qos1_delivery(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/qos1_delivery";
 
@@ -175,12 +183,17 @@ async fn qos1_delivery(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const QOS2: TestContext = TestContext {
-    refs: &["MQTT-4.3.3-1"],
+    refs: &["MQTT-4.3.3-8", "MQTT-4.3.3-11"],
     description: "QoS 2 PUBLISH MUST complete PUBREC / PUBREL / PUBCOMP flow",
     compliance: Compliance::Must,
 };
 
-/// QoS 2 PUBLISH MUST go through full PUBREC → PUBREL → PUBCOMP flow [MQTT-4.3.3-1].
+/// [The receiver] MUST respond with a PUBREC packet containing the Packet Identifier from the incoming PUBLISH
+/// packet, having accepted ownership of the Application Message [MQTT-4.3.3-8]. [The receiver] MUST respond to a
+/// PUBREL packet by sending a PUBCOMP packet containing the same Packet Identifier as the PUBREL [MQTT-4.3.3-11].
+///
+/// This test publishes a QoS 2 message and verifies the broker completes the full PUBREC → PUBREL → PUBCOMP
+/// acknowledgement flow.
 async fn qos2_full_flow(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos2-pub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -218,7 +231,10 @@ const INVALID_QOS3: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// QoS value of 3 (0b11) is malformed — server MUST close the connection [MQTT-3.3.1-4].
+/// A PUBLISH Packet MUST NOT have both QoS bits set to 1 [MQTT-3.3.1-4].
+///
+/// This test sends a PUBLISH packet with QoS bits set to 0b11 and verifies the broker treats it as a malformed
+/// packet and closes the connection.
 async fn invalid_qos3(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos3");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -245,7 +261,10 @@ const DUP_QOS0: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// DUP=1 with QoS=0 is a protocol error — server MUST close the connection [MQTT-3.3.1-2].
+/// The DUP flag MUST be set to 0 for all QoS 0 messages [MQTT-3.3.1-2].
+///
+/// This test sends a PUBLISH packet with DUP=1 and QoS=0 and verifies the broker treats it as a protocol error
+/// and closes the connection.
 async fn dup_on_qos0(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-dup-qos0");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -277,14 +296,15 @@ async fn dup_on_qos0(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const QOS_DOWNGRADE: TestContext = TestContext {
-    refs: &["MQTT-3.8.4-7"],
+    refs: &["MQTT-3.8.4-8"],
     description: "Delivered QoS MUST NOT exceed the subscription's maximum QoS",
     compliance: Compliance::Must,
 };
 
-/// Server MUST deliver at the lower of the publisher's QoS and the subscriber's
-/// maximum QoS [MQTT-3.8.4-7]. Publishing QoS 2 to a QoS 0 subscription must
-/// deliver at QoS 0.
+/// The QoS of Payload Messages sent in response to a Subscription MUST be the minimum of the QoS of the originally
+/// published message and the Maximum QoS granted by the Server [MQTT-3.8.4-8].
+///
+/// This test publishes a QoS 2 message to a QoS 0 subscription and verifies the subscriber receives it at QoS 0.
 async fn qos_downgrade_on_delivery(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/qos_downgrade";
 
@@ -335,7 +355,11 @@ const RETAIN: TestContext = TestContext {
     compliance: Compliance::May,
 };
 
-/// Retain flag is accepted and message is stored [MQTT-3.3.1-5].
+/// If the RETAIN flag is set to 1 in a PUBLISH packet sent by a Client to a Server, the Server MUST replace any
+/// existing retained message for this topic and store the Application Message [MQTT-3.3.1-5].
+///
+/// This test publishes a retained message, then subscribes from a new client and verifies the retained message is
+/// delivered.
 async fn retain_flag_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-retain-pub");
     let (mut pub_client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -366,12 +390,16 @@ async fn retain_flag_accepted(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const TOPIC_ALIAS: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-11"],
+    refs: &["MQTT-3.3.2-12"],
     description: "Topic Alias in PUBLISH is accepted",
     compliance: Compliance::May,
 };
 
-/// Topic Alias is accepted in PUBLISH [MQTT-3.3.2-11].
+/// A Server MUST accept all Topic Alias values greater than 0 and less than or equal to the Topic Alias Maximum
+/// value that it returned in the CONNACK packet [MQTT-3.3.2-12].
+///
+/// This test publishes a QoS 1 message with a Topic Alias and verifies the broker accepts it and responds with
+/// PUBACK.
 async fn topic_alias_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-topic-alias");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -467,12 +495,16 @@ async fn property_forwarding_test(
 }
 
 const PFI: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-7"],
-    description: "Payload Format Indicator SHOULD be forwarded unchanged",
+    refs: &["MQTT-3.3.2-4"],
+    description: "Payload Format Indicator MUST be forwarded unchanged",
     compliance: Compliance::Should,
 };
 
-/// Payload Format Indicator SHOULD be forwarded unchanged [MQTT-3.3.2-7].
+/// A Server MUST send the Payload Format Indicator unaltered to all subscribers receiving the Application Message
+/// [MQTT-3.3.2-4].
+///
+/// This test publishes a message with Payload Format Indicator = 1 and verifies the subscriber receives it
+/// unchanged.
 async fn payload_format_indicator_preserved(config: TestConfig<'_>) -> Result<Outcome> {
     let props = Properties {
         payload_format_indicator: Some(1),
@@ -489,12 +521,16 @@ async fn payload_format_indicator_preserved(config: TestConfig<'_>) -> Result<Ou
 }
 
 const MEI: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-8"],
+    refs: &["MQTT-3.3.2-6"],
     description: "Message Expiry Interval MUST be present in forwarded PUBLISH",
     compliance: Compliance::Must,
 };
 
-/// Message Expiry Interval MUST be present in forwarded PUBLISH [MQTT-3.3.2-8].
+/// The PUBLISH packet sent to a Client by the Server MUST contain a Message Expiry Interval set to the received
+/// value minus the time that the Application Message has been waiting in the Server [MQTT-3.3.2-6].
+///
+/// This test publishes a message with a Message Expiry Interval and verifies the subscriber receives the property
+/// in the forwarded PUBLISH.
 async fn message_expiry_interval_present(config: TestConfig<'_>) -> Result<Outcome> {
     let props = Properties {
         message_expiry_interval: Some(3600),
@@ -511,12 +547,16 @@ async fn message_expiry_interval_present(config: TestConfig<'_>) -> Result<Outco
 }
 
 const CONTENT_TYPE: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-12"],
-    description: "Content Type SHOULD be forwarded unchanged",
+    refs: &["MQTT-3.3.2-20"],
+    description: "Content Type MUST be forwarded unchanged",
     compliance: Compliance::Should,
 };
 
-/// Content Type SHOULD be forwarded unchanged [MQTT-3.3.2-12].
+/// A Server MUST send the Content Type unaltered to all subscribers receiving the Application Message
+/// [MQTT-3.3.2-20].
+///
+/// This test publishes a message with Content Type = "application/json" and verifies the subscriber receives it
+/// unchanged.
 async fn content_type_preserved(config: TestConfig<'_>) -> Result<Outcome> {
     let props = Properties {
         content_type: Some("application/json".to_string()),
@@ -533,12 +573,15 @@ async fn content_type_preserved(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RESPONSE_TOPIC: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-13"],
-    description: "Response Topic SHOULD be forwarded unchanged",
+    refs: &["MQTT-3.3.2-15"],
+    description: "Response Topic MUST be forwarded unchanged",
     compliance: Compliance::Should,
 };
 
-/// Response Topic SHOULD be forwarded unchanged [MQTT-3.3.2-13].
+/// The Server MUST send the Response Topic unaltered to all subscribers receiving the Application Message
+/// [MQTT-3.3.2-15].
+///
+/// This test publishes a message with a Response Topic and verifies the subscriber receives it unchanged.
 async fn response_topic_preserved(config: TestConfig<'_>) -> Result<Outcome> {
     let props = Properties {
         response_topic: Some("mqtt/test/pub/reply".to_string()),
@@ -555,12 +598,15 @@ async fn response_topic_preserved(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const CORRELATION_DATA: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-14"],
-    description: "Correlation Data SHOULD be forwarded unchanged",
+    refs: &["MQTT-3.3.2-16"],
+    description: "Correlation Data MUST be forwarded unchanged",
     compliance: Compliance::Should,
 };
 
-/// Correlation Data SHOULD be forwarded unchanged [MQTT-3.3.2-14].
+/// The Server MUST send the Correlation Data unaltered to all subscribers receiving the Application Message
+/// [MQTT-3.3.2-16].
+///
+/// This test publishes a message with Correlation Data and verifies the subscriber receives it unchanged.
 async fn correlation_data_preserved(config: TestConfig<'_>) -> Result<Outcome> {
     let props = Properties {
         correlation_data: Some(b"corr-123".to_vec()),
@@ -577,12 +623,15 @@ async fn correlation_data_preserved(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const USER_PROPS: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-18"],
-    description: "User Properties SHOULD be forwarded unchanged",
+    refs: &["MQTT-3.3.2-17"],
+    description: "User Properties MUST be forwarded unchanged",
     compliance: Compliance::Should,
 };
 
-/// User Properties SHOULD be forwarded unchanged [MQTT-3.3.2-18].
+/// The Server MUST send all User Properties unaltered in a PUBLISH packet when forwarding the Application Message
+/// to a Client [MQTT-3.3.2-17].
+///
+/// This test publishes a message with a User Property and verifies the subscriber receives it unchanged.
 async fn user_properties_preserved(config: TestConfig<'_>) -> Result<Outcome> {
     let props = Properties {
         user_properties: vec![("key".to_string(), "value".to_string())],
@@ -602,14 +651,16 @@ async fn user_properties_preserved(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const MSG_ORDERING: TestContext = TestContext {
-    refs: &["MQTT-4.6.0-1"],
+    refs: &["MQTT-4.6.0-5"],
     description: "Message ordering MUST be maintained for same-topic QoS 1 messages",
     compliance: Compliance::Must,
 };
 
-/// When a server delivers messages to a subscriber, it MUST maintain the order
-/// of messages for each topic [MQTT-4.6.0-6]. We publish 5 QoS 1 messages in
-/// sequence and verify they arrive in order.
+/// When a Server processes a message that has been published to an Ordered Topic, it MUST send PUBLISH packets to
+/// consumers (for the same Topic and QoS) in the order that they were received from any given Client
+/// [MQTT-4.6.0-5].
+///
+/// This test publishes 5 QoS 1 messages in sequence and verifies they arrive at the subscriber in order.
 async fn message_ordering(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/ordering";
 
@@ -669,13 +720,17 @@ async fn message_ordering(config: TestConfig<'_>) -> Result<Outcome> {
 // ── SHOULD ──────────────────────────────────────────────────────────────────
 
 const RETAIN_DELIVERY_FLAG: TestContext = TestContext {
-    refs: &["MQTT-3.3.1-6"],
+    refs: &["MQTT-3.3.1-9"],
     description: "Server SHOULD deliver retained messages with Retain=1 to new subscribers",
     compliance: Compliance::Should,
 };
 
-/// When delivering a retained message to a new subscription, the server
-/// SHOULD set the RETAIN flag to 1 [MQTT-3.3.1-6].
+/// If Retain Handling is set to 0 the Server MUST send the retained messages matching the Topic Filter of the
+/// subscription to the Client [MQTT-3.3.1-9]. Non-normative prose in §3.3.1.3 states that "these messages are
+/// sent with the RETAIN flag set to 1"; the flag-setting itself is not a tagged requirement.
+///
+/// This test publishes a retained message, subscribes from a new client with default (Retain Handling=0) options,
+/// and verifies the retained message is delivered with the RETAIN flag set to 1.
 async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/retain_flag";
 
@@ -716,13 +771,18 @@ async fn retained_delivered_with_retain_flag(config: TestConfig<'_>) -> Result<O
 // ── Retained message lifecycle ──────────────────────────────────────────────
 
 const RETAIN_DELETE: TestContext = TestContext {
-    refs: &["MQTT-3.3.1-7"],
+    refs: &["MQTT-3.3.1-6", "MQTT-3.3.1-7"],
     description: "Retained message MUST be deleted when empty payload with RETAIN is published",
     compliance: Compliance::Must,
 };
 
-/// Publishing an empty payload with RETAIN=1 MUST remove any existing retained
-/// message for that topic [MQTT-3.3.1-7].
+/// If the Payload contains zero bytes it is processed normally by the Server but any retained message with the
+/// same topic name MUST be removed and any future subscribers for the topic will not receive a retained message
+/// [MQTT-3.3.1-6]. A retained message with a Payload containing zero bytes MUST NOT be stored as a retained
+/// message on the Server [MQTT-3.3.1-7].
+///
+/// This test publishes a retained message, then publishes an empty payload with RETAIN=1, and verifies a new
+/// subscriber does not receive any retained message.
 async fn retained_deletion(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/retain_delete";
 
@@ -767,13 +827,16 @@ async fn retained_deletion(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RETAIN_REPLACE: TestContext = TestContext {
-    refs: &["MQTT-3.3.1-5b"],
+    refs: &["MQTT-3.3.1-5"],
     description: "New retained message MUST replace existing retained message for same topic",
     compliance: Compliance::Must,
 };
 
-/// A new retained message MUST replace any existing retained message for
-/// the same topic [MQTT-3.3.1-5].
+/// If the RETAIN flag is set to 1 in a PUBLISH packet sent by a Client to a Server, the Server MUST replace any
+/// existing retained message for this topic and store the Application Message [MQTT-3.3.1-5].
+///
+/// This test publishes two retained messages to the same topic in succession and verifies a new subscriber only
+/// receives the most recent one.
 async fn retained_replacement(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/retain_replace";
 
@@ -827,8 +890,12 @@ const PUBACK_NO_SUB: TestContext = TestContext {
     compliance: Compliance::May,
 };
 
-/// When a QoS 1 message has no matching subscribers, the server MAY return
-/// PUBACK with reason code 0x10 (No Matching Subscribers) [MQTT-3.4.2-1].
+/// The Client or Server sending the PUBACK packet MUST use one of the PUBACK Reason Codes [MQTT-3.4.2-1]. The
+/// PUBACK Reason Code 0x10 (No Matching Subscribers) is defined for use when the message is accepted but there
+/// are no subscribers (§3.4.2.1).
+///
+/// This test publishes a QoS 1 message to a topic with no subscribers and verifies the broker returns PUBACK with
+/// reason code 0x10 (support is optional).
 async fn puback_no_matching_subscribers(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-puback-nosub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -865,8 +932,11 @@ const MEI_COUNTDOWN: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// When forwarding a message with Message Expiry Interval, the server MUST
-/// set it to the received value minus the time the message was waiting [MQTT-3.3.2-6].
+/// The PUBLISH packet sent to a Client by the Server MUST contain a Message Expiry Interval set to the received
+/// value minus the time that the Application Message has been waiting in the Server [MQTT-3.3.2-6].
+///
+/// This test publishes a message with MEI=60 to an offline subscriber's persistent session, waits 2 seconds,
+/// reconnects, and verifies the forwarded PUBLISH contains an MEI strictly less than 60.
 async fn message_expiry_countdown(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/mei_countdown";
 
@@ -942,8 +1012,10 @@ const MAX_PKT_SIZE: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// The server MUST NOT send packets exceeding the client's declared
-/// Maximum Packet Size [MQTT-3.1.2-24].
+/// The Server MUST NOT send packets exceeding Maximum Packet Size to the Client [MQTT-3.1.2-24].
+///
+/// This test connects a subscriber with Maximum Packet Size = 64, publishes a 128-byte message from a separate
+/// client, and verifies the oversized packet is not delivered to the subscriber.
 async fn max_packet_size_enforcement(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/max_pkt";
 
@@ -989,13 +1061,18 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> Result<Outcome> 
 // ── Topic Alias lifecycle ───────────────────────────────────────────────────
 
 const TOPIC_ALIAS_REUSE: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-10"],
+    refs: &["MQTT-3.3.2-12"],
     description: "Topic Alias MUST allow subsequent PUBLISH with empty topic using the alias",
     compliance: Compliance::Must,
 };
 
-/// After establishing a Topic Alias mapping, the client can send subsequent
-/// PUBLISH packets with an empty topic name and only the Topic Alias [MQTT-3.3.2-10].
+/// A Server MUST accept all Topic Alias values greater than 0 and less than or equal to the Topic Alias Maximum
+/// value that it returned in the CONNACK packet [MQTT-3.3.2-12]. Non-normative prose in §3.3.2.3.4 describes the
+/// mechanism: after a PUBLISH establishes a Topic Name to Topic Alias mapping, subsequent PUBLISH packets on the
+/// same Network Connection can contain just the Topic Alias with an empty topic name.
+///
+/// This test publishes a first message with a full topic name and Topic Alias=1, then publishes a second message
+/// with an empty topic and the same alias, and verifies the subscriber receives both on the original topic.
 async fn topic_alias_reuse(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/alias_reuse";
 
@@ -1080,8 +1157,11 @@ const TOPIC_ALIAS_RESET: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Topic Alias mappings exist only within a Network Connection and MUST be
-/// reset on reconnect [MQTT-3.3.2-7].
+/// A receiver MUST NOT carry forward any Topic Alias mappings from one Network Connection to another
+/// [MQTT-3.3.2-7].
+///
+/// This test establishes a Topic Alias mapping on one connection, disconnects, reconnects, and verifies the
+/// broker rejects a PUBLISH that attempts to reuse the alias with an empty topic name.
 async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-alias-reset");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1142,13 +1222,16 @@ async fn topic_alias_reset_on_reconnect(config: TestConfig<'_>) -> Result<Outcom
 // ── Receive Maximum flow control ────────────────────────────────────────────
 
 const RECV_MAX_FLOW: TestContext = TestContext {
-    refs: &["MQTT-3.3.4-7"],
+    refs: &["MQTT-3.3.4-9"],
     description: "Server MUST NOT send more than Receive Maximum unacknowledged QoS>0 messages",
     compliance: Compliance::Must,
 };
 
-/// The server MUST NOT send more than Receive Maximum QoS 1 and QoS 2
-/// PUBLISH packets for which it has not received PUBACK/PUBCOMP [MQTT-3.3.4-7].
+/// The Server MUST NOT send more than Receive Maximum QoS 1 and QoS 2 PUBLISH packets for which it has not
+/// received PUBACK, PUBCOMP, or PUBREC with a Reason Code of 128 or greater from the Client [MQTT-3.3.4-9].
+///
+/// This test connects a subscriber with Receive Maximum=2, publishes 5 QoS 1 messages, and verifies the server
+/// sends at most 2 unacknowledged messages before waiting for PUBACKs.
 async fn receive_maximum_flow_control(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/recv_max";
 
@@ -1232,13 +1315,17 @@ async fn receive_maximum_flow_control(config: TestConfig<'_>) -> Result<Outcome>
 // ── QoS 2 duplicate handling ────────────────────────────────────────────────
 
 const QOS2_DUP: TestContext = TestContext {
-    refs: &["MQTT-4.3.3-2"],
+    refs: &["MQTT-4.3.3-10"],
     description: "Server MUST respond with PUBREC to duplicate QoS 2 PUBLISH (DUP=1)",
     compliance: Compliance::Must,
 };
 
-/// When the server receives a duplicate QoS 2 PUBLISH (same packet ID, DUP=1),
-/// it MUST respond with PUBREC [MQTT-4.3.3-2].
+/// Until it has received the corresponding PUBREL packet, the receiver MUST acknowledge any subsequent PUBLISH
+/// packet with the same Packet Identifier by sending a PUBREC. It MUST NOT cause duplicate messages to be
+/// delivered to any onward recipients in this case [MQTT-4.3.3-10].
+///
+/// This test sends a QoS 2 PUBLISH, receives the PUBREC, resends the same PUBLISH with DUP=1, and verifies the
+/// server responds with another PUBREC for the same Packet Identifier.
 async fn qos2_duplicate_publish(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos2-dup");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1299,8 +1386,12 @@ const PID_REUSE_QOS1: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// After a QoS 1 PUBLISH is acknowledged with PUBACK, the same packet ID
-/// MUST be available for reuse [MQTT-2.2.1-3].
+/// Each time a Client sends a new SUBSCRIBE, UNSUBSCRIBE, or PUBLISH (where QoS > 0) MQTT Control Packet it MUST
+/// assign it a non-zero Packet Identifier that is currently unused [MQTT-2.2.1-3]. Non-normative prose in §4.3.2
+/// states: "The Packet Identifier becomes available for reuse once the sender has received the PUBACK packet."
+///
+/// This test sends two QoS 1 PUBLISH packets with the same Packet Identifier, with a PUBACK received between
+/// them, and verifies both are acknowledged and delivered.
 async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/pid_reuse_q1";
     let (mut sub, mut pub_client) = client::sub_pub_pair(
@@ -1360,8 +1451,13 @@ const PID_REUSE_QOS2: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// After a QoS 2 flow completes (PUBCOMP received), the same packet ID
-/// MUST be available for reuse [MQTT-2.2.1-4].
+/// Each time a Server sends a new PUBLISH (with QoS > 0) MQTT Control Packet it MUST assign it a non-zero Packet
+/// Identifier that is currently unused [MQTT-2.2.1-4]. Non-normative prose in §4.3.3 states: "The Packet
+/// Identifier becomes available for reuse once the sender has received the PUBCOMP packet or a PUBREC with a
+/// Reason Code of 0x80 or greater."
+///
+/// This test completes a QoS 2 flow then starts a second QoS 2 flow with the same Packet Identifier and verifies
+/// both flows complete successfully.
 async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-pidq2-pub");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1419,13 +1515,16 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> Result<Outcome
 }
 
 const QOS2_DUP_PUBREL: TestContext = TestContext {
-    refs: &["MQTT-4.3.3-3", "MQTT-4.3.3-10"],
+    refs: &["MQTT-4.3.3-11"],
     description: "Server MUST respond with PUBCOMP to duplicate PUBREL",
     compliance: Compliance::Must,
 };
 
-/// When the server receives a duplicate PUBREL for the same packet ID,
-/// it MUST respond with PUBCOMP [MQTT-4.3.3-3].
+/// [The receiver] MUST respond to a PUBREL packet by sending a PUBCOMP packet containing the same Packet
+/// Identifier as the PUBREL [MQTT-4.3.3-11].
+///
+/// This test completes a QoS 2 flow, sends a duplicate PUBREL, and verifies the server responds with PUBCOMP
+/// again (or closes the connection as a protocol error — both are acceptable).
 async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-qos2-duppubrel");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1475,14 +1574,18 @@ async fn qos2_duplicate_pubrel(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const PAYLOAD_FORMAT_UTF8: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-3"],
+    refs: &["MQTT-3.3.2-4"],
     description: "Server MAY validate UTF-8 payload when Payload Format Indicator is 1",
     compliance: Compliance::May,
 };
 
-/// When the Payload Format Indicator is set to 1 (UTF-8), the server MAY
-/// validate the payload and disconnect with reason 0x99 (Payload format invalid)
-/// if it is not valid UTF-8 [MQTT-3.3.2-3].
+/// A Server MUST send the Payload Format Indicator unaltered to all subscribers receiving the Application
+/// Message [MQTT-3.3.2-4]. Non-normative prose in §3.3.2.3.2 states: "The receiver MAY validate that the Payload
+/// is of the format indicated, and if it is not send a PUBACK, PUBREC, or DISCONNECT with Reason Code of 0x99
+/// (Payload format invalid)." The validation itself is not a tagged requirement.
+///
+/// This test publishes a message with Payload Format Indicator=1 and an invalid UTF-8 payload and checks whether
+/// the broker validates and rejects it (support is optional).
 async fn payload_format_utf8_validated(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-pfi-utf8");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1530,13 +1633,16 @@ async fn payload_format_utf8_validated(config: TestConfig<'_>) -> Result<Outcome
 // ── User Properties ordering ─────────────────────────────────────────────
 
 const USER_PROPS_ORDER: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-17"],
+    refs: &["MQTT-3.3.2-18"],
     description: "User Properties order MUST be maintained when forwarding",
     compliance: Compliance::Must,
 };
 
-/// The order of User Properties MUST be maintained when the server forwards
-/// a PUBLISH packet [MQTT-3.3.2-17].
+/// The Server MUST maintain the order of User Properties when forwarding the Application Message
+/// [MQTT-3.3.2-18].
+///
+/// This test publishes a message with three ordered User Properties and verifies the subscriber receives them in
+/// the same order.
 async fn user_properties_order(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/up_order";
 
@@ -1592,13 +1698,18 @@ async fn user_properties_order(config: TestConfig<'_>) -> Result<Outcome> {
 // ── QoS 0 retained storage ──────────────────────────────────────────────
 
 const RETAINED_QOS0: TestContext = TestContext {
-    refs: &["MQTT-3.3.1-11"],
+    refs: &["MQTT-3.3.1-5"],
     description: "Server SHOULD store QoS 0 retained message",
     compliance: Compliance::Should,
 };
 
-/// The server SHOULD store the last retained message for a topic even when
-/// it was published at QoS 0 [MQTT-3.3.1-11].
+/// If the RETAIN flag is set to 1 in a PUBLISH packet sent by a Client to a Server, the Server MUST replace any
+/// existing retained message for this topic and store the Application Message [MQTT-3.3.1-5]. Non-normative prose
+/// in §3.3.1.3 adds the QoS 0 carve-out: "If the Server receives a PUBLISH packet with the RETAIN flag set to 1,
+/// and QoS 0 it SHOULD store the new QoS 0 message as the new retained message for that topic, but MAY choose to
+/// discard it at any time."
+///
+/// This test publishes a QoS 0 retained message and verifies a new subscriber receives the stored message.
 async fn retained_qos0_stored(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/retain_qos0";
 
@@ -1654,9 +1765,12 @@ const QOS2_NO_DUP_DELIVERY: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// When the server receives a duplicate QoS 2 PUBLISH (before PUBREL), it MUST
-/// re-ACK with PUBREC but MUST NOT deliver the message again to subscribers
-/// [MQTT-4.3.3-10].
+/// Until it has received the corresponding PUBREL packet, the receiver MUST acknowledge any subsequent PUBLISH
+/// packet with the same Packet Identifier by sending a PUBREC. It MUST NOT cause duplicate messages to be
+/// delivered to any onward recipients in this case [MQTT-4.3.3-10].
+///
+/// This test sends a QoS 2 PUBLISH, then before sending PUBREL resends the same PUBLISH with DUP=1, completes
+/// the flow, and verifies the subscriber received exactly one message.
 async fn qos2_no_duplicate_delivery(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/qos2_nodup";
 
@@ -1740,9 +1854,11 @@ const QOS2_EXPIRY_CONTINUES: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// The server MUST continue the QoS 2 acknowledgement sequence even if
-/// the message has expired [MQTT-4.3.3-13]. Publish with a short
-/// Message Expiry Interval, wait for expiry, then complete the flow.
+/// [The receiver] MUST continue the QoS 2 acknowledgement sequence even if it has applied message expiry
+/// [MQTT-4.3.3-13].
+///
+/// This test publishes a QoS 2 message with a 1-second Message Expiry Interval, waits 2 seconds for the message
+/// to expire, sends PUBREL, and verifies the server still responds with PUBCOMP.
 async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-q2expiry");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1796,13 +1912,15 @@ async fn qos2_continues_after_message_expiry(config: TestConfig<'_>) -> Result<O
 // ── QoS 1 initial delivery DUP=0 ─────────────────────────────────────────
 
 const QOS1_DUP_ZERO: TestContext = TestContext {
-    refs: &["MQTT-4.3.2-2b"],
+    refs: &["MQTT-4.3.2-2"],
     description: "Server MUST forward QoS 1 PUBLISH with DUP=0 on initial delivery",
     compliance: Compliance::Must,
 };
 
-/// When the server forwards a QoS 1 message to a subscriber for the first time,
-/// the DUP flag MUST be 0 [MQTT-4.3.2-2].
+/// [The sender] MUST send a PUBLISH packet containing this Packet Identifier with QoS 1 and DUP flag set to 0
+/// [MQTT-4.3.2-2].
+///
+/// This test publishes a QoS 1 message and verifies the subscriber receives the initial delivery with DUP=0.
 async fn qos1_initial_delivery_dup_zero(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/qos1_dup0";
 
@@ -1847,9 +1965,11 @@ const QUOTA_ZERO_CONTROL: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Even when the receive quota is exhausted (all slots occupied by unacked
-/// QoS 1/2 messages), the server MUST continue to process and respond to
-/// other MQTT control packets like PINGREQ [MQTT-4.9.0-3].
+/// The Client and Server MUST continue to process and respond to all other MQTT Control Packets even if the
+/// quota is zero [MQTT-4.9.0-3].
+///
+/// This test fills the server's send quota by receiving but not acknowledging two QoS 1 messages on a subscriber
+/// with Receive Maximum=2, then sends a PINGREQ and verifies the server still responds with PINGRESP.
 async fn control_packets_when_quota_zero(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/quota_zero";
 
@@ -1930,9 +2050,11 @@ const RETAIN_ZERO_PRESERVES: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// If the RETAIN flag is 0 in a PUBLISH, the server MUST NOT store the message
-/// as a retained message and MUST NOT remove or replace any existing retained
-/// message [MQTT-3.3.1-8].
+/// If the RETAIN flag is 0 in a PUBLISH packet sent by a Client to a Server, the Server MUST NOT store the
+/// message as a retained message and MUST NOT remove or replace any existing retained message [MQTT-3.3.1-8].
+///
+/// This test stores a retained message, publishes a non-retained message on the same topic, then subscribes
+/// from a new client and verifies the original retained message is still delivered unchanged.
 async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/retain0_preserve";
 
@@ -1995,15 +2117,18 @@ async fn retain_zero_preserves_existing(config: TestConfig<'_>) -> Result<Outcom
 }
 
 const ORDERED_TOPIC_QOS0: TestContext = TestContext {
-    refs: &["MQTT-4.6.0-5"],
+    refs: &["MQTT-4.6.0-5", "MQTT-4.6.0-6"],
     description: "Server MUST deliver QoS 0 messages in order for an Ordered Topic",
     compliance: Compliance::Must,
 };
 
-/// By default, the server MUST treat every topic as an Ordered Topic and deliver
-/// messages in the order received from each client, per QoS level [MQTT-4.6.0-5].
-/// This test verifies ordering for QoS 0 messages (complementing the existing
-/// QoS 1 ordering test at MQTT-4.6.0-1).
+/// When a Server processes a message that has been published to an Ordered Topic, it MUST send PUBLISH packets
+/// to consumers (for the same Topic and QoS) in the order that they were received from any given Client
+/// [MQTT-4.6.0-5]. By default, a Server MUST treat every Topic as an Ordered Topic when it is forwarding
+/// messages on Non-shared Subscriptions [MQTT-4.6.0-6].
+///
+/// This test publishes 10 QoS 0 messages in sequence and verifies they arrive at the subscriber in the same
+/// order (complementing the QoS 1 ordering test).
 async fn ordered_topic_qos0(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/ordered_qos0";
 
@@ -2068,13 +2193,16 @@ async fn ordered_topic_qos0(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const CONTENT_TYPE_FORWARDED: TestContext = TestContext {
-    refs: &["MQTT-3.3.2-19"],
+    refs: &["MQTT-3.3.2-20"],
     description: "Content Type MUST be forwarded unaltered by the server",
     compliance: Compliance::Must,
 };
 
-/// The server MUST forward the Content Type property unaltered to receivers
-/// [MQTT-3.3.2-19].
+/// A Server MUST send the Content Type unaltered to all subscribers receiving the Application Message
+/// [MQTT-3.3.2-20].
+///
+/// This test publishes a message with a Content Type containing a charset parameter and verifies the subscriber
+/// receives the exact same Content Type string.
 async fn content_type_forwarded_unaltered(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/content_type_fwd";
     let content_type = "application/octet-stream; charset=utf-8";
@@ -2131,12 +2259,11 @@ const QOS1_UNACKNOWLEDGED: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// The server MUST treat a QoS 1 PUBLISH as "unacknowledged" until it has
-/// received the corresponding PUBACK from the receiver [MQTT-4.3.2-3].
+/// [The sender] MUST treat the PUBLISH Packet as "unacknowledged" until it has received the corresponding PUBACK
+/// packet from the receiver [MQTT-4.3.2-3].
 ///
-/// Test: subscribe QoS 1 with a persistent session, receive a forwarded
-/// PUBLISH but withhold PUBACK, disconnect abruptly, then reconnect — the
-/// broker must redeliver the message.
+/// This test subscribes QoS 1 with a persistent session, receives a forwarded PUBLISH but withholds PUBACK,
+/// disconnects abruptly, then reconnects and verifies the broker redelivers the unacknowledged message.
 async fn qos1_unacknowledged_until_puback(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/qos1_unack";
 

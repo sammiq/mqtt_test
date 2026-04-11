@@ -69,7 +69,10 @@ const BASIC_SUB: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Server MUST send SUBACK in response to SUBSCRIBE [MQTT-3.8.4-1].
+/// After it has sent a SUBSCRIBE packet from a Client, the Server MUST respond with a SUBACK packet
+/// [MQTT-3.8.4-1].
+///
+/// This test sends a SUBSCRIBE packet and verifies the server responds with a SUBACK.
 async fn basic_subscribe(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-subscribe");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -86,7 +89,11 @@ const WILDCARD_PLUS: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// `+` wildcard MUST match exactly one level [MQTT-4.7.1-2].
+/// The single-level wildcard can be used at any level in the Topic Filter, including first and last
+/// levels. Where it is used, it MUST occupy an entire level of the filter [MQTT-4.7.1-2].
+///
+/// This test subscribes to `mqtt/test/sub/wc_plus/+` and verifies a publish to a matching
+/// single-level topic is delivered.
 async fn wildcard_plus(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-wildcard-plus");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -105,12 +112,18 @@ async fn wildcard_plus(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const WILDCARD_HASH: TestContext = TestContext {
-    refs: &["MQTT-4.7.1-3"],
+    refs: &["MQTT-4.7.1-1"],
     description: "'#' wildcard MUST match all sub-levels",
     compliance: Compliance::Must,
 };
 
-/// `#` wildcard MUST match the parent and all sub-levels [MQTT-4.7.1-2].
+/// The multi-level wildcard character MUST be specified either on its own or following a topic
+/// level separator. In either case it MUST be the last character specified in the Topic Filter
+/// [MQTT-4.7.1-1].
+///
+/// This test subscribes to `mqtt/test/sub/wc_hash/#` and verifies a publish to a deeply nested
+/// matching topic is delivered. The matching behaviour itself (that `#` matches the parent and all
+/// sub-levels) is described non-normatively in §4.7.1.2.
 async fn wildcard_hash(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-wildcard-hash");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -136,7 +149,11 @@ const UNSUB: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Server MUST send UNSUBACK in response to UNSUBSCRIBE [MQTT-3.10.4-4].
+/// The Server MUST respond to an UNSUBSCRIBE request by sending an UNSUBACK packet
+/// [MQTT-3.10.4-4].
+///
+/// This test sends an UNSUBSCRIBE packet and verifies the server responds with an UNSUBACK with the
+/// matching packet identifier.
 async fn unsubscribe(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = client::connect_and_subscribe(
         config.addr,
@@ -162,7 +179,11 @@ const DOLLAR_TOPIC: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Topics starting with `$` MUST NOT be matched by subscriptions starting with `#` or `+` [MQTT-4.7.2-1].
+/// The Server MUST NOT match Topic Filters starting with a wildcard character (# or +) with Topic
+/// Names beginning with a $ character [MQTT-4.7.2-1].
+///
+/// This test subscribes to `#` and publishes to a `$SYS/...` topic, verifying the `$`-prefixed
+/// message is not delivered to the wildcard subscriber.
 async fn dollar_topic_no_wildcard_match(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-dollar-topic");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -226,7 +247,11 @@ const SUBACK_REASON_COUNT: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// SUBACK MUST contain a reason code for each Topic Filter in the SUBSCRIBE [MQTT-3.8.4-6].
+/// The SUBACK packet sent by the Server to the Client MUST contain a Reason Code for each Topic
+/// Filter/Subscription Option pair [MQTT-3.8.4-6].
+///
+/// This test sends a SUBSCRIBE with three topic filters and verifies the SUBACK contains three
+/// reason codes.
 async fn suback_reason_code_count(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-suback-count");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -276,12 +301,16 @@ async fn suback_reason_code_count(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const UNSUBACK_REASON_COUNT: TestContext = TestContext {
-    refs: &["MQTT-3.10.4-5"],
+    refs: &["MQTT-3.11.3-2"],
     description: "UNSUBACK MUST contain one reason code for each topic filter",
     compliance: Compliance::Must,
 };
 
-/// UNSUBACK MUST contain a reason code for each Topic Filter in the UNSUBSCRIBE [MQTT-3.10.4-5].
+/// The Server sending an UNSUBACK packet MUST use one of the Unsubscribe Reason Code values for
+/// each Topic Filter received [MQTT-3.11.3-2].
+///
+/// This test subscribes to three topic filters, then unsubscribes from all three and verifies the
+/// UNSUBACK contains three reason codes.
 async fn unsuback_reason_code_count(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-unsuback-count");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -354,7 +383,12 @@ const SHARED_SUB: TestContext = TestContext {
     compliance: Compliance::May,
 };
 
-/// Shared subscriptions ($share/group/topic) are accepted [MQTT-4.8.2].
+/// A Shared Subscription's Topic Filter MUST start with $share/ and MUST contain a ShareName that
+/// is at least one character long [MQTT-4.8.2-1].
+///
+/// This test subscribes to a valid shared subscription filter (`$share/testgroup/...`) and
+/// verifies the server accepts it with a successful SUBACK. Shared Subscription support is
+/// optional; the test skips when the broker reports Shared Subscription Available = false.
 async fn shared_subscription(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-shared-sub");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -374,12 +408,17 @@ async fn shared_subscription(config: TestConfig<'_>) -> Result<Outcome> {
 // ── Subscribe options ───────────────────────────────────────────────────────
 
 const SUB_ID: TestContext = TestContext {
-    refs: &["MQTT-3.8.2-2"],
+    refs: &["MQTT-3.3.4-4"],
     description: "Subscription Identifier MUST be returned in matching PUBLISH",
     compliance: Compliance::Must,
 };
 
-/// Subscription Identifier MUST be returned in matching PUBLISH [MQTT-3.8.2-2].
+/// If the Server sends a single copy of the message it MUST include in the PUBLISH packet the
+/// Subscription Identifiers for all matching subscriptions which have a Subscription Identifiers,
+/// their order is not significant [MQTT-3.3.4-4].
+///
+/// This test subscribes with a Subscription Identifier of 42 and verifies the matching PUBLISH
+/// delivered by the server carries that identifier.
 async fn subscription_identifier(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-id");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -429,7 +468,12 @@ const NO_LOCAL: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// no_local=true: server MUST NOT send messages published by the same client [MQTT-3.8.3-3].
+/// Bit 2 of the Subscription Options represents the No Local option. If the value is 1,
+/// Application Messages MUST NOT be forwarded to a connection with a ClientID equal to the
+/// ClientID of the publishing connection [MQTT-3.8.3-3].
+///
+/// This test subscribes with `no_local=true` and publishes a message from the same client,
+/// verifying the server does not loop it back.
 async fn no_local_flag(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-no-local");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -471,12 +515,16 @@ async fn no_local_flag(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RETAIN_AS_PUB: TestContext = TestContext {
-    refs: &["MQTT-3.8.3-4"],
+    refs: &["MQTT-3.3.1-13"],
     description: "retain_as_published=true: retain flag MUST be preserved on delivery",
     compliance: Compliance::Must,
 };
 
-/// retain_as_published=true: retain flag MUST be preserved on delivery [MQTT-3.8.3-4].
+/// If the value of Retain As Published subscription option is set to 1, the Server MUST set the
+/// RETAIN flag equal to the RETAIN flag in the received PUBLISH packet [MQTT-3.3.1-13].
+///
+/// This test publishes a retained message, then subscribes from a separate client with
+/// `retain_as_published=true`, and verifies the forwarded PUBLISH has its RETAIN flag set.
 async fn retain_as_published(config: TestConfig<'_>) -> Result<Outcome> {
     let pub_params_conn = ConnectParams::new("mqtt-test-rap-pub");
     let (mut pub_client, connack) =
@@ -525,12 +573,19 @@ async fn retain_as_published(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RETAIN_HANDLING_1: TestContext = TestContext {
-    refs: &["MQTT-3.8.3-5a"],
+    refs: &["MQTT-3.8.4-4"],
     description: "retain_handling=1: retained messages only on new subscription",
     compliance: Compliance::Must,
 };
 
-/// retain_handling=1: retained messages sent only on NEW subscription [MQTT-3.8.3-5].
+/// If the Retain Handling option is 0, any existing retained messages matching the Topic Filter
+/// MUST be re-sent, but Application Messages MUST NOT be lost due to replacing the Subscription
+/// [MQTT-3.8.4-4].
+///
+/// This test subscribes with `retain_handling=1`, receives the initial retained message, then
+/// re-subscribes on the same connection and verifies no retained message is re-sent (the converse
+/// of the MUST re-send requirement for `retain_handling=0`). The `retain_handling=1` behaviour
+/// itself is described non-normatively in §3.8.3.1.
 async fn retain_handling_1(config: TestConfig<'_>) -> Result<Outcome> {
     // Publish a retained message
     let pub_conn = ConnectParams::new("mqtt-test-rh1-pub");
@@ -605,12 +660,18 @@ async fn retain_handling_1(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const RETAIN_HANDLING_2: TestContext = TestContext {
-    refs: &["MQTT-3.8.3-5b"],
+    refs: &["MQTT-3.8.4-4"],
     description: "retain_handling=2: retained messages MUST NOT be sent on subscribe",
     compliance: Compliance::Must,
 };
 
-/// retain_handling=2: retained messages MUST NOT be sent on subscribe [MQTT-3.8.3-5].
+/// If the Retain Handling option is 0, any existing retained messages matching the Topic Filter
+/// MUST be re-sent, but Application Messages MUST NOT be lost due to replacing the Subscription
+/// [MQTT-3.8.4-4].
+///
+/// This test subscribes with `retain_handling=2` and verifies no retained message is delivered on
+/// subscribe (the converse of the MUST re-send requirement for `retain_handling=0`). The
+/// `retain_handling=2` behaviour itself is described non-normatively in §3.8.3.1.
 async fn retain_handling_2(config: TestConfig<'_>) -> Result<Outcome> {
     // Publish a retained message
     let pub_conn = ConnectParams::new("mqtt-test-rh2-pub");
@@ -667,13 +728,16 @@ async fn retain_handling_2(config: TestConfig<'_>) -> Result<Outcome> {
 // ── Unsubscribe behaviour ──────────────────────────────────────────────────
 
 const UNSUB_STOPS: TestContext = TestContext {
-    refs: &["MQTT-3.10.4-6"],
+    refs: &["MQTT-3.10.4-2"],
     description: "After UNSUBSCRIBE, server MUST stop delivering messages on that topic",
     compliance: Compliance::Must,
 };
 
-/// After receiving a valid UNSUBSCRIBE, the server MUST stop adding new
-/// messages matching the removed filter [MQTT-3.10.4-6].
+/// When a Server receives UNSUBSCRIBE it MUST stop adding any new messages which match the Topic
+/// Filters, for delivery to the Client [MQTT-3.10.4-2].
+///
+/// This test subscribes to a topic, verifies delivery works, then unsubscribes and verifies that
+/// a subsequent publish to the same topic is not delivered.
 async fn unsubscribe_stops_delivery(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/sub/unsub_stops";
     let mut client = client::connect_and_subscribe(
@@ -722,8 +786,13 @@ const OVERLAP_QOS: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// When a client has overlapping subscriptions, the server MUST deliver
-/// the message at the maximum QoS of all matching subscriptions [MQTT-3.3.4-2].
+/// When Clients make subscriptions with Topic Filters that include wildcards, it is possible for a
+/// Client's subscriptions to overlap so that a published message might match multiple filters. In
+/// this case the Server MUST deliver the message to the Client respecting the maximum QoS of all
+/// the matching subscriptions [MQTT-3.3.4-2].
+///
+/// This test subscribes to a wildcard filter at QoS 0 and an exact topic at QoS 1, then publishes
+/// at QoS 1 and verifies the subscriber receives the message at QoS 1 (the maximum).
 async fn overlapping_subscriptions_max_qos(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-overlap-qos");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -786,8 +855,13 @@ const SUB_ID_OVERLAP: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// When multiple subscriptions match a publish and each has a Subscription
-/// Identifier, the delivered PUBLISH MUST include all matching IDs [MQTT-3.3.4-3].
+/// If the Client specified a Subscription Identifier for any of the overlapping subscriptions the
+/// Server MUST send those Subscription Identifiers in the message which is published as the result
+/// of the subscriptions [MQTT-3.3.4-3].
+///
+/// This test creates two overlapping subscriptions with Subscription Identifiers 10 and 20, then
+/// publishes a matching message and verifies the delivered PUBLISH packets carry both identifiers
+/// (either in a single PUBLISH with both IDs, or in two PUBLISHes with one ID each).
 async fn subscription_id_overlapping(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-subid-overlap");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -877,12 +951,18 @@ async fn subscription_id_overlapping(config: TestConfig<'_>) -> Result<Outcome> 
 // ── Topic edge cases ────────────────────────────────────────────────────────
 
 const MULTI_LEVEL_TOPIC: TestContext = TestContext {
-    refs: &["MQTT-4.7.1-6"],
+    refs: &["MQTT-4.7.1-1"],
     description: "Multi-level topic filter MUST match deep topic hierarchies",
     compliance: Compliance::Must,
 };
 
-/// A subscription to `a/b/#` MUST match `a/b/c/d/e` [MQTT-4.7.1-3].
+/// The multi-level wildcard character MUST be specified either on its own or following a topic
+/// level separator. In either case it MUST be the last character specified in the Topic Filter
+/// [MQTT-4.7.1-1].
+///
+/// This test subscribes to `mqtt/test/deep/#` and verifies a publish to `mqtt/test/deep/a/b/c/d`
+/// is delivered. The matching behaviour itself (that `#` matches the parent and all sub-levels)
+/// is described non-normatively in §4.7.1.2.
 async fn multi_level_topic(config: TestConfig<'_>) -> Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
@@ -902,12 +982,16 @@ async fn multi_level_topic(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const WILDCARD_MIDDLE: TestContext = TestContext {
-    refs: &["MQTT-4.7.1-7"],
+    refs: &["MQTT-4.7.1-2"],
     description: "'+' wildcard in middle position MUST match exactly one level",
     compliance: Compliance::Must,
 };
 
-/// A subscription to `a/+/c` MUST match `a/b/c` but NOT `a/b/d` or `a/b/c/d`.
+/// The single-level wildcard can be used at any level in the Topic Filter, including first and
+/// last levels. Where it is used, it MUST occupy an entire level of the filter [MQTT-4.7.1-2].
+///
+/// This test subscribes to `mqtt/test/wc/+/end` and verifies that a publish to
+/// `mqtt/test/wc/any/end` matches but a publish to `mqtt/test/wc/any/extra/end` does not.
 async fn wildcard_middle_level(config: TestConfig<'_>) -> Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
@@ -948,8 +1032,12 @@ const MULTI_FILTERS: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// A SUBSCRIBE with multiple topic filters MUST return a SUBACK with
-/// a reason code for each filter [MQTT-3.8.4-6].
+/// If a Server receives a SUBSCRIBE packet that contains multiple Topic Filters it MUST handle
+/// that packet as if it had received a sequence of multiple SUBSCRIBE packets, except that it
+/// combines their responses into a single SUBACK response [MQTT-3.8.4-5].
+///
+/// This test sends a SUBSCRIBE with three topic filters and verifies the server returns a single
+/// SUBACK with three reason codes.
 async fn multiple_filters_single_subscribe(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-multi-filter");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -986,8 +1074,12 @@ const SUB_UPGRADE_QOS: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Re-subscribing to the same topic with a higher QoS MUST upgrade the
-/// subscription. Messages should then be delivered at the new QoS.
+/// If a Server receives a SUBSCRIBE packet containing a Topic Filter that is identical to a
+/// Non-shared Subscription's Topic Filter for the current Session, then it MUST replace that
+/// existing Subscription with a new Subscription [MQTT-3.8.4-3].
+///
+/// This test subscribes at QoS 0, then re-subscribes to the same topic at QoS 1 and verifies the
+/// SUBACK grants QoS 1 (the new, upgraded maximum).
 async fn subscription_upgrade_qos(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-sub-upgrade");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1024,13 +1116,18 @@ async fn subscription_upgrade_qos(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const EMPTY_TOPIC_LEVEL: TestContext = TestContext {
-    refs: &["MQTT-4.7.3-1"],
+    refs: &["MQTT-4.7.3-4"],
     description: "Empty topic level (e.g. a//b) is valid and MUST match exactly",
     compliance: Compliance::Must,
 };
 
-/// An empty topic level like `a//b` is valid per the spec. The broker MUST
-/// deliver messages published to `a//b` to subscribers of `a//b`.
+/// When it performs subscription matching the Server MUST NOT perform any normalization of Topic
+/// Names or Topic Filters, or any modification or substitution of unrecognized characters
+/// [MQTT-4.7.3-4].
+///
+/// This test subscribes to `mqtt/test//empty` (with an empty middle level) and verifies a publish
+/// to the same topic is delivered. The validity of empty topic levels is described non-normatively
+/// in §4.7.1.1 and §4.7.3; this test exercises the no-normalization requirement.
 async fn empty_topic_level(config: TestConfig<'_>) -> Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
@@ -1050,14 +1147,18 @@ async fn empty_topic_level(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const CASE_SENSITIVE: TestContext = TestContext {
-    refs: &["MQTT-4.7.3-3"],
+    refs: &["MQTT-4.7.3-4"],
     description: "Server MUST NOT normalize topic names — matching is case-sensitive",
     compliance: Compliance::Must,
 };
 
-/// Topic names are case-sensitive. Subscribe to "mqtt/Test/CASE" and verify
-/// that a publish to "mqtt/test/case" (different case) is NOT received, while
-/// a publish to "mqtt/Test/CASE" IS received [MQTT-4.7.3-3].
+/// When it performs subscription matching the Server MUST NOT perform any normalization of Topic
+/// Names or Topic Filters, or any modification or substitution of unrecognized characters
+/// [MQTT-4.7.3-4].
+///
+/// This test subscribes to `mqtt/Test/CASE` and verifies a publish to `mqtt/test/case` (different
+/// case) is NOT delivered, while a publish to `mqtt/Test/CASE` IS delivered. Topic case
+/// sensitivity itself is stated non-normatively in §4.7.3.
 async fn case_sensitive_topic(config: TestConfig<'_>) -> Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
@@ -1104,9 +1205,13 @@ const EXACT_CHAR: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// Non-wildcard levels in a topic filter must match character-for-character.
-/// Subscribe to "mqtt/exact/match", verify "mqtt/exact/match" matches but
-/// "mqtt/exact/matcH" does not [MQTT-4.7.3-4].
+/// When it performs subscription matching the Server MUST NOT perform any normalization of Topic
+/// Names or Topic Filters, or any modification or substitution of unrecognized characters
+/// [MQTT-4.7.3-4]. Each non-wildcarded level in the Topic Filter has to match the corresponding
+/// level in the Topic Name character for character for the match to succeed.
+///
+/// This test subscribes to `mqtt/exact/match` and verifies a publish to `mqtt/exact/matcH` (one
+/// character different) is NOT delivered, while a publish to `mqtt/exact/match` IS delivered.
 async fn exact_char_match(config: TestConfig<'_>) -> Result<Outcome> {
     let (mut sub, mut pub_client) = client::sub_pub_pair(
         config.addr,
@@ -1145,15 +1250,19 @@ async fn exact_char_match(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const LEVEL_SEPARATOR_DISTINCT: TestContext = TestContext {
-    refs: &["MQTT-4.7.0-1"],
+    refs: &["MQTT-4.7.3-4"],
     description: "Topic level separator creates distinct levels — empty level is a separate level",
     compliance: Compliance::Must,
 };
 
-/// The topic level separator '/' creates distinct levels. "a/b" and "a//b" are
-/// different topics because "a//b" has an empty level between two separators.
-/// Subscribe to "a/b", verify "a/b" matches but "a//b" does not. Then subscribe
-/// to "a//b" and verify "a//b" matches [MQTT-4.7.0-1].
+/// When it performs subscription matching the Server MUST NOT perform any normalization of Topic
+/// Names or Topic Filters, or any modification or substitution of unrecognized characters
+/// [MQTT-4.7.3-4].
+///
+/// This test verifies that `a/b` and `a//b` are distinct topics because `a//b` has an empty level
+/// between two separators. It subscribes to `a/b`, verifies `a/b` matches but `a//b` does not,
+/// then subscribes to `a//b` and verifies `a//b` matches. The "empty level creates a distinct
+/// topic" rule is stated non-normatively in §4.7.1.1 and §4.7.3.
 async fn topic_level_separator_distinct(config: TestConfig<'_>) -> Result<Outcome> {
     // Subscriber 1: subscribe to "mqtt/test/sep/a/b"
     let (mut sub1, mut pub_client) = client::sub_pub_pair(
@@ -1219,15 +1328,15 @@ async fn topic_level_separator_distinct(config: TestConfig<'_>) -> Result<Outcom
 // ── Unsubscribe completeness ────────────────────────────────────────────────
 
 const UNSUB_STOPS_NEW: TestContext = TestContext {
-    refs: &["MQTT-3.10.4-1"],
+    refs: &["MQTT-3.10.4-2"],
     description: "After UNSUBSCRIBE, server MUST stop adding new messages for that topic",
     compliance: Compliance::Must,
 };
 
-/// After receiving UNSUBSCRIBE, the server MUST stop adding any new messages
-/// matching the filter for delivery to the client [MQTT-3.10.4-1].
+/// When a Server receives UNSUBSCRIBE it MUST stop adding any new messages which match the Topic
+/// Filters, for delivery to the Client [MQTT-3.10.4-2].
 ///
-/// This test differs from MQTT-3.10.4-6 (basic delivery stop) by:
+/// This test exercises the same MUST as `unsubscribe_stops_delivery` but with a stricter protocol:
 /// 1. Explicitly verifying delivery works before unsubscribe
 /// 2. Waiting for UNSUBACK before publishing
 /// 3. Publishing multiple messages after unsubscribe with a small delay
@@ -1296,10 +1405,13 @@ const UNSUB_BUFFERED: TestContext = TestContext {
     compliance: Compliance::May,
 };
 
-/// After UNSUBSCRIBE, the server MAY continue to deliver messages that were
-/// already buffered or in-flight before the UNSUBACK was sent [MQTT-3.10.4-3].
-/// This is a MAY — we just check the server behaves reasonably (does not crash,
-/// UNSUBACK is received) regardless of whether buffered messages still arrive.
+/// It MUST complete the delivery of any QoS 1 or QoS 2 messages which match the Topic Filters and
+/// it has started to send to the Client [MQTT-3.10.4-3].
+///
+/// This test exercises the adjacent non-tagged MAY bullet ("It MAY continue to deliver any
+/// existing messages buffered for delivery to the Client") in §3.10.4. It publishes several QoS 1
+/// messages, immediately unsubscribes, then verifies the server still delivers UNSUBACK and
+/// behaves reasonably regardless of whether buffered messages still arrive.
 async fn unsubscribe_buffered_messages(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/unsub/buffered";
 
@@ -1390,8 +1502,13 @@ const RETAIN_HANDLING_0: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// With retain_handling=0 (the default), any existing retained messages matching
-/// the topic filter MUST be re-sent on subscribe [MQTT-3.8.4-4].
+/// If the Retain Handling option is 0, any existing retained messages matching the Topic Filter
+/// MUST be re-sent, but Application Messages MUST NOT be lost due to replacing the Subscription
+/// [MQTT-3.8.4-4].
+///
+/// This test publishes a retained message, subscribes with `retain_handling=0` and verifies the
+/// retained message is delivered. It then re-subscribes on the same connection and verifies the
+/// retained message is re-sent (because `retain_handling=0` re-sends on every subscribe).
 async fn retain_handling_0_sends_retained(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/sub/rh0";
 
@@ -1462,9 +1579,12 @@ const QOS_DOWNGRADE_1_TO_0: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// The QoS of delivered messages MUST be the minimum of the published QoS and
-/// the maximum QoS granted by the server [MQTT-3.8.4-8]. Publish QoS 1, subscribe
-/// at QoS 0, verify delivery at QoS 0.
+/// The QoS of Application Messages sent in response to a Subscription MUST be the minimum of the
+/// QoS of the originally published message and the Maximum QoS granted by the Server
+/// [MQTT-3.8.4-8].
+///
+/// This test subscribes at QoS 0, publishes at QoS 1, and verifies the subscriber receives the
+/// message at QoS 0 (the minimum of published and granted).
 async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/sub/qos1to0";
 
@@ -1501,13 +1621,17 @@ async fn qos_downgrade_qos1_to_qos0(config: TestConfig<'_>) -> Result<Outcome> {
 }
 
 const UNSUB_INFLIGHT_QOS1: TestContext = TestContext {
-    refs: &["MQTT-3.10.4-2"],
+    refs: &["MQTT-3.10.4-3"],
     description: "Server MUST complete in-flight QoS 1 delivery after UNSUBSCRIBE",
     compliance: Compliance::Must,
 };
 
-/// After UNSUBSCRIBE, the server MUST complete delivery of any QoS 1 messages
-/// that are already in-flight [MQTT-3.10.4-2].
+/// When a Server receives UNSUBSCRIBE it MUST complete the delivery of any QoS 1 or QoS 2 messages
+/// which match the Topic Filters and it has started to send to the Client [MQTT-3.10.4-3].
+///
+/// This test publishes several QoS 1 messages, receives one without ACKing it, then unsubscribes
+/// and verifies the server still completes the in-flight delivery (the PUBACK is accepted and
+/// UNSUBACK is received).
 async fn unsubscribe_inflight_qos1_completes(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/sub/unsub-inflight";
 
@@ -1617,8 +1741,12 @@ const SHARED_SUB_FORMAT: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// The ShareName in `$share/ShareName/TopicFilter` MUST NOT contain '/', '+',
-/// or '#', and MUST be followed by '/' and a Topic Filter [MQTT-4.8.2-2].
+/// The ShareName MUST NOT contain the characters "/", "+" or "#", but MUST be followed by a "/"
+/// character. This "/" character MUST be followed by a Topic Filter [MQTT-4.8.2-2].
+///
+/// This test sends SUBSCRIBE packets with malformed shared subscription filters (`+` in ShareName,
+/// `#` in ShareName, ShareName with no trailing topic filter) and verifies the broker rejects
+/// each one (either via SUBACK reason code >= 0x80 or by disconnecting).
 async fn shared_sub_topic_filter_format(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-shared-fmt");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -1691,8 +1819,12 @@ const SHARED_SUB_QOS: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// When delivering to shared subscribers, the server MUST respect each
-/// subscriber's granted QoS level [MQTT-4.8.2-3].
+/// When sending an Application Message to a Client, the Server MUST respect the granted QoS for
+/// the Client's subscription [MQTT-4.8.2-3].
+///
+/// This test creates two shared subscribers (A at QoS 0, B at QoS 1) on the same shared group,
+/// publishes ten QoS 1 messages, and verifies that messages delivered to A are at QoS 0 and
+/// messages delivered to B are at QoS 0 or QoS 1 — never above the granted maximum.
 async fn shared_sub_qos_respected(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/shared/qos";
     let shared_filter = "$share/qosgrp/mqtt/test/shared/qos";
@@ -1785,9 +1917,13 @@ const SHARED_SUB_QOS2_RECONNECT: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// If the connection to the chosen shared subscriber breaks during QoS 2
-/// delivery, the server MUST complete delivery when the client reconnects
-/// [MQTT-4.8.2-4].
+/// If the Server is in the process of sending a QoS 2 message to its chosen subscribing Client and
+/// the connection to the Client breaks before delivery is complete, the Server MUST complete the
+/// delivery of the message to that Client when it reconnects [MQTT-4.8.2-4].
+///
+/// This test creates a shared subscriber with a persistent session, abruptly disconnects it,
+/// publishes a QoS 2 message while it is offline, then reconnects with `clean_start=false` and
+/// verifies the queued QoS 2 message is delivered.
 async fn shared_sub_qos2_reconnect(config: TestConfig<'_>) -> Result<Outcome> {
     let sub_id = "mqtt-test-shared-q2-recon";
     let pub_id = "mqtt-test-shared-q2-recon-pub";
@@ -1882,9 +2018,13 @@ const SHARED_SUB_NACK_DISCARD: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// If a shared subscription client responds with a PUBACK containing Reason
-/// Code >= 0x80, the server MUST discard the message and not attempt to send
-/// it to any other subscriber [MQTT-4.8.2-6].
+/// If a Client responds with a PUBACK or PUBREC containing a Reason Code of 0x80 or greater to a
+/// PUBLISH packet from the Server, the Server MUST discard the Application Message and not
+/// attempt to send it to any other Subscriber [MQTT-4.8.2-6].
+///
+/// This test creates shared subscriber A, publishes a QoS 1 message, has A respond with a
+/// negative PUBACK (reason code 0x80), then connects subscriber B to the same shared group and
+/// verifies B does NOT receive the NACKed message.
 async fn shared_sub_negative_ack_discard(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/shared/nack";
     let shared_filter = "$share/nackgrp/mqtt/test/shared/nack";

@@ -497,7 +497,7 @@ async fn property_forwarding_test(
 const PFI: TestContext = TestContext {
     refs: &["MQTT-3.3.2-4"],
     description: "Payload Format Indicator MUST be forwarded unchanged",
-    compliance: Compliance::Should,
+    compliance: Compliance::Must,
 };
 
 /// A Server MUST send the Payload Format Indicator unaltered to all subscribers receiving the Application Message

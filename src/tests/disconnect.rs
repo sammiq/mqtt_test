@@ -384,6 +384,7 @@ async fn disconnect_reason_string(config: TestConfig<'_>) -> Result<Outcome> {
 
     let mut params = ConnectParams::new(client_id);
     params.properties.session_expiry_interval = Some(60);
+    params.properties.request_problem_information = Some(false);
     let (mut c1, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     // Provoke session takeover

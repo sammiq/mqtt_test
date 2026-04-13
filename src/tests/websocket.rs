@@ -22,7 +22,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite
 }
 
-// ── MQTT-6.0.0-4: Server MUST return "mqtt" subprotocol ─────────────────────
+// ── MUST ─────────────────────────────────────────────────────────────────────
 
 const WS_SUBPROTOCOL: TestContext = TestContext {
     refs: &["MQTT-6.0.0-4"],
@@ -30,6 +30,9 @@ const WS_SUBPROTOCOL: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
+/// The WebSocket Subprotocol name selected and returned by the Server MUST be "mqtt" [MQTT-6.0.0-4].
+///
+/// This test performs a WebSocket upgrade and verifies the Sec-WebSocket-Protocol header is "mqtt".
 async fn ws_subprotocol(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
         return Ok(Outcome::skip("WebSocket not configured"));
@@ -57,16 +60,16 @@ async fn ws_subprotocol(config: TestConfig<'_>) -> Result<Outcome> {
     }
 }
 
-// ── MQTT-6.0.0-2: MQTT packets may span WebSocket frames ───────────────────
-
 const WS_PACKET_SPANNING: TestContext = TestContext {
     refs: &["MQTT-6.0.0-2"],
     description: "Server MUST NOT assume MQTT packets are aligned on WebSocket frame boundaries",
     compliance: Compliance::Must,
 };
 
-/// Send a CONNECT packet split across two WebSocket binary frames to verify
-/// the broker correctly reassembles MQTT packets that span frame boundaries.
+/// A single WebSocket data frame can contain multiple or partial MQTT Control Packets. The receiver MUST NOT assume
+/// that MQTT Control Packets are aligned on WebSocket frame boundaries [MQTT-6.0.0-2].
+///
+/// This test sends a CONNECT packet split across two WebSocket binary frames and verifies the broker reassembles it.
 async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
         return Ok(Outcome::skip("WebSocket not configured"));
@@ -127,17 +130,16 @@ async fn ws_packet_spanning(config: TestConfig<'_>) -> Result<Outcome> {
     }
 }
 
-// ── MQTT-6.0.0-1: Non-binary frame must close connection ───────────────────
-
 const WS_TEXT_FRAME_REJECTED: TestContext = TestContext {
     refs: &["MQTT-6.0.0-1"],
     description: "Server MUST close connection on non-binary WebSocket frame",
     compliance: Compliance::Must,
 };
 
-/// After a successful WebSocket upgrade, send a CONNECT packet wrapped in a
-/// text frame (opcode 0x01) instead of binary (0x02). The broker MUST close
-/// the connection.
+/// MQTT Control Packets MUST be sent in WebSocket binary data frames. If any other type of data frame is received
+/// the recipient MUST close the Network Connection [MQTT-6.0.0-1].
+///
+/// This test sends a CONNECT wrapped in a text frame (opcode 0x01) instead of binary and verifies the broker closes.
 async fn ws_text_frame_rejected(config: TestConfig<'_>) -> Result<Outcome> {
     let Some((ws_addr, ws_host, ws_path)) = config.ws_info else {
         return Ok(Outcome::skip("WebSocket not configured"));

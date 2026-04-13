@@ -1,14 +1,14 @@
 # MQTT v5.0 Normative Requirements — Test Coverage
 
-Generated: 2026-03-24
+Generated: 2026-04-14
 
 ## Summary
 
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested) | 183 |
-| Structural (codec/format, implicitly covered) | 29 |
+| Implemented (tested) | 187 |
+| Structural (codec/format, implicitly covered) | 25 |
 | Client (client-side obligation, not server-testable) | 26 |
 | Not tested (with explanation) | 18 |
 
@@ -20,7 +20,7 @@ Generated: 2026-03-24
 |-------------|-------|--------|-------------|
 | MQTT-1.5.4-1 | MUST | Implemented | UTF-8 strings must not include surrogates U+D800..U+DFFF |
 | MQTT-1.5.4-2 | MUST | Implemented | UTF-8 strings must not include null character U+0000 |
-| MQTT-1.5.4-3 | MUST | Structural | BOM U+FEFF must not be stripped by receiver. Implicitly handled by codec passing bytes through unchanged. |
+| MQTT-1.5.4-3 | MUST | Implemented | BOM U+FEFF must not be stripped by receiver |
 | MQTT-1.5.5-1 | MUST | Implemented | Variable Byte Integer must use minimum bytes |
 | MQTT-1.5.7-1 | MUST | Implemented | String Pair both strings must be valid UTF-8 |
 
@@ -29,11 +29,11 @@ Generated: 2026-03-24
 | Requirement | Level | Status | Description |
 |-------------|-------|--------|-------------|
 | MQTT-2.1.3-1 | MUST | Implemented | Reserved flag bits must be set to specified values |
-| MQTT-2.2.1-2 | MUST | Structural | QoS 0 PUBLISH must not contain Packet Identifier. Enforced by codec. |
+| MQTT-2.2.1-2 | MUST | Implemented | QoS 0 PUBLISH must not contain Packet Identifier |
 | MQTT-2.2.1-3 | MUST | Implemented | Client must assign non-zero unused Packet Identifier for QoS>0 |
 | MQTT-2.2.1-4 | MUST | Implemented | Server must assign non-zero unused Packet Identifier for QoS>0 |
-| MQTT-2.2.1-5 | MUST | Structural | PUBACK/PUBREC/PUBREL/PUBCOMP must echo Packet Identifier. Verified implicitly by all QoS 1/2 tests. |
-| MQTT-2.2.1-6 | MUST | Structural | SUBACK/UNSUBACK must echo Packet Identifier. Verified implicitly by subscribe/unsubscribe tests. |
+| MQTT-2.2.1-5 | MUST | Implemented | PUBACK/PUBREC/PUBREL/PUBCOMP must echo Packet Identifier |
+| MQTT-2.2.1-6 | MUST | Implemented | SUBACK/UNSUBACK must echo Packet Identifier |
 | MQTT-2.2.2-1 | MUST | Structural | Zero Property Length when no properties. Enforced by codec encoding. |
 
 ## Section 3.1 — CONNECT

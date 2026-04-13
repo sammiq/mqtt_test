@@ -12,6 +12,22 @@ use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, Te
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("PUBLISH");
 
+    // MQTT-2.2.1-3 — Packet Identifier reuse
+    suite.add(PID_REUSE_QOS1, packet_id_reuse_after_puback(config));
+    suite.add(PID_REUSE_QOS2, packet_id_reuse_after_pubcomp(config));
+
+    // MQTT-2.2.1-4 — Server Packet Identifier assignment
+    suite.add(
+        SERVER_PID_NONZERO_UNIQUE,
+        server_packet_ids_nonzero_and_unique(config),
+    );
+
+    // MQTT-2.2.1-5 — Acknowledgement Packet Identifier echo
+    suite.add(PUBACK_ECHOES_PID, puback_echoes_publish_pid(config));
+    suite.add(PUBREC_PUBCOMP_ECHOES_PID, pubrec_pubcomp_echo_pid(config));
+
+    // ── reviewed up to here ─────────────────────────────────────────────────
+
     suite.add(QOS0, qos0_accepted(config));
     suite.add(QOS1, qos1_gets_puback(config));
     suite.add(QOS1_DELIVERY, qos1_delivery(config));
@@ -41,8 +57,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(TOPIC_ALIAS_RESET, topic_alias_reset_on_reconnect(config));
     suite.add(RECV_MAX_FLOW, receive_maximum_flow_control(config));
     suite.add(QOS2_DUP, qos2_duplicate_publish(config));
-    suite.add(PID_REUSE_QOS1, packet_id_reuse_after_puback(config));
-    suite.add(PID_REUSE_QOS2, packet_id_reuse_after_pubcomp(config));
     suite.add(QOS2_DUP_PUBREL, qos2_duplicate_pubrel(config));
     suite.add(PAYLOAD_FORMAT_UTF8, payload_format_utf8_validated(config));
     suite.add(USER_PROPS_ORDER, user_properties_order(config));
@@ -1446,15 +1460,15 @@ async fn packet_id_reuse_after_puback(config: TestConfig<'_>) -> Result<Outcome>
 }
 
 const PID_REUSE_QOS2: TestContext = TestContext {
-    refs: &["MQTT-2.2.1-4"],
+    refs: &["MQTT-2.2.1-3"],
     description: "Packet ID MUST be available for reuse after PUBCOMP completes (QoS 2)",
     compliance: Compliance::Must,
 };
 
-/// Each time a Server sends a new PUBLISH (with QoS > 0) MQTT Control Packet it MUST assign it a non-zero Packet
-/// Identifier that is currently unused [MQTT-2.2.1-4]. Non-normative prose in §4.3.3 states: "The Packet
-/// Identifier becomes available for reuse once the sender has received the PUBCOMP packet or a PUBREC with a
-/// Reason Code of 0x80 or greater."
+/// Each time a Client sends a new SUBSCRIBE, UNSUBSCRIBE, or PUBLISH (where QoS > 0) MQTT Control Packet it MUST
+/// assign it a non-zero Packet Identifier that is currently unused [MQTT-2.2.1-3]. Non-normative prose in §4.3.3
+/// states: "The Packet Identifier becomes available for reuse once the sender has received the PUBCOMP packet or
+/// a PUBREC with a Reason Code of 0x80 or greater."
 ///
 /// This test completes a QoS 2 flow then starts a second QoS 2 flow with the same Packet Identifier and verifies
 /// both flows complete successfully.
@@ -1508,6 +1522,204 @@ async fn packet_id_reuse_after_pubcomp(config: TestConfig<'_>) -> Result<Outcome
             Packet::PubComp(comp) if comp.packet_id == 5 => break,
             Packet::Publish(_) => continue,
             other => return Ok(Outcome::fail_packet("PUBCOMP(5) reuse", &other)),
+        }
+    }
+
+    Ok(Outcome::Pass)
+}
+
+// ── Server Packet Identifier assignment ─────────────────────────────────────
+
+const SERVER_PID_NONZERO_UNIQUE: TestContext = TestContext {
+    refs: &["MQTT-2.2.1-4"],
+    description: "Server MUST assign non-zero, unique Packet Identifiers when delivering QoS 1 messages",
+    compliance: Compliance::Must,
+};
+
+/// Each time a Server sends a new PUBLISH (with QoS > 0) MQTT Control Packet it MUST assign it a
+/// non zero Packet Identifier that is currently unused. [MQTT-2.2.1-4]
+///
+/// This test subscribes at QoS 1, rapidly publishes several messages at QoS 0 from a separate
+/// client, then collects the delivered PUBLISH packets on the subscriber WITHOUT sending PUBACKs
+/// so that multiple messages are in-flight simultaneously. All server-assigned Packet Identifiers
+/// must be non-zero and distinct.
+async fn server_packet_ids_nonzero_and_unique(config: TestConfig<'_>) -> Result<Outcome> {
+    let topic = "mqtt/test/pub/server_pid";
+    let msg_count = 5;
+
+    // Set up subscriber at QoS 1 — we need the CONNACK to read Receive Maximum.
+    let sub_params = ConnectParams::new("mqtt-test-srvpid-sub");
+    let (mut sub, connack) = client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+
+    // Broker's Receive Maximum defaults to 65535 per spec if absent.
+    let recv_max = connack.properties.receive_maximum.unwrap_or(65535) as usize;
+
+    let sub_opts = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+    sub.send_subscribe(&sub_opts).await?;
+    match sub.recv().await? {
+        Packet::SubAck(_) => {}
+        other => return Ok(Outcome::fail_packet("SUBACK", &other)),
+    }
+
+    // Publisher sends messages at QoS 1 so delivery to the QoS 1 subscriber is also QoS 1
+    // (delivery QoS = min(publish, subscription)), ensuring the broker assigns Packet IDs.
+    let pub_params = ConnectParams::new("mqtt-test-srvpid-pub");
+    let (mut pub_client, _) =
+        client::connect(config.addr, &pub_params, config.recv_timeout).await?;
+
+    // Send up to recv_max messages (capped at msg_count) so we don't exceed the broker's limit.
+    let to_send = msg_count.min(recv_max);
+    for i in 0..to_send {
+        let payload = format!("msg-{i}");
+        pub_client
+            .send_publish(&PublishParams::qos1(
+                topic,
+                payload.into_bytes(),
+                (i + 1) as u16,
+            ))
+            .await?;
+        // Consume PUBACK from broker for each publish.
+        match pub_client.recv().await? {
+            Packet::PubAck(_) => {}
+            other => return Ok(Outcome::fail_packet("PUBACK", &other)),
+        }
+    }
+
+    // Collect delivered messages WITHOUT sending PUBACKs — they stay in-flight.
+    let mut packet_ids: Vec<u16> = Vec::new();
+    for _ in 0..to_send {
+        match sub.recv().await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                if let Some(pid) = p.packet_id {
+                    packet_ids.push(pid);
+                } else {
+                    return Ok(Outcome::fail(
+                        "Server delivered QoS 1 PUBLISH without Packet Identifier",
+                    ));
+                }
+            }
+            Ok(other) => return Ok(Outcome::fail_packet("PUBLISH", &other)),
+            Err(_) => break, // timeout — broker may have capped delivery
+        }
+    }
+
+    if packet_ids.len() < 2 {
+        return Ok(Outcome::fail(format!(
+            "Need at least 2 in-flight messages to verify uniqueness, got {}",
+            packet_ids.len()
+        )));
+    }
+
+    // Verify all non-zero.
+    if let Some(&zero) = packet_ids.iter().find(|&&pid| pid == 0) {
+        return Ok(Outcome::fail(format!(
+            "Server assigned Packet Identifier {zero}"
+        )));
+    }
+
+    // Verify all unique.
+    let mut seen = std::collections::HashSet::new();
+    for &pid in &packet_ids {
+        if !seen.insert(pid) {
+            return Ok(Outcome::fail(format!(
+                "Server reused Packet Identifier {pid} while still in-flight"
+            )));
+        }
+    }
+
+    // Clean up: ACK all messages so the broker releases state.
+    for &pid in &packet_ids {
+        sub.send_puback(pid, 0x00).await?;
+    }
+
+    Ok(Outcome::Pass)
+}
+
+// ── Acknowledgement Packet Identifier echo ──────────────────────────────────
+
+const PUBACK_ECHOES_PID: TestContext = TestContext {
+    refs: &["MQTT-2.2.1-5"],
+    description: "PUBACK MUST contain the same Packet Identifier as the originating PUBLISH",
+    compliance: Compliance::Must,
+};
+
+/// A PUBACK, PUBREC, PUBREL, or PUBCOMP packet MUST contain the same Packet Identifier as the
+/// PUBLISH packet that was originally sent. [MQTT-2.2.1-5]
+///
+/// This test publishes three QoS 1 messages with distinct Packet Identifiers (1, 7, 42) and
+/// verifies each PUBACK returned by the broker carries the matching identifier.
+async fn puback_echoes_publish_pid(config: TestConfig<'_>) -> Result<Outcome> {
+    let topic = "mqtt/test/pub/puback_echo";
+    let params = ConnectParams::new("mqtt-test-puback-echo");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    let pids: [u16; 3] = [1, 7, 42];
+    for &pid in &pids {
+        let payload = format!("msg-{pid}");
+        client
+            .send_publish(&PublishParams::qos1(topic, payload.into_bytes(), pid))
+            .await?;
+        match client.recv().await? {
+            Packet::PubAck(ack) if ack.packet_id == pid => {}
+            Packet::PubAck(ack) => {
+                return Ok(Outcome::fail(format!(
+                    "PUBACK echoed Packet Identifier {}, expected {}",
+                    ack.packet_id, pid
+                )));
+            }
+            other => return Ok(Outcome::fail_packet(&format!("PUBACK({pid})"), &other)),
+        }
+    }
+
+    Ok(Outcome::Pass)
+}
+
+const PUBREC_PUBCOMP_ECHOES_PID: TestContext = TestContext {
+    refs: &["MQTT-2.2.1-5"],
+    description: "PUBREC and PUBCOMP MUST contain the same Packet Identifier as the originating PUBLISH",
+    compliance: Compliance::Must,
+};
+
+/// A PUBACK, PUBREC, PUBREL, or PUBCOMP packet MUST contain the same Packet Identifier as the
+/// PUBLISH packet that was originally sent. [MQTT-2.2.1-5]
+///
+/// This test performs the QoS 2 four-way handshake for three messages with distinct Packet
+/// Identifiers (1, 7, 42) and verifies the PUBREC and PUBCOMP returned by the broker each carry
+/// the matching identifier.
+async fn pubrec_pubcomp_echo_pid(config: TestConfig<'_>) -> Result<Outcome> {
+    let topic = "mqtt/test/pub/pubrec_echo";
+    let params = ConnectParams::new("mqtt-test-pubrec-echo");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    let pids: [u16; 3] = [1, 7, 42];
+    for &pid in &pids {
+        let payload = format!("msg-{pid}");
+        client
+            .send_publish(&PublishParams::qos2(topic, payload.into_bytes(), pid))
+            .await?;
+
+        match client.recv().await? {
+            Packet::PubRec(rec) if rec.packet_id == pid => {}
+            Packet::PubRec(rec) => {
+                return Ok(Outcome::fail(format!(
+                    "PUBREC echoed Packet Identifier {}, expected {}",
+                    rec.packet_id, pid
+                )));
+            }
+            other => return Ok(Outcome::fail_packet(&format!("PUBREC({pid})"), &other)),
+        }
+
+        client.send_pubrel(pid, 0x00).await?;
+
+        match client.recv().await? {
+            Packet::PubComp(comp) if comp.packet_id == pid => {}
+            Packet::PubComp(comp) => {
+                return Ok(Outcome::fail(format!(
+                    "PUBCOMP echoed Packet Identifier {}, expected {}",
+                    comp.packet_id, pid
+                )));
+            }
+            other => return Ok(Outcome::fail_packet(&format!("PUBCOMP({pid})"), &other)),
         }
     }
 

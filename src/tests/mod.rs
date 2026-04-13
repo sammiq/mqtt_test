@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod connect;
 pub mod disconnect;
+pub mod encoding;
 pub mod malformed;
 pub mod ping;
 pub mod publish;
@@ -37,6 +38,7 @@ pub async fn run_selected(
     for suite in suites {
         let runner = match suite {
             SuiteName::Transport => transport::tests(config),
+            SuiteName::Encoding => encoding::tests(config),
             SuiteName::Connect => connect::tests(config),
             SuiteName::Ping => ping::tests(config),
             SuiteName::Publish => publish::tests(config),

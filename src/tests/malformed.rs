@@ -16,7 +16,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("MALFORMED PACKETS");
 
     suite.add(RESERVED_FLAGS, reserved_connect_flags(config));
-    suite.add(BAD_REMAINING_LEN, malformed_remaining_length(config));
     suite.add(EMPTY_TOPIC_NO_ALIAS, publish_empty_topic_no_alias(config));
     suite.add(TOPIC_ALIAS_ZERO, publish_topic_alias_zero(config));
     suite.add(SUB_NO_FILTERS, subscribe_no_filters(config));
@@ -29,7 +28,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
         INVALID_PLUS_WILDCARD,
         subscribe_invalid_plus_wildcard(config),
     );
-    suite.add(NULL_IN_TOPIC, publish_topic_with_null_char(config));
     suite.add(SUB_WRONG_FIXED, subscribe_wrong_fixed_header_bits(config));
     suite.add(NO_CLIENT_ID, connect_missing_client_id(config));
     suite.add(USERNAME_TRUNCATED, username_flag_truncated_payload(config));
@@ -45,8 +43,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     );
     suite.add(WILL_TOPIC_BAD_UTF8, will_topic_invalid_utf8(config));
     suite.add(USERNAME_BAD_UTF8, username_invalid_utf8(config));
-    suite.add(USER_PROP_BAD_UTF8, user_property_invalid_utf8(config));
-    suite.add(UTF8_SURROGATE, utf8_surrogate_pair_in_topic(config));
     suite.add(PUBACK_BAD_FLAGS, puback_invalid_fixed_header_flags(config));
     suite.add(WILL_QOS_THREE, will_qos_three(config));
     suite.add(DISCONNECT_BAD_RESERVED, disconnect_reserved_bits(config));
@@ -83,30 +79,6 @@ async fn reserved_connect_flags(config: TestConfig<'_>) -> Result<Outcome> {
         0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
     ];
     client.send_raw(bad_connect).await?;
-
-    Ok(expect_connect_reject(&mut client).await)
-}
-
-const BAD_REMAINING_LEN: TestContext = TestContext {
-    refs: &["MQTT-1.5.5-1"],
-    description: "Server MUST close connection on malformed remaining length",
-    compliance: Compliance::Must,
-};
-
-/// The encoded value MUST use the minimum number of bytes necessary to represent the value [MQTT-1.5.5-1].
-///
-/// This test sends a CONNECT with a 5-byte remaining length (all continuation bits set), violating the VBI limit of 4 bytes.
-async fn malformed_remaining_length(config: TestConfig<'_>) -> Result<Outcome> {
-    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
-
-    // Send a CONNECT-like packet with a 5-byte remaining length (all continuation bits set).
-    // This violates the VBI encoding limit of 4 bytes.
-    #[rustfmt::skip]
-    let bad_packet: &[u8] = &[
-        0x10,                               // CONNECT fixed header
-        0x80, 0x80, 0x80, 0x80, 0x01,       // malformed VBI: 5 continuation bytes
-    ];
-    client.send_raw(bad_packet).await?;
 
     Ok(expect_connect_reject(&mut client).await)
 }
@@ -405,35 +377,6 @@ async fn subscribe_invalid_plus_wildcard(config: TestConfig<'_>) -> Result<Outco
     }
 }
 
-const NULL_IN_TOPIC: TestContext = TestContext {
-    refs: &["MQTT-1.5.4-2"],
-    description: "PUBLISH with null character in topic name MUST be rejected",
-    compliance: Compliance::Must,
-};
-
-/// A UTF-8 Encoded String MUST NOT include an encoding of the null character U+0000 [MQTT-1.5.4-2].
-///
-/// This test sends a PUBLISH with topic "mqtt/\0test" containing a null character.
-async fn publish_topic_with_null_char(config: TestConfig<'_>) -> Result<Outcome> {
-    let params = ConnectParams::new("mqtt-test-null-topic");
-    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
-
-    // PUBLISH with topic "mqtt/\0test" — contains null character.
-    #[rustfmt::skip]
-    let bad_publish: &[u8] = &[
-        0x30,                                               // PUBLISH | QoS=0
-        0x0F,                                               // remaining length = 15
-        0x00, 0x0A,                                         // topic length = 10
-        b'm', b'q', b't', b't', b'/', 0x00, b't', b'e',   // "mqtt/\0te"
-        b's', b't',                                         // "st"
-        0x00,                                               // properties length = 0
-        0x48, 0x49,                                         // payload "HI"
-    ];
-    client.send_raw(bad_publish).await?;
-
-    Ok(expect_disconnect(&mut client).await)
-}
-
 const SUB_WRONG_FIXED: TestContext = TestContext {
     refs: &["MQTT-3.8.1-1"],
     description: "SUBSCRIBE fixed header reserved bits MUST be 0010",
@@ -525,38 +468,6 @@ async fn username_flag_truncated_payload(config: TestConfig<'_>) -> Result<Outco
     client.send_raw(bad_connect).await?;
 
     Ok(expect_connect_reject(&mut client).await)
-}
-
-const UTF8_SURROGATE: TestContext = TestContext {
-    refs: &["MQTT-1.5.4-1"],
-    description: "Server MUST reject ill-formed UTF-8 (surrogate pairs D800-DFFF) in strings",
-    compliance: Compliance::Must,
-};
-
-/// The character data in a UTF-8 Encoded String MUST be well-formed UTF-8 as defined by the Unicode specification [Unicode]
-/// and restated in RFC 3629 [RFC3629]. In particular, the character data MUST NOT include encodings of code points between
-/// U+D800 and U+DFFF. [MQTT-1.5.4-1]
-///
-/// This test sends a PUBLISH with a topic containing the ill-formed byte sequence 0xED 0xA0 0x80 (surrogate U+D800).
-async fn utf8_surrogate_pair_in_topic(config: TestConfig<'_>) -> Result<Outcome> {
-    let params = ConnectParams::new("mqtt-test-utf8-surrogate");
-    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
-
-    // PUBLISH with topic "mqtt/\xED\xA0\x80" — contains surrogate U+D800.
-    // Topic is 8 bytes: "mqtt/" (5) + 0xED 0xA0 0x80 (3).
-    #[rustfmt::skip]
-    let bad_publish: &[u8] = &[
-        0x30,                                               // PUBLISH | QoS=0
-        0x0D,                                               // remaining length = 13
-        0x00, 0x08,                                         // topic length = 8
-        b'm', b'q', b't', b't', b'/',                      // "mqtt/"
-        0xED, 0xA0, 0x80,                                   // ill-formed: surrogate U+D800
-        0x00,                                               // properties length = 0
-        0x48, 0x49,                                         // payload "HI"
-    ];
-    client.send_raw(bad_publish).await?;
-
-    Ok(expect_disconnect(&mut client).await)
 }
 
 const PUBACK_BAD_FLAGS: TestContext = TestContext {
@@ -833,39 +744,6 @@ async fn username_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
         0x00,                                           // properties length = 0
         0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
         0x00, 0x03, 0xED, 0xA0, 0x80,                  // username: surrogate U+D800
-    ];
-    client.send_raw(bad_connect).await?;
-
-    Ok(expect_connect_reject(&mut client).await)
-}
-
-const USER_PROP_BAD_UTF8: TestContext = TestContext {
-    refs: &["MQTT-1.5.7-1"],
-    description: "User Property with ill-formed UTF-8 key MUST be rejected",
-    compliance: Compliance::Must,
-};
-
-/// Both strings MUST comply with the requirements for UTF-8 Encoded Strings [MQTT-1.5.7-1].
-///
-/// This test sends a CONNECT with a User Property whose key contains the surrogate U+D800 (0xED 0xA0 0x80).
-async fn user_property_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
-    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
-
-    // CONNECT with a User Property (0x26) whose key is ill-formed UTF-8.
-    // Property: 0x26, key_len=3 (surrogate), value_len=1 ("v").
-    #[rustfmt::skip]
-    let bad_connect: &[u8] = &[
-        0x10,                                           // CONNECT
-        0x1A,                                           // remaining length = 26
-        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
-        0x05,                                           // protocol version 5
-        0x02,                                           // flags: clean_start=1
-        0x00, 0x3C,                                     // keep alive = 60
-        0x09,                                           // properties length = 9
-        0x26,                                           // User Property ID
-        0x00, 0x03, 0xED, 0xA0, 0x80,                  // key: surrogate U+D800
-        0x00, 0x01, b'v',                              // value: "v"
-        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
     ];
     client.send_raw(bad_connect).await?;
 

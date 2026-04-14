@@ -44,23 +44,43 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
         unsubscribe_packet_id_zero(config),
     );
 
-    // ── reviewed up to here ─────────────────────────────────────────────────
+    // MQTT-3.1.2-3 — Connect Flags reserved bit MUST be 0
+    suite.add(CONNECT_FLAGS_RESERVED, connect_flags_reserved_bit(config));
 
-    // MQTT-3.1 — CONNECT validation
-    suite.add(RESERVED_FLAGS, reserved_connect_flags(config));
-    suite.add(NO_CLIENT_ID, connect_missing_client_id(config));
-    suite.add(WILL_QOS_THREE, will_qos_three(config));
+    // MQTT-3.1.2-9 — Will Flag=1 requires Will Properties, Will Topic, and Will Payload
     suite.add(WILL_TRUNCATED, will_flag_truncated_payload(config));
-    suite.add(USERNAME_TRUNCATED, username_flag_truncated_payload(config));
-    suite.add(PASSWORD_TRUNCATED, password_flag_truncated_payload(config));
+
+    // MQTT-3.1.2-11 — Will Flag=0 forces Will QoS=0
+    suite.add(WILL_FLAG0_QOS_NONZERO, will_flag_zero_qos_nonzero(config));
+
+    // MQTT-3.1.2-12 — Will Flag=1 forbids Will QoS=3
+    suite.add(WILL_QOS_THREE, will_qos_three(config));
+
+    // MQTT-3.1.2-13 — Will Flag=0 forces Will Retain=0
+    suite.add(WILL_FLAG0_RETAIN_SET, will_flag_zero_retain_set(config));
+
+    // MQTT-3.1.2-16 — User Name Flag=0 forbids a User Name in the Payload
     suite.add(
         USERNAME_FLAG_MISMATCH,
         username_flag_clear_but_data_present(config),
     );
+
+    // MQTT-3.1.2-17 — User Name Flag=1 requires a User Name in the Payload
+    suite.add(USERNAME_TRUNCATED, username_flag_truncated_payload(config));
+
+    // MQTT-3.1.2-18 — Password Flag=0 forbids a Password in the Payload
     suite.add(
         PASSWORD_FLAG_MISMATCH,
         password_flag_clear_but_data_present(config),
     );
+
+    // MQTT-3.1.2-19 — Password Flag=1 requires a Password in the Payload
+    suite.add(PASSWORD_TRUNCATED, password_flag_truncated_payload(config));
+
+    // ── reviewed up to here ─────────────────────────────────────────────────
+
+    // MQTT-3.1 — CONNECT validation
+    suite.add(NO_CLIENT_ID, connect_missing_client_id(config));
     suite.add(WILL_TOPIC_BAD_UTF8, will_topic_invalid_utf8(config));
     suite.add(USERNAME_BAD_UTF8, username_invalid_utf8(config));
 
@@ -122,7 +142,7 @@ const CONNECT_RESERVED_FLAGS: TestContext = TestContext {
 ///
 /// This test sends a CONNECT with non-zero fixed header reserved flags (0x11 instead of 0x10).
 /// CONNECT fixed header bits 3-0 must be 0000. Note: this is the fixed header byte, not the
-/// Connect Flags byte (which is tested separately under MQTT-3.1.4-1).
+/// Connect Flags byte (which is tested separately under MQTT-3.1.2-3).
 async fn connect_reserved_flags(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -458,17 +478,18 @@ async fn unsubscribe_packet_id_zero(config: TestConfig<'_>) -> Result<Outcome> {
 
 // ── MQTT-3.1: CONNECT validation ─────────────────────────────────────────────
 
-const RESERVED_FLAGS: TestContext = TestContext {
-    refs: &["MQTT-3.1.4-1"],
-    description: "Server MUST validate CONNECT reserved flag is zero",
+const CONNECT_FLAGS_RESERVED: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-3"],
+    description: "Server MUST validate that the reserved flag in the CONNECT packet is set to 0",
     compliance: Compliance::Must,
 };
 
-/// The Server MUST validate that the CONNECT packet matches the format described in section 3.1 and
-/// close the Network Connection if it does not match. [MQTT-3.1.4-1]
+/// The Server MUST validate that the reserved flag in the CONNECT packet is set to 0.
+/// [MQTT-3.1.2-3]
 ///
-/// This test sends a CONNECT with the reserved flag bit 0 set to 1, which must be 0.
-async fn reserved_connect_flags(config: TestConfig<'_>) -> Result<Outcome> {
+/// This test sends a CONNECT with the reserved bit (bit 0) of the Connect Flags byte set to 1
+/// (flags = 0x03) and verifies the broker rejects the connection.
+async fn connect_flags_reserved_bit(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
     // Hand-craft a CONNECT with reserved flag bit 0 = 1.
@@ -519,16 +540,50 @@ async fn connect_missing_client_id(config: TestConfig<'_>) -> Result<Outcome> {
     Ok(expect_connect_reject(&mut client).await)
 }
 
+const WILL_FLAG0_QOS_NONZERO: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-11"],
+    description: "CONNECT with Will Flag=0 and Will QoS != 0 MUST be rejected as malformed",
+    compliance: Compliance::Must,
+};
+
+/// If the Will Flag is set to 0, then the Will QoS MUST be set to 0 (0x00). [MQTT-3.1.2-11]
+///
+/// This test sends a CONNECT with Will Flag=0 but Will QoS=1 (Connect Flags byte = 0x0A,
+/// Clean Start=1 + Will QoS bits set), and verifies the broker rejects it as a malformed packet.
+/// Payload contains only the Client ID (no Will fields, as required when Will Flag=0).
+async fn will_flag_zero_qos_nonzero(config: TestConfig<'_>) -> Result<Outcome> {
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // Connect Flags = 0x0A = 0b_0000_1010 — Clean Start=1, Will Flag=0, Will QoS=1.
+    // Payload contains only the Client ID — no Will fields (Will Flag=0).
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT fixed header
+        0x11,                                           // remaining length = 17
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x0A,                                           // flags: clean_start=1, will=0, will_qos=1
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // connect properties length = 0
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_connect_reject(&mut client).await)
+}
+
 const WILL_QOS_THREE: TestContext = TestContext {
     refs: &["MQTT-3.1.2-12"],
     description: "CONNECT with Will QoS=3 MUST be rejected as malformed",
     compliance: Compliance::Must,
 };
 
-/// If the Will Flag is set to 1, the value of Will QoS can be 0 (0x00), 1 (0x01), or 2 (0x02).
-/// A value of 3 (0x03) is a Malformed Packet. [MQTT-3.1.2-12]
+/// If the Will Flag is set to 1, the value of Will QoS can be 0 (0x00), 1 (0x01), or 2 (0x02). A
+/// value of 3 (0x03) is a Malformed Packet. [MQTT-3.1.2-12]
 ///
-/// This test sends a CONNECT with Will QoS=3 (both bits set), connect flags 0x1E.
+/// This test sends a CONNECT with Will Flag=1 and Will QoS=3 (both Will QoS bits set; Connect
+/// Flags byte = 0x1E), with a complete Will payload (Will Properties, Will Topic "w", Will Payload
+/// "x"), and verifies the broker rejects it as a malformed packet.
 async fn will_qos_three(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -554,17 +609,51 @@ async fn will_qos_three(config: TestConfig<'_>) -> Result<Outcome> {
     Ok(expect_connect_reject(&mut client).await)
 }
 
-const WILL_TRUNCATED: TestContext = TestContext {
-    refs: &["MQTT-3.1.2-9"],
-    description: "CONNECT with Will Flag=1 but missing will fields MUST be rejected",
+const WILL_FLAG0_RETAIN_SET: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-13"],
+    description: "CONNECT with Will Flag=0 and Will Retain=1 MUST be rejected as malformed",
     compliance: Compliance::Must,
 };
 
-/// If the Will Flag is set to 1, the Will Properties, Will Topic, and Will Payload fields MUST be
-/// present in the Payload. [MQTT-3.1.2-9]
+/// If the Will Flag is set to 0, then Will Retain MUST be set to 0. [MQTT-3.1.2-13]
 ///
-/// This test sends a CONNECT with Will Flag=1 but the payload contains only the client ID — no
-/// will fields.
+/// This test sends a CONNECT with Will Flag=0 but Will Retain=1 (Connect Flags byte = 0x22,
+/// Clean Start=1 + Will Retain bit set), and verifies the broker rejects it as a malformed packet.
+/// Payload contains only the Client ID (no Will fields, as required when Will Flag=0).
+async fn will_flag_zero_retain_set(config: TestConfig<'_>) -> Result<Outcome> {
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    // Connect Flags = 0x22 = 0b_0010_0010 — Clean Start=1, Will Flag=0, Will Retain=1.
+    // Payload contains only the Client ID — no Will fields (Will Flag=0).
+    #[rustfmt::skip]
+    let bad_connect: &[u8] = &[
+        0x10,                                           // CONNECT fixed header
+        0x11,                                           // remaining length = 17
+        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
+        0x05,                                           // protocol version 5
+        0x22,                                           // flags: clean_start=1, will=0, will_retain=1
+        0x00, 0x3C,                                     // keep alive = 60
+        0x00,                                           // connect properties length = 0
+        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
+    ];
+    client.send_raw(bad_connect).await?;
+
+    Ok(expect_connect_reject(&mut client).await)
+}
+
+const WILL_TRUNCATED: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-9"],
+    description: "Will Flag=1: Will Properties, Will Topic, and Will Payload MUST be in Payload",
+    compliance: Compliance::Must,
+};
+
+/// If the Will Flag is set to 1, the Will QoS and Will Retain fields in the Connect Flags will be
+/// used by the Server, and the Will Properties, Will Topic and Will Message fields MUST be present
+/// in the Payload. [MQTT-3.1.2-9]
+///
+/// This test sends a CONNECT with Will Flag=1 but a payload that contains only the Client ID
+/// (Will Properties, Will Topic and Will Payload all missing), and verifies the broker rejects the
+/// connection as malformed.
 async fn will_flag_truncated_payload(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 

@@ -42,27 +42,27 @@ Generated: 2026-04-14
 |-------------|-------|--------|-------------|
 | MQTT-3.1.0-1 | MUST | Implemented | First packet from Client must be CONNECT |
 | MQTT-3.1.0-2 | MUST | Implemented | Server must treat second CONNECT as Protocol Error |
-| MQTT-3.1.2-1 | MUST | Implemented | Server may send CONNACK 0x84 for unsupported protocol, must close connection |
-| MQTT-3.1.2-2 | MUST | Implemented | Wrong protocol version: may send CONNACK 0x84, must close connection |
-| MQTT-3.1.2-3 | MUST | Implemented | Server must validate reserved flag in CONNECT is 0 |
-| MQTT-3.1.2-4 | MUST | Implemented | Clean Start=1: discard existing Session, start new |
-| MQTT-3.1.2-5 | MUST | Implemented | Clean Start=0 with existing session: resume |
-| MQTT-3.1.2-6 | MUST | Implemented | Clean Start=0 with no session: create new |
-| MQTT-3.1.2-7 | MUST | Structural | Will Flag=1: Will Message stored on Server. Verified indirectly by will publish and will delay tests. |
-| MQTT-3.1.2-8 | MUST | Implemented | Will Message published after connection closed unexpectedly |
-| MQTT-3.1.2-9 | MUST | Implemented | Will Flag=1: Will fields must be present in Payload |
-| MQTT-3.1.2-10 | MUST | Implemented | Will Message removed once published or on clean DISCONNECT |
-| MQTT-3.1.2-11 | MUST | Implemented | Will Flag=0: Will QoS must be 0 |
-| MQTT-3.1.2-12 | MUST | Implemented | Will QoS=3 is invalid/malformed |
-| MQTT-3.1.2-13 | MUST | Implemented | Will Flag=0: Will Retain must be 0 |
-| MQTT-3.1.2-14 | MUST | Implemented | Will Flag=1, Will Retain=0: publish as non-retained |
-| MQTT-3.1.2-15 | MUST | Implemented | Will Flag=1, Will Retain=1: publish as retained |
-| MQTT-3.1.2-16 | MUST | Implemented | Username Flag=0: Username must not be in Payload |
-| MQTT-3.1.2-17 | MUST | Implemented | Username Flag=1: Username must be in Payload |
-| MQTT-3.1.2-18 | MUST | Implemented | Password Flag=0: Password must not be in Payload |
-| MQTT-3.1.2-19 | MUST | Implemented | Password Flag=1: Password must be in Payload |
-| MQTT-3.1.2-20 | MUST | Client | Client must send PINGREQ within Keep Alive. Client-side obligation. |
-| MQTT-3.1.2-21 | MUST | Client | Client must use Server Keep Alive if returned. Client-side obligation. |
+| MQTT-3.1.2-1 | MUST | Implemented | Protocol Name MUST be the UTF-8 string "MQTT" |
+| MQTT-3.1.2-2 | MUST | Implemented | Protocol Version MUST be 5 for MQTT v5 |
+| MQTT-3.1.2-3 | MUST | Implemented | Connect Flags reserved bit (bit 0) MUST be 0 |
+| MQTT-3.1.2-4 | MUST | Implemented | Clean Start=1: Server MUST discard any existing Session and start a new one |
+| MQTT-3.1.2-5 | MUST | Implemented | Clean Start=0 with existing Session: Server MUST resume communications |
+| MQTT-3.1.2-6 | MUST | Implemented | Clean Start=0 with no existing Session: Server MUST create a new Session |
+| MQTT-3.1.2-7 | MUST | Structural | Will Flag=1: Will Message stored on Server. Verified indirectly by will publish, removal, and delay tests. |
+| MQTT-3.1.2-8 | MUST | Implemented | Will Flag=1: Server MUST publish the Will Message on Network Connection close (unless delayed or removed) |
+| MQTT-3.1.2-9 | MUST | Implemented | Will Flag=1: Will Properties, Will Topic, and Will Payload MUST be present in the Payload |
+| MQTT-3.1.2-10 | MUST | Implemented | Server MUST remove the Will Message from Session State once published or on receipt of DISCONNECT 0x00 |
+| MQTT-3.1.2-11 | MUST | Implemented | Will Flag=0: Will QoS MUST be 0 |
+| MQTT-3.1.2-12 | MUST | Implemented | Will Flag=1: Will QoS=3 is a Malformed Packet |
+| MQTT-3.1.2-13 | MUST | Implemented | Will Flag=0: Will Retain MUST be 0 |
+| MQTT-3.1.2-14 | MUST | Implemented | Will Retain=0: Server MUST publish the Will Message as non-retained |
+| MQTT-3.1.2-15 | MUST | Implemented | Will Retain=1: Server MUST publish the Will Message as retained |
+| MQTT-3.1.2-16 | MUST | Implemented | User Name Flag=0: a User Name MUST NOT be present in the Payload |
+| MQTT-3.1.2-17 | MUST | Implemented | User Name Flag=1: a User Name MUST be present in the Payload |
+| MQTT-3.1.2-18 | MUST | Implemented | Password Flag=0: a Password MUST NOT be present in the Payload |
+| MQTT-3.1.2-19 | MUST | Implemented | Password Flag=1: a Password MUST be present in the Payload |
+| MQTT-3.1.2-20 | MUST | Client | Client MUST send PINGREQ within Keep Alive (absent other packets). Client-side obligation; broker-side mirror is MQTT-3.1.2-22. |
+| MQTT-3.1.2-21 | MUST | Client | Client MUST use Server Keep Alive value if returned in CONNACK. Client-side obligation. |
 | MQTT-3.1.2-22 | MUST | Implemented | Server must close connection if no packet within 1.5x Keep Alive |
 | MQTT-3.1.2-23 | MUST | Not tested | Client and Server must store Session State if Session Expiry > 0. Partially covered by session tests but not explicitly verified for both sides. |
 | MQTT-3.1.2-24 | MUST | Implemented | Server must not send packets exceeding client's Maximum Packet Size |

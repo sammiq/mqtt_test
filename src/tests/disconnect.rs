@@ -12,8 +12,14 @@ use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("DISCONNECT");
 
-    suite.add(DISCONNECT_CLOSE, server_closes_after_disconnect(config));
+    // MQTT-3.1.2-8 — Will Message publication clauses
     suite.add(DISCONNECT_WITH_WILL, disconnect_with_will(config));
+    suite.add(WILL_DELAY, will_delay_interval(config));
+    suite.add(WILL_ON_SESSION_END, will_publishes_on_session_end(config));
+
+    // ── reviewed up to here ─────────────────────────────────────────────────
+
+    suite.add(DISCONNECT_CLOSE, server_closes_after_disconnect(config));
     suite.add(
         NORMAL_DISCONNECT_DISCARDS_WILL,
         normal_disconnect_discards_will(config),
@@ -22,7 +28,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
         SESSION_EXPIRY_INCREASE,
         session_expiry_increase_rejected(config),
     );
-    suite.add(WILL_DELAY, will_delay_interval(config));
     suite.add(
         DISCONNECT_SESSION_TAKEOVER,
         disconnect_reason_session_takeover(config),
@@ -63,16 +68,19 @@ async fn server_closes_after_disconnect(config: TestConfig<'_>) -> Result<Outcom
 
 const DISCONNECT_WITH_WILL: TestContext = TestContext {
     refs: &["MQTT-3.1.2-8"],
-    description: "DISCONNECT with reason 0x04 MUST trigger will message publication",
+    description: "Will Message MUST be published when DISCONNECT reason code is non-0x00",
     compliance: Compliance::Must,
 };
 
-/// The Will Message MUST be published after the Network Connection is subsequently closed and either the Will Delay
-/// Interval has elapsed or the Session ends, unless the Will Message has been deleted by the Server on receipt of a
-/// DISCONNECT packet with Reason Code 0x00 (Normal disconnection) or a new Network Connection for the ClientID is
-/// opened before the Will Delay Interval has elapsed [MQTT-3.1.2-8].
+/// The Will Message MUST be published after the Network Connection is subsequently closed and
+/// either the Will Delay Interval has elapsed or the Session ends, unless the Will Message has been
+/// deleted by the Server on receipt of a DISCONNECT packet with Reason Code 0x00 (Normal
+/// disconnection) or a new Network Connection for the ClientID is opened before the Will Delay
+/// Interval has elapsed. [MQTT-3.1.2-8]
 ///
-/// This test sends DISCONNECT with reason 0x04 (Disconnect with Will Message) and verifies the will is published.
+/// This test exercises the clause that only DISCONNECT reason 0x00 suppresses the Will: it sends
+/// DISCONNECT with reason 0x04 (Disconnect with Will Message) and verifies the Will is still
+/// published to the subscriber.
 async fn disconnect_with_will(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will04";
 
@@ -204,17 +212,20 @@ async fn session_expiry_increase_rejected(config: TestConfig<'_>) -> Result<Outc
 
 const WILL_DELAY: TestContext = TestContext {
     refs: &["MQTT-3.1.2-8"],
-    description: "Will Delay Interval MUST delay will message publication after disconnect",
+    description: "Will Message MUST be delayed until the Will Delay Interval has elapsed",
     compliance: Compliance::Must,
 };
 
-/// The Will Message MUST be published after the Network Connection is subsequently closed and either the Will Delay
-/// Interval has elapsed or the Session ends, unless the Will Message has been deleted by the Server on receipt of a
-/// DISCONNECT packet with Reason Code 0x00 (Normal disconnection) or a new Network Connection for the ClientID is
-/// opened before the Will Delay Interval has elapsed [MQTT-3.1.2-8].
+/// The Will Message MUST be published after the Network Connection is subsequently closed and
+/// either the Will Delay Interval has elapsed or the Session ends, unless the Will Message has been
+/// deleted by the Server on receipt of a DISCONNECT packet with Reason Code 0x00 (Normal
+/// disconnection) or a new Network Connection for the ClientID is opened before the Will Delay
+/// Interval has elapsed. [MQTT-3.1.2-8]
 ///
-/// This test connects with a will message and Will Delay Interval=3s, abruptly disconnects, verifies the will does
-/// not arrive within 1s, then waits up to 5s for it to arrive.
+/// This test exercises the "Will Delay Interval has elapsed" clause: connects with a Will Message
+/// and Will Delay Interval=3s (with Session Expiry Interval=60 so the Session does not end first),
+/// abruptly disconnects, verifies the Will does NOT arrive within 1s, then waits up to 5s and
+/// verifies it does arrive after the delay elapses.
 async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     let will_topic = "mqtt/test/disconnect/will_delay";
 
@@ -228,11 +239,14 @@ async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
     )
     .await?;
 
-    // Connect with a will message + will_delay_interval = 3 seconds
+    // Connect with a will message + will_delay_interval = 3 seconds, SEI = 60 so the Session does
+    // not end before the Will Delay elapses (if SEI=0, the Session ends immediately on close and
+    // the Will should publish without delay per the "or the Session ends" clause).
     let mut will_params = ConnectParams::new("mqtt-test-willdelay-pub");
     let mut will = WillParams::new(will_topic, b"delayed-will");
     will.properties.will_delay_interval = Some(3);
     will_params.will = Some(will);
+    will_params.properties.session_expiry_interval = Some(60);
     let (will_client, _) = client::connect(config.addr, &will_params, config.recv_timeout).await?;
 
     // Abruptly disconnect (skip DISCONNECT so will is triggered)
@@ -260,6 +274,64 @@ async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
         )),
         Err(RecvError::Closed) => Ok(Outcome::fail(
             "Will message not received — connection closed (delay was 3s)",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+    }
+}
+
+const WILL_ON_SESSION_END: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-8"],
+    description: "Will Message MUST be published when the Session ends before the Will Delay",
+    compliance: Compliance::Must,
+};
+
+/// The Will Message MUST be published after the Network Connection is subsequently closed and
+/// either the Will Delay Interval has elapsed or the Session ends, unless the Will Message has been
+/// deleted by the Server on receipt of a DISCONNECT packet with Reason Code 0x00 (Normal
+/// disconnection) or a new Network Connection for the ClientID is opened before the Will Delay
+/// Interval has elapsed. [MQTT-3.1.2-8]
+///
+/// This test exercises the "or the Session ends" clause — the Will MUST publish at whichever comes
+/// first. Connects with Session Expiry Interval=0 (Session ends immediately on Network Connection
+/// close) and Will Delay Interval=10s (much longer than the Session), abruptly disconnects, and
+/// verifies the Will arrives well before the Will Delay could have elapsed. A broker that always
+/// waited for the Will Delay Interval would fail this test.
+async fn will_publishes_on_session_end(config: TestConfig<'_>) -> Result<Outcome> {
+    let will_topic = "mqtt/test/disconnect/will_session_end";
+
+    // Subscriber for the will topic.
+    let mut sub_client = client::connect_and_subscribe(
+        config.addr,
+        "mqtt-test-will-sessend-sub",
+        will_topic,
+        QoS::AtMostOnce,
+        config.recv_timeout,
+    )
+    .await?;
+
+    // Connect with Will Delay = 10s but Session Expiry Interval = 0 so the Session ends on close.
+    // Per MQTT-3.1.2-8 the Will publishes at min(Will Delay elapsed, Session ends) — i.e. ~0s.
+    let mut will_params = ConnectParams::new("mqtt-test-will-sessend-pub");
+    let mut will = WillParams::new(will_topic, b"will-on-session-end");
+    will.properties.will_delay_interval = Some(10);
+    will_params.will = Some(will);
+    will_params.properties.session_expiry_interval = Some(0);
+    let (will_client, _) = client::connect(config.addr, &will_params, config.recv_timeout).await?;
+
+    // Abrupt disconnect — Session ends immediately (SEI=0).
+    drop(will_client.into_raw());
+
+    // Will should arrive quickly (Session ended), well before the 10s Will Delay would elapse.
+    // Wait up to 5s to allow for small broker processing delays but fail if the broker honored the
+    // full 10s Will Delay in violation of the spec.
+    match sub_client.recv_with_timeout(Duration::from_secs(5)).await {
+        Ok(Packet::Publish(p)) if p.topic == will_topic => Ok(Outcome::Pass),
+        Ok(other) => Ok(Outcome::fail_packet("will PUBLISH on session end", &other)),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "Will not published within 5s — broker appears to wait for full Will Delay Interval (10s) rather than honouring 'Session ends' clause",
+        )),
+        Err(RecvError::Closed) => Ok(Outcome::fail(
+            "Subscriber connection closed before will arrived",
         )),
         Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
     }

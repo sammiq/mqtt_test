@@ -40,12 +40,14 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
         clean_start_false_creates_new_session(config),
     );
 
+    // MQTT-3.1.2-23 — Session State MUST be stored when Session Expiry Interval > 0
+    suite.add(SESSION_EXPIRY_MAX, session_expiry_max(config));
+
     // ── reviewed up to here ─────────────────────────────────────────────────
 
     suite.add(QOS1_REDELIVER, qos1_redelivery_on_resume(config));
     suite.add(QOS2_REDELIVER, qos2_redelivery_on_resume(config));
     suite.add(SESSION_EXPIRY_ZERO, session_expiry_zero(config));
-    suite.add(SESSION_EXPIRY_MAX, session_expiry_max(config));
     suite.add(SESSION_TAKEOVER, session_takeover(config));
     suite.add(SESSION_EXPIRY_DISCARD, session_expiry_discard(config));
     suite.add(QOS1_DUP_FLAG, qos1_dup_on_redelivery(config));
@@ -592,16 +594,19 @@ async fn session_expiry_zero(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SESSION_EXPIRY_MAX: TestContext = TestContext {
     refs: &["MQTT-3.1.2-23"],
-    description: "Session Expiry Interval of 0xFFFFFFFF means session never expires",
+    description: "Session State MUST persist across reconnect when Session Expiry Interval > 0",
     compliance: Compliance::Must,
 };
 
-/// The Client and Server MUST store the Session State after the Network Connection is closed if the Session Expiry
-/// Interval is greater than 0 [MQTT-3.1.2-23]. If the Session Expiry Interval is 0xFFFFFFFF (UINT_MAX), the Session
-/// does not expire.
+/// The Client and Server MUST store the Session State after the Network Connection is closed if
+/// the Session Expiry Interval is greater than 0. [MQTT-3.1.2-23]
 ///
-/// This test connects with Session Expiry Interval=0xFFFFFFFF, disconnects, then reconnects with Clean Start=0 and
-/// verifies the session persists (session_present=1).
+/// This test exercises the non-expiring boundary: connects with Session Expiry Interval=0xFFFFFFFF
+/// (UINT_MAX, which per §3.1.2.11.2 means "the Session does not expire"), cleanly disconnects, and
+/// then reconnects with Clean Start=0 and verifies `session_present=1` — confirming the broker
+/// stored the Session State. The inverse cases (SEI=0 → discard, finite SEI elapsed → discard) are
+/// covered by `session_expiry_zero` and `session_expiry_discard` under MQTT-4.1.0-2. A finite-SEI
+/// resume within the window is additionally covered by `session_present_on_resume`.
 async fn session_expiry_max(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-exp-max";
 

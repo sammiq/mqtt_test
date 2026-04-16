@@ -1,16 +1,16 @@
 # MQTT v5.0 Normative Requirements — Test Coverage
 
-Generated: 2026-04-14
+Generated: 2026-04-16
 
 ## Summary
 
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested) | 187 |
+| Implemented (tested) | 189 |
 | Structural (codec/format, implicitly covered) | 25 |
 | Client (client-side obligation, not server-testable) | 26 |
-| Not tested (with explanation) | 18 |
+| Not tested (with explanation) | 16 |
 
 ---
 
@@ -63,14 +63,14 @@ Generated: 2026-04-14
 | MQTT-3.1.2-19 | MUST | Implemented | Password Flag=1: a Password MUST be present in the Payload |
 | MQTT-3.1.2-20 | MUST | Client | Client MUST send PINGREQ within Keep Alive (absent other packets). Client-side obligation; broker-side mirror is MQTT-3.1.2-22. |
 | MQTT-3.1.2-21 | MUST | Client | Client MUST use Server Keep Alive value if returned in CONNACK. Client-side obligation. |
-| MQTT-3.1.2-22 | MUST | Implemented | Server must close connection if no packet within 1.5x Keep Alive |
-| MQTT-3.1.2-23 | MUST | Not tested | Client and Server must store Session State if Session Expiry > 0. Partially covered by session tests but not explicitly verified for both sides. |
-| MQTT-3.1.2-24 | MUST | Implemented | Server must not send packets exceeding client's Maximum Packet Size |
-| MQTT-3.1.2-25 | MUST | Not tested | Server must discard oversized packets silently. Hard to verify discard-and-continue behavior. |
-| MQTT-3.1.2-26 | MUST | Implemented | Server must not send Topic Alias greater than client's Topic Alias Maximum |
-| MQTT-3.1.2-27 | MUST | Implemented | Topic Alias Maximum absent/zero: Server must not send any Topic Aliases |
-| MQTT-3.1.2-28 | MUST | Implemented | Request Response Information=0: Server must not return Response Information |
-| MQTT-3.1.2-29 | MUST | Not tested | Request Problem Information=0: Server must not send Reason String/User Properties except on PUBLISH/CONNACK/DISCONNECT. Complex multi-packet verification needed. |
+| MQTT-3.1.2-22 | MUST | Implemented | Keep Alive non-zero: Server MUST close Network Connection if no packet received within 1.5 × Keep Alive |
+| MQTT-3.1.2-23 | MUST | Implemented | Client and Server MUST store Session State after Network Connection close when Session Expiry Interval > 0 |
+| MQTT-3.1.2-24 | MUST | Implemented | Server MUST NOT send packets exceeding client's Maximum Packet Size |
+| MQTT-3.1.2-25 | MUST | Implemented | Oversized packet MUST be discarded silently; Server then behaves as if send had completed |
+| MQTT-3.1.2-26 | MUST | Implemented | Server MUST NOT send a Topic Alias greater than client's Topic Alias Maximum |
+| MQTT-3.1.2-27 | MUST | Implemented | Topic Alias Maximum absent or zero: Server MUST NOT send any Topic Aliases |
+| MQTT-3.1.2-28 | MUST | Implemented | Request Response Information=0 or absent: Server MUST NOT return Response Information in CONNACK |
+| MQTT-3.1.2-29 | MUST | Not tested | Request Problem Information=0: Server MUST NOT send Reason String/User Properties on packets other than PUBLISH/CONNACK/DISCONNECT. Would require exhaustive packet-type coverage with a broker-controlled property-emission trigger; spec phrasing is also ambiguous on the CONNACK/DISCONNECT carve-out. |
 | MQTT-3.1.2-30 | MUST | Client | Client must not send non-AUTH/DISCONNECT before CONNACK when Auth Method set. Client-side obligation. |
 | MQTT-3.1.3-1 | MUST | Structural | Payload fields must appear in order. Enforced by codec encoding. |
 | MQTT-3.1.3-2 | MUST | Structural | ClientID identifies Session state. Implicit in all session tests. |

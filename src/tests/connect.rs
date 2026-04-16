@@ -60,6 +60,29 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     // MQTT-3.1.2-19 — Password Flag=1 requires a Password (positive case)
     suite.add(PASSWORD_NO_USERNAME, password_without_username(config));
 
+    // MQTT-3.1.2-22 — Server MUST close idle connection after 1.5× Keep Alive
+    suite.add(KEEP_ALIVE, keep_alive_timeout(config));
+
+    // MQTT-3.1.2-26 — Server MUST NOT send Topic Alias greater than Topic Alias Maximum
+    suite.add(
+        TOPIC_ALIAS_WITHIN_MAX,
+        server_topic_alias_within_max(config),
+    );
+
+    // MQTT-3.1.2-27 — Topic Alias Maximum absent or zero: server MUST NOT send any Topic Aliases
+    suite.add(TOPIC_ALIAS_MAX_ZERO, topic_alias_maximum_zero(config));
+    suite.add(TOPIC_ALIAS_MAX_ABSENT, topic_alias_maximum_absent(config));
+
+    // MQTT-3.1.2-28 — Request Response Information=0/absent: server MUST NOT return Response Info
+    suite.add(
+        RESP_INFO_ABSENT_DEFAULT,
+        response_info_absent_when_not_requested(config),
+    );
+    suite.add(
+        RESP_INFO_ABSENT_ZERO,
+        response_info_absent_when_zero(config),
+    );
+
     // ── reviewed up to here ─────────────────────────────────────────────────
 
     suite.add(BASIC_CONNECT, basic_connect(config));
@@ -76,9 +99,11 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(SERVER_KEEP_ALIVE, server_keep_alive(config));
     suite.add(TOPIC_ALIAS_MAX, topic_alias_maximum(config));
     suite.add(WILDCARD_SUB_AVAIL, wildcard_subscription_available(config));
-    suite.add(KEEP_ALIVE, keep_alive_timeout(config));
     suite.add(WILL_DELAY, will_delay_interval(config));
-    suite.add(REQ_RESP_INFO, request_response_information(config));
+    suite.add(
+        RESP_INFO_RETURNED,
+        response_info_returned_when_requested(config),
+    );
     suite.add(SERVER_MAX_QOS, server_maximum_qos(config));
     suite.add(SERVER_RECV_MAX, server_receive_maximum(config));
     suite.add(ENHANCED_AUTH, enhanced_auth_method(config));
@@ -99,7 +124,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(CONNACK_SERVER_REF, connack_server_reference(config));
     suite.add(SERVER_REDIRECT, server_redirection(config));
     suite.add(USERNAME_PASSWORD, username_password_accepted(config));
-    suite.add(TOPIC_ALIAS_MAX_ZERO, topic_alias_maximum_zero(config));
     suite.add(CONNACK_BEFORE_CLOSE, connack_before_close_on_error(config));
 
     suite
@@ -632,12 +656,14 @@ const KEEP_ALIVE: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// If the Keep Alive value is non-zero and the Server does not receive an MQTT Control Packet from the Client within
-/// one and a half times the Keep Alive time period, it MUST close the Network Connection to the Client as if the
-/// network had failed [MQTT-3.1.2-22].
+/// If the Keep Alive value is non-zero and the Server does not receive an MQTT Control Packet from
+/// the Client within one and a half times the Keep Alive time period, it MUST close the Network
+/// Connection to the Client as if the network had failed. [MQTT-3.1.2-22]
 ///
-/// This test connects with a 2-second keep-alive, sends no further packets, and verifies the server disconnects
-/// within 5 seconds.
+/// This test connects with Keep Alive=2s, sends no further packets, and waits up to 5s for the
+/// broker to close the connection (the spec requires closure within 1.5 × 2s = 3s; 5s is a generous
+/// upper bound to absorb scheduling jitter). A clean TCP close or a DISCONNECT from the broker both
+/// satisfy "close the Network Connection". A timeout (broker never closed) is a fail.
 async fn keep_alive_timeout(config: TestConfig<'_>) -> Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-keepalive");
     params.keep_alive = 2; // 2 seconds → broker should disconnect after ~3s
@@ -1194,18 +1220,22 @@ async fn will_delay_interval(config: TestConfig<'_>) -> Result<Outcome> {
 
 // ── Request/Response Information ────────────────────────────────────────────
 
-const REQ_RESP_INFO: TestContext = TestContext {
-    refs: &["MQTT-3.1.2-28"],
-    description: "Request Response Information: server MAY return Response Information",
+const RESP_INFO_RETURNED: TestContext = TestContext {
+    refs: &["§3.1.2.11.6"],
+    description: "Request Response Information=1: server MAY return Response Information in CONNACK",
     compliance: Compliance::May,
 };
 
-/// A value of 0 indicates that the Server MUST NOT return Response Information [MQTT-3.1.2-28]. If the value is 1 the
-/// Server MAY return Response Information in the CONNACK packet.
+/// If the value of Request Response Information is 1, the Server MAY return Response Information
+/// in the CONNACK packet. (§3.1.2.11.6, non-normative MAY — no numbered requirement.)
 ///
-/// This test connects with Request Response Information=1 and checks whether the server includes Response Information
-/// in CONNACK.
-async fn request_response_information(config: TestConfig<'_>) -> Result<Outcome> {
+/// Tests the permissive half of the Request Response Information switch: connects with the
+/// property set to 1 and reports whether the server chose to return Response Information. A
+/// broker that returns it passes; a broker that declines returns UNSUPPORTED rather than fail,
+/// since the rule is a MAY, not a MUST. The corresponding MUST NOT case (property=0 or absent)
+/// is tested separately by `response_info_absent_when_not_requested` and
+/// `response_info_absent_when_zero` under MQTT-3.1.2-28.
+async fn response_info_returned_when_requested(config: TestConfig<'_>) -> Result<Outcome> {
     let mut params = ConnectParams::new("mqtt-test-resp-info");
     params.properties.request_response_information = Some(true);
 
@@ -1217,6 +1247,63 @@ async fn request_response_information(config: TestConfig<'_>) -> Result<Outcome>
         Ok(Outcome::unsupported(
             "Server did not include Response Information despite request",
         ))
+    }
+}
+
+const RESP_INFO_ABSENT_DEFAULT: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-28"],
+    description: "Request Response Information absent (default 0): CONNACK MUST NOT carry Response Information",
+    compliance: Compliance::Must,
+};
+
+/// A value of 0 indicates that the Server MUST NOT return Response Information. [MQTT-3.1.2-28]
+///
+/// Covers the default (absent) half of the rule: §3.1.2.11.6 says Request Response Information is
+/// a 0/1 flag defaulting to 0 when absent. This test connects WITHOUT the property in CONNECT and
+/// verifies the CONNACK does not include a Response Information property. Companion to
+/// `response_info_absent_when_zero`, which covers the explicit-zero case.
+async fn response_info_absent_when_not_requested(config: TestConfig<'_>) -> Result<Outcome> {
+    let params = ConnectParams::new("mqtt-test-resp-info-absent");
+    assert!(
+        params.properties.request_response_information.is_none(),
+        "property must be absent for this test"
+    );
+
+    let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    if let Some(info) = connack.properties.response_information {
+        Ok(Outcome::fail(format!(
+            "Server returned Response Information ({info:?}) despite Request Response Information being absent (default 0)",
+        )))
+    } else {
+        Ok(Outcome::Pass)
+    }
+}
+
+const RESP_INFO_ABSENT_ZERO: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-28"],
+    description: "Request Response Information=0: CONNACK MUST NOT carry Response Information",
+    compliance: Compliance::Must,
+};
+
+/// A value of 0 indicates that the Server MUST NOT return Response Information. [MQTT-3.1.2-28]
+///
+/// Covers the explicit-zero half of the rule. A broker may conceivably treat the absent property
+/// as a request (incorrectly defaulting to 1), so this test pins down the explicit-0 case as
+/// well: connect with Request Response Information=0 and verify the CONNACK does not carry a
+/// Response Information property. Companion to `response_info_absent_when_not_requested`.
+async fn response_info_absent_when_zero(config: TestConfig<'_>) -> Result<Outcome> {
+    let mut params = ConnectParams::new("mqtt-test-resp-info-zero");
+    params.properties.request_response_information = Some(false);
+
+    let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    if let Some(info) = connack.properties.response_information {
+        Ok(Outcome::fail(format!(
+            "Server returned Response Information ({info:?}) despite Request Response Information=0",
+        )))
+    } else {
+        Ok(Outcome::Pass)
     }
 }
 
@@ -1754,16 +1841,19 @@ async fn will_non_retained(config: TestConfig<'_>) -> Result<Outcome> {
 // ── Topic Alias Maximum=0 ───────────────────────────────────────────────
 
 const TOPIC_ALIAS_MAX_ZERO: TestContext = TestContext {
-    refs: &["MQTT-3.1.2-26"],
-    description: "Topic Alias Maximum=0: server MUST NOT send Topic Aliases to client",
+    refs: &["MQTT-3.1.2-26", "MQTT-3.1.2-27"],
+    description: "Topic Alias Maximum=0: server MUST NOT send any Topic Aliases to client",
     compliance: Compliance::Must,
 };
 
-/// The Server MUST NOT send a Topic Alias in a PUBLISH packet to the Client greater than Topic Alias
-/// Maximum [MQTT-3.1.2-26].
+/// If Topic Alias Maximum is absent or zero, the Server MUST NOT send any Topic Aliases to the
+/// Client. [MQTT-3.1.2-27]
 ///
-/// This test connects with Topic Alias Maximum=0, subscribes to a topic, publishes several messages, and verifies
-/// none of the received messages contain a Topic Alias.
+/// This test covers the explicit Topic Alias Maximum=0 case: subscriber connects with
+/// topic_alias_maximum=0, publisher sends 5 messages on one topic, and none of the forwarded
+/// PUBLISH packets may carry a `topic_alias` property. The "absent" half of the rule is covered
+/// by `topic_alias_maximum_absent`. Any non-zero alias would be both >0 and >Maximum, so this is
+/// also the strongest possible check for MQTT-3.1.2-26 in the Max=0 regime.
 async fn topic_alias_maximum_zero(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/connect/ta_zero";
 
@@ -1812,6 +1902,146 @@ async fn topic_alias_maximum_zero(config: TestConfig<'_>) -> Result<Outcome> {
     } else {
         Ok(Outcome::fail(
             "No messages received to verify topic alias behavior",
+        ))
+    }
+}
+
+const TOPIC_ALIAS_MAX_ABSENT: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-26", "MQTT-3.1.2-27"],
+    description: "Topic Alias Maximum absent: server MUST NOT send any Topic Aliases to client",
+    compliance: Compliance::Must,
+};
+
+/// If Topic Alias Maximum is absent or zero, the Server MUST NOT send any Topic Aliases to the
+/// Client. [MQTT-3.1.2-27]
+///
+/// This test covers the "absent" half of the rule. A broker may conceivably default a missing
+/// Topic Alias Maximum to something other than zero (e.g. a broker-configured maximum), which
+/// would be non-compliant. Subscriber connects WITHOUT a `topic_alias_maximum` property in
+/// CONNECT, subscribes, publisher sends 5 messages, and none of the forwarded PUBLISH packets may
+/// carry a `topic_alias` property. Companion to `topic_alias_maximum_zero`, which covers the
+/// explicit-zero half.
+async fn topic_alias_maximum_absent(config: TestConfig<'_>) -> Result<Outcome> {
+    let topic = "mqtt/test/connect/ta_absent";
+
+    // Connect subscriber WITHOUT topic_alias_maximum (property absent).
+    let sub_params = ConnectParams::new("mqtt-test-ta-absent-sub");
+    assert!(
+        sub_params.properties.topic_alias_maximum.is_none(),
+        "property must be absent for this test"
+    );
+    let (mut sub_client, _) =
+        client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+
+    let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
+    sub_client.send_subscribe(&sub).await?;
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
+
+    let pub_conn = ConnectParams::new("mqtt-test-ta-absent-pub");
+    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+    for i in 0..5 {
+        pub_client
+            .send_publish(&PublishParams::qos0(
+                topic,
+                format!("ta-absent-msg-{i}").into_bytes(),
+            ))
+            .await?;
+    }
+
+    let mut received = 0;
+    for _ in 0..5 {
+        match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                if let Some(alias) = p.properties.topic_alias {
+                    return Ok(Outcome::fail(format!(
+                        "Server sent Topic Alias {alias} to client that did not advertise Topic Alias Maximum",
+                    )));
+                }
+                received += 1;
+            }
+            _ => break,
+        }
+    }
+
+    if received > 0 {
+        Ok(Outcome::Pass)
+    } else {
+        Ok(Outcome::fail(
+            "No messages received to verify topic alias behavior",
+        ))
+    }
+}
+
+// ── Topic Alias Maximum>0 boundary ──────────────────────────────────────
+
+const TOPIC_ALIAS_WITHIN_MAX: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-26"],
+    description: "Server MUST NOT send Topic Alias greater than client's Topic Alias Maximum",
+    compliance: Compliance::Must,
+};
+
+/// The Server MUST NOT send a Topic Alias in a PUBLISH packet to the Client greater than Topic
+/// Alias Maximum. [MQTT-3.1.2-26]
+///
+/// This test exercises the general Max>0 boundary that the Max=0 test cannot reach. Subscriber
+/// connects with Topic Alias Maximum=2 and subscribes to a wildcard `mqtt/test/ta_cap/+`. A
+/// separate publisher sends 10 QoS 0 messages to distinct topics beneath that prefix — enough
+/// distinct topics that a broker using aliases would exhaust the permitted range (1..=2) and be
+/// tempted to either allocate alias=3 or evict/reuse existing aliases. The test scans every
+/// forwarded PUBLISH: any `topic_alias` value outside 1..=2 is a fail. If no PUBLISH ever carries
+/// a `topic_alias` property (broker opts not to use aliases at all, which is permitted), the
+/// outcome is SKIP rather than PASS — a vacuous pass would hide genuine violations on brokers
+/// that do emit aliases.
+async fn server_topic_alias_within_max(config: TestConfig<'_>) -> Result<Outcome> {
+    let prefix = "mqtt/test/ta_cap";
+    let filter = format!("{prefix}/+");
+    const MAX: u16 = 2;
+    const N_TOPICS: usize = 10;
+
+    let mut sub_params = ConnectParams::new("mqtt-test-ta-cap-sub");
+    sub_params.properties.topic_alias_maximum = Some(MAX);
+    let (mut sub_client, _) =
+        client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+
+    let sub = SubscribeParams::simple(1, &filter, QoS::AtMostOnce);
+    sub_client.send_subscribe(&sub).await?;
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
+
+    let pub_conn = ConnectParams::new("mqtt-test-ta-cap-pub");
+    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+    for i in 0..N_TOPICS {
+        let topic = format!("{prefix}/t{i}");
+        pub_client
+            .send_publish(&PublishParams::qos0(topic, format!("msg-{i}").into_bytes()))
+            .await?;
+    }
+
+    let mut any_alias_seen = false;
+    for _ in 0..N_TOPICS {
+        match sub_client.recv_with_timeout(Duration::from_secs(2)).await {
+            Ok(Packet::Publish(p)) if p.topic.starts_with(prefix) => {
+                if let Some(alias) = p.properties.topic_alias {
+                    any_alias_seen = true;
+                    if alias == 0 || alias > MAX {
+                        return Ok(Outcome::fail(format!(
+                            "Server sent Topic Alias {alias} to client with Topic Alias Maximum={MAX}",
+                        )));
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+
+    if any_alias_seen {
+        Ok(Outcome::Pass)
+    } else {
+        Ok(Outcome::skip(
+            "Broker did not use Topic Aliases on server-to-client PUBLISH — vacuous pass avoided",
         ))
     }
 }

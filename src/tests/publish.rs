@@ -26,6 +26,12 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(PUBACK_ECHOES_PID, puback_echoes_publish_pid(config));
     suite.add(PUBREC_PUBCOMP_ECHOES_PID, pubrec_pubcomp_echo_pid(config));
 
+    // MQTT-3.1.2-24 — Server MUST NOT send packets exceeding client's Maximum Packet Size
+    suite.add(MAX_PKT_SIZE, max_packet_size_enforcement(config));
+
+    // MQTT-3.1.2-25 — oversized packets MUST be discarded silently; subscription continues
+    suite.add(MAX_PKT_SIZE_DISCARD, max_packet_size_silent_discard(config));
+
     // ── reviewed up to here ─────────────────────────────────────────────────
 
     suite.add(QOS0, qos0_accepted(config));
@@ -52,7 +58,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(RETAIN_REPLACE, retained_replacement(config));
     suite.add(PUBACK_NO_SUB, puback_no_matching_subscribers(config));
     suite.add(MEI_COUNTDOWN, message_expiry_countdown(config));
-    suite.add(MAX_PKT_SIZE, max_packet_size_enforcement(config));
     suite.add(TOPIC_ALIAS_REUSE, topic_alias_reuse(config));
     suite.add(TOPIC_ALIAS_RESET, topic_alias_reset_on_reconnect(config));
     suite.add(RECV_MAX_FLOW, receive_maximum_flow_control(config));
@@ -1026,10 +1031,14 @@ const MAX_PKT_SIZE: TestContext = TestContext {
     compliance: Compliance::Must,
 };
 
-/// The Server MUST NOT send packets exceeding Maximum Packet Size to the Client [MQTT-3.1.2-24].
+/// The Server MUST NOT send packets exceeding Maximum Packet Size to the Client. [MQTT-3.1.2-24]
 ///
-/// This test connects a subscriber with Maximum Packet Size = 64, publishes a 128-byte message from a separate
-/// client, and verifies the oversized packet is not delivered to the subscriber.
+/// This test connects a subscriber advertising Maximum Packet Size=64, has a separate publisher
+/// send a message whose forwarded PUBLISH packet is guaranteed to exceed that limit (128-byte
+/// payload alone, plus headers and topic), and verifies the subscriber does not receive the
+/// oversized PUBLISH. The handling of the oversized packet (silent discard vs connection close) is
+/// governed by MQTT-3.1.2-25 and tested separately — this test only checks that the oversized
+/// packet is NOT delivered, so both outcomes are accepted here.
 async fn max_packet_size_enforcement(config: TestConfig<'_>) -> Result<Outcome> {
     let topic = "mqtt/test/pub/max_pkt";
 
@@ -1070,6 +1079,107 @@ async fn max_packet_size_enforcement(config: TestConfig<'_>) -> Result<Outcome> 
         Ok(Packet::Publish(p)) if p.topic == topic => Ok(Outcome::Pass),
         _ => Ok(Outcome::Pass), // Server may have disconnected — still compliant
     }
+}
+
+const MAX_PKT_SIZE_DISCARD: TestContext = TestContext {
+    refs: &["MQTT-3.1.2-25"],
+    description: "Oversized packet MUST be discarded silently; subscription continues delivering",
+    compliance: Compliance::Must,
+};
+
+/// Where a Packet is too large to send, the Server MUST discard it without sending it and then
+/// behave as if it had completed sending that Application Message. [MQTT-3.1.2-25]
+///
+/// This test distinguishes "silently discarded" from "broker gave up on the subscription". A
+/// subscriber advertises Maximum Packet Size=64 and subscribes QoS 1, then a separate publisher
+/// sends three messages in order: a small "first", a 128-byte oversized, and a small "last". The
+/// subscriber must receive BOTH small messages (proving the subscription is still alive after the
+/// broker dropped the oversized one) and must NOT receive the oversized. The "behave as if it had
+/// completed sending" clause implies no redelivery of the oversized packet under QoS 1 — the
+/// broker treats it as delivered and moves on.
+async fn max_packet_size_silent_discard(config: TestConfig<'_>) -> Result<Outcome> {
+    let topic = "mqtt/test/pub/max_pkt_discard";
+
+    // Subscriber with a small Maximum Packet Size.
+    let mut sub_params = ConnectParams::new("mqtt-test-maxpkt-discard-sub");
+    sub_params.properties.maximum_packet_size = Some(64);
+    let (mut sub_client, _) =
+        client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+    let sub = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
+    sub_client.send_subscribe(&sub).await?;
+    if let Err(r) = expect_suback(&mut sub_client).await {
+        return Ok(r);
+    }
+
+    // Publisher sends small, big, small — all QoS 1.
+    let pub_conn = ConnectParams::new("mqtt-test-maxpkt-discard-pub");
+    let (mut pub_client, _) = client::connect(config.addr, &pub_conn, config.recv_timeout).await?;
+
+    pub_client
+        .send_publish(&PublishParams::qos1(topic, b"first".to_vec(), 1))
+        .await?;
+    let _ = pub_client.recv().await; // PUBACK
+    pub_client
+        .send_publish(&PublishParams::qos1(topic, vec![b'X'; 128], 2))
+        .await?;
+    let _ = pub_client.recv().await; // PUBACK
+    pub_client
+        .send_publish(&PublishParams::qos1(topic, b"last".to_vec(), 3))
+        .await?;
+    let _ = pub_client.recv().await; // PUBACK
+
+    // Collect subscriber deliveries within a bounded window; ack each one.
+    let mut got: Vec<Vec<u8>> = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline {
+        match sub_client
+            .recv_with_timeout(Duration::from_millis(500))
+            .await
+        {
+            Ok(Packet::Publish(p)) if p.topic == topic => {
+                if let Some(pid) = p.packet_id {
+                    sub_client.send_puback(pid, 0x00).await?;
+                }
+                got.push(p.payload);
+            }
+            Ok(_) => {}
+            Err(RecvError::Timeout) => {
+                if got.len() >= 2 {
+                    break;
+                }
+            }
+            Err(RecvError::Closed) => {
+                return Ok(Outcome::fail(
+                    "broker closed subscriber connection — spec requires silent discard, not disconnect",
+                ));
+            }
+            Err(RecvError::Other(e)) => {
+                return Ok(Outcome::fail(format!("subscriber recv error: {e:#}")));
+            }
+        }
+    }
+
+    if got.iter().any(|p| p.len() > 40) {
+        return Ok(Outcome::fail(
+            "subscriber received oversized PUBLISH — broker did not discard",
+        ));
+    }
+
+    let has_first = got.iter().any(|p| p.as_slice() == b"first");
+    let has_last = got.iter().any(|p| p.as_slice() == b"last");
+
+    if !has_first {
+        return Ok(Outcome::fail(
+            "subscriber did not receive \"first\" message (pre-oversized)",
+        ));
+    }
+    if !has_last {
+        return Ok(Outcome::fail(
+            "subscriber did not receive \"last\" message — broker dropped the subscription instead of silently discarding the oversized packet",
+        ));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 // ── Topic Alias lifecycle ───────────────────────────────────────────────────

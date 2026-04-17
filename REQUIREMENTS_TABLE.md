@@ -7,10 +7,10 @@ Generated: 2026-04-16
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested) | 189 |
+| Implemented (tested) | 190 |
 | Structural (codec/format, implicitly covered) | 25 |
 | Client (client-side obligation, not server-testable) | 26 |
-| Not tested (with explanation) | 16 |
+| Not tested (with explanation) | 15 |
 
 ---
 
@@ -77,7 +77,7 @@ Generated: 2026-04-16
 | MQTT-3.1.3-3 | MUST | Implemented | ClientID must be present and first in CONNECT Payload |
 | MQTT-3.1.3-4 | MUST | Implemented | ClientID must be UTF-8 Encoded String |
 | MQTT-3.1.3-5 | MUST | Implemented | Server must allow ClientIDs 1-23 bytes of [0-9a-zA-Z] |
-| MQTT-3.1.3-6 | MUST | Not tested | Server may allow zero-length ClientID, must treat as special case. Tested via MQTT-3.1.3-7 (Assigned Client Identifier) but not the "special case" aspect. |
+| MQTT-3.1.3-6 | MUST | Implemented | Server may allow zero-length ClientID; MUST assign a unique Client Identifier. Uniqueness verified by two overlapping empty-ClientID sessions receiving distinct Assigned Client Identifiers. |
 | MQTT-3.1.3-7 | MUST | Implemented | Server must return Assigned Client Identifier for zero-length ClientID |
 | MQTT-3.1.3-8 | MUST | Implemented | Server rejecting ClientID: may respond 0x85, must close connection |
 | MQTT-3.1.3-9 | MUST | Implemented | New connection before Will Delay passes: must not send Will Message |

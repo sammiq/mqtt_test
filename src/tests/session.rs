@@ -43,12 +43,14 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     // MQTT-3.1.2-23 — Session State MUST be stored when Session Expiry Interval > 0
     suite.add(SESSION_EXPIRY_MAX, session_expiry_max(config));
 
+    // MQTT-3.1.4-3 — Duplicate ClientID: Server MUST close the existing Client's connection
+    suite.add(SESSION_TAKEOVER, session_takeover(config));
+
     // ── reviewed up to here ─────────────────────────────────────────────────
 
     suite.add(QOS1_REDELIVER, qos1_redelivery_on_resume(config));
     suite.add(QOS2_REDELIVER, qos2_redelivery_on_resume(config));
     suite.add(SESSION_EXPIRY_ZERO, session_expiry_zero(config));
-    suite.add(SESSION_TAKEOVER, session_takeover(config));
     suite.add(SESSION_EXPIRY_DISCARD, session_expiry_discard(config));
     suite.add(QOS1_DUP_FLAG, qos1_dup_on_redelivery(config));
 
@@ -636,15 +638,20 @@ async fn session_expiry_max(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SESSION_TAKEOVER: TestContext = TestContext {
     refs: &["MQTT-3.1.4-3"],
-    description: "Server MUST disconnect existing client when new client uses same Client ID",
+    description: "Server MUST close existing client's connection on duplicate Client ID",
     compliance: Compliance::Must,
 };
 
-/// If the ClientID represents a Client already connected to the Server, the Server sends a DISCONNECT packet to the
-/// existing Client with Reason Code of 0x8E (Session taken over) and MUST close the Network Connection of the
-/// existing Client [MQTT-3.1.4-3].
+/// If the ClientID represents a Client already connected to the Server, the Server sends a
+/// DISCONNECT packet to the existing Client with Reason Code of 0x8E (Session taken over) as
+/// described in section 4.13 and MUST close the Network Connection of the existing Client.
+/// [MQTT-3.1.4-3]
 ///
-/// This test connects two clients with the same Client ID and verifies the first is disconnected.
+/// This test connects two clients with the same Client ID and verifies the first has its network
+/// connection closed — the MUST portion of the requirement. Either a clean TCP close or a received
+/// DISCONNECT packet satisfies the MUST. The companion test
+/// `disconnect_reason_session_takeover` in [disconnect.rs] covers the prescriptive "sends a
+/// DISCONNECT ... with Reason Code 0x8E" part at SHOULD level.
 async fn session_takeover(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-takeover";
 

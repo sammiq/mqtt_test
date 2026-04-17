@@ -5,6 +5,7 @@ use anyhow::Result;
 use clap::ValueEnum;
 use indicatif::{HumanDuration, ProgressBar};
 
+use crate::capabilities::BrokerCapabilities;
 use crate::types::{Compliance, Outcome, Suite, TestContext, TestResult};
 
 /// How to order the final compliance report.
@@ -20,11 +21,15 @@ pub enum ReportOrder {
 
 pub struct Report {
     pub suites: Vec<Suite>,
+    pub capabilities: Option<BrokerCapabilities>,
 }
 
 impl Report {
     pub fn new() -> Self {
-        Self { suites: Vec::new() }
+        Self {
+            suites: Vec::new(),
+            capabilities: None,
+        }
     }
 
     pub fn add(&mut self, suite: Suite) {
@@ -36,6 +41,11 @@ impl Report {
 
         println!("MQTT v5 Compliance Report");
         println!("{}", "=".repeat(60));
+
+        if let Some(caps) = &self.capabilities {
+            println!();
+            caps.print(color);
+        }
 
         match order {
             ReportOrder::Suite => self.print_by_suite(verbose, failures_only, color),

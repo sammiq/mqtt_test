@@ -14,6 +14,7 @@ pub mod websocket;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::SuiteName;
+use crate::capabilities::BrokerCapabilities;
 use crate::report::Report;
 use crate::types::TestConfig;
 
@@ -35,6 +36,9 @@ pub async fn run_selected(
     mp: &MultiProgress,
 ) -> Report {
     let mut report = Report::new();
+    report.capabilities = BrokerCapabilities::probe(config.addr, config.recv_timeout)
+        .await
+        .ok();
     for suite in suites {
         let runner = match suite {
             SuiteName::Transport => transport::tests(config),

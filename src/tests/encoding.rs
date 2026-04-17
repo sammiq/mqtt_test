@@ -41,6 +41,11 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     );
     suite.add(UTF8_OVERLONG_CLIENT_ID, utf8_overlong_in_client_id(config));
     suite.add(
+        UTF8_SURROGATE_WILL_TOPIC,
+        utf8_surrogate_in_will_topic(config),
+    );
+    suite.add(UTF8_SURROGATE_USERNAME, utf8_surrogate_in_username(config));
+    suite.add(
         UTF8_SURROGATE_SUBSCRIBE,
         utf8_surrogate_in_subscribe_filter(config),
     );
@@ -48,6 +53,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     // MQTT-1.5.4-2 — null character prohibition
     suite.add(NULL_IN_TOPIC, null_char_in_publish_topic(config));
     suite.add(NULL_IN_CLIENT_ID, null_char_in_client_id(config));
+    suite.add(NULL_IN_WILL_TOPIC, null_char_in_will_topic(config));
     suite.add(
         NULL_IN_SUBSCRIBE_FILTER,
         null_char_in_subscribe_filter(config),
@@ -151,6 +157,68 @@ async fn connect_bad_utf8_client_id(config: TestConfig<'_>, bad_bytes: &[u8]) ->
     packet.push((client_id_len >> 8) as u8);
     packet.push((client_id_len & 0xFF) as u8);
     packet.extend_from_slice(client_id_prefix);
+    packet.extend_from_slice(bad_bytes);
+
+    client.send_raw(&packet).await?;
+    Ok(expect_connect_reject(&mut client).await)
+}
+
+/// Build and send a CONNECT with invalid bytes in the Will Topic, then expect rejection.
+///
+/// Constructs a CONNECT with Will Flag=1, client ID "t", a Will Topic consisting solely of
+/// `bad_bytes`, and a 1-byte Will Payload "x". The packet is built dynamically so callers only
+/// need to supply the bad byte sequence.
+async fn connect_bad_utf8_will_topic(config: TestConfig<'_>, bad_bytes: &[u8]) -> Result<Outcome> {
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    let will_topic_len = bad_bytes.len();
+    // variable header: protocol_name(6) + version(1) + flags(1) + keep_alive(2) + props_len(1) = 11
+    // payload: client_id(2+1) + will_props_len(1) + will_topic(2+len) + will_payload(2+1)
+    let remaining = 11 + (2 + 1) + 1 + (2 + will_topic_len) + (2 + 1);
+
+    let mut packet = Vec::with_capacity(2 + remaining);
+    packet.push(0x10); // CONNECT fixed header
+    packet.push(remaining as u8);
+    packet.extend_from_slice(&[0x00, 0x04, b'M', b'Q', b'T', b'T']); // protocol name
+    packet.push(0x05); // protocol version 5
+    packet.push(0x06); // flags: clean_start=1, will=1
+    packet.extend_from_slice(&[0x00, 0x3C]); // keep alive = 60
+    packet.push(0x00); // connect properties length = 0
+    packet.extend_from_slice(&[0x00, 0x01, b't']); // client ID "t"
+    packet.push(0x00); // will properties length = 0
+    packet.push((will_topic_len >> 8) as u8);
+    packet.push((will_topic_len & 0xFF) as u8);
+    packet.extend_from_slice(bad_bytes);
+    packet.extend_from_slice(&[0x00, 0x01, b'x']); // will payload "x"
+
+    client.send_raw(&packet).await?;
+    Ok(expect_connect_reject(&mut client).await)
+}
+
+/// Build and send a CONNECT with invalid bytes in the Username field, then expect rejection.
+///
+/// Constructs a CONNECT with Username Flag=1, client ID "test", and a Username consisting solely
+/// of `bad_bytes`. The packet is built dynamically so callers only need to supply the bad byte
+/// sequence.
+async fn connect_bad_utf8_username(config: TestConfig<'_>, bad_bytes: &[u8]) -> Result<Outcome> {
+    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
+
+    let username_len = bad_bytes.len();
+    // variable header: protocol_name(6) + version(1) + flags(1) + keep_alive(2) + props_len(1) = 11
+    // payload: client_id(2+4) + username(2+len)
+    let remaining = 11 + (2 + 4) + (2 + username_len);
+
+    let mut packet = Vec::with_capacity(2 + remaining);
+    packet.push(0x10); // CONNECT fixed header
+    packet.push(remaining as u8);
+    packet.extend_from_slice(&[0x00, 0x04, b'M', b'Q', b'T', b'T']); // protocol name
+    packet.push(0x05); // protocol version 5
+    packet.push(0x82); // flags: clean_start=1, username=1
+    packet.extend_from_slice(&[0x00, 0x3C]); // keep alive = 60
+    packet.push(0x00); // properties length = 0
+    packet.extend_from_slice(&[0x00, 0x04, b't', b'e', b's', b't']); // client ID "test"
+    packet.push((username_len >> 8) as u8);
+    packet.push((username_len & 0xFF) as u8);
     packet.extend_from_slice(bad_bytes);
 
     client.send_raw(&packet).await?;
@@ -437,7 +505,7 @@ async fn utf8_five_byte_in_publish_topic(config: TestConfig<'_>) -> Result<Outco
 }
 
 const UTF8_SURROGATE_CLIENT_ID: TestContext = TestContext {
-    refs: &["MQTT-1.5.4-1"],
+    refs: &["MQTT-1.5.4-1", "MQTT-3.1.3-4"],
     description: "Server MUST reject ill-formed UTF-8 (surrogate) in CONNECT Client ID",
     compliance: Compliance::Must,
 };
@@ -445,6 +513,8 @@ const UTF8_SURROGATE_CLIENT_ID: TestContext = TestContext {
 /// The character data in a UTF-8 Encoded String MUST be well-formed UTF-8 as defined by the Unicode
 /// specification [Unicode] and restated in RFC 3629 [RFC3629]. In particular, the character data MUST NOT
 /// include encodings of code points between U+D800 and U+DFFF. [MQTT-1.5.4-1]
+///
+/// The ClientID MUST be a UTF-8 Encoded String as defined in Section 1.5.4. [MQTT-3.1.3-4]
 ///
 /// This test sends a CONNECT with a Client ID containing the surrogate U+D800 (0xED 0xA0 0x80),
 /// exercising CONNECT-time UTF-8 validation on the Client ID field — a different code path from
@@ -454,7 +524,7 @@ async fn utf8_surrogate_in_client_id(config: TestConfig<'_>) -> Result<Outcome> 
 }
 
 const UTF8_OVERLONG_CLIENT_ID: TestContext = TestContext {
-    refs: &["MQTT-1.5.4-1", "MQTT-1.5.4-2"],
+    refs: &["MQTT-1.5.4-1", "MQTT-1.5.4-2", "MQTT-3.1.3-4"],
     description: "Server MUST reject overlong UTF-8 encoding (0xC0 0x80) in CONNECT Client ID",
     compliance: Compliance::Must,
 };
@@ -465,12 +535,53 @@ const UTF8_OVERLONG_CLIENT_ID: TestContext = TestContext {
 ///
 /// A UTF-8 Encoded String MUST NOT include an encoding of the null character U+0000. [MQTT-1.5.4-2]
 ///
+/// The ClientID MUST be a UTF-8 Encoded String as defined in Section 1.5.4. [MQTT-3.1.3-4]
+///
 /// This test sends a CONNECT with a Client ID containing the overlong encoding 0xC0 0x80 (non-shortest
 /// form for U+0000). This violates both requirements: ill-formed UTF-8 (MQTT-1.5.4-1) and encodes the
 /// null character (MQTT-1.5.4-2). Exercises CONNECT-time validation on a different code path from
 /// PUBLISH topic validation.
 async fn utf8_overlong_in_client_id(config: TestConfig<'_>) -> Result<Outcome> {
     connect_bad_utf8_client_id(config, &[0xC0, 0x80]).await
+}
+
+const UTF8_SURROGATE_WILL_TOPIC: TestContext = TestContext {
+    refs: &["MQTT-1.5.4-1", "MQTT-3.1.3-11"],
+    description: "Server MUST reject ill-formed UTF-8 (surrogate) in CONNECT Will Topic",
+    compliance: Compliance::Must,
+};
+
+/// The character data in a UTF-8 Encoded String MUST be well-formed UTF-8 as defined by the Unicode
+/// specification [Unicode] and restated in RFC 3629 [RFC3629]. In particular, the character data MUST NOT
+/// include encodings of code points between U+D800 and U+DFFF. [MQTT-1.5.4-1]
+///
+/// The Will Topic MUST be a UTF-8 Encoded String. [MQTT-3.1.3-11]
+///
+/// This test sends a CONNECT with Will Flag=1 and a Will Topic containing the surrogate U+D800
+/// (0xED 0xA0 0x80), exercising CONNECT-time UTF-8 validation on the Will Topic field — a
+/// distinct code path from PUBLISH topic and Client ID validation.
+async fn utf8_surrogate_in_will_topic(config: TestConfig<'_>) -> Result<Outcome> {
+    connect_bad_utf8_will_topic(config, &[0xED, 0xA0, 0x80]).await
+}
+
+const UTF8_SURROGATE_USERNAME: TestContext = TestContext {
+    refs: &["MQTT-1.5.4-1", "MQTT-3.1.3-12"],
+    description: "Server MUST reject ill-formed UTF-8 (surrogate) in CONNECT Username",
+    compliance: Compliance::Must,
+};
+
+/// The character data in a UTF-8 Encoded String MUST be well-formed UTF-8 as defined by the Unicode
+/// specification [Unicode] and restated in RFC 3629 [RFC3629]. In particular, the character data MUST NOT
+/// include encodings of code points between U+D800 and U+DFFF. [MQTT-1.5.4-1]
+///
+/// If the User Name Flag is set to 1, the User Name is the next field in the Payload. The User
+/// Name MUST be a UTF-8 Encoded String as defined in Section 1.5.4. [MQTT-3.1.3-12]
+///
+/// This test sends a CONNECT with Username Flag=1 and a Username containing the surrogate U+D800
+/// (0xED 0xA0 0x80), exercising CONNECT-time UTF-8 validation on the Username field — a distinct
+/// code path from Client ID, Will Topic, and PUBLISH topic validation.
+async fn utf8_surrogate_in_username(config: TestConfig<'_>) -> Result<Outcome> {
+    connect_bad_utf8_username(config, &[0xED, 0xA0, 0x80]).await
 }
 
 const UTF8_SURROGATE_SUBSCRIBE: TestContext = TestContext {
@@ -529,6 +640,23 @@ const NULL_IN_CLIENT_ID: TestContext = TestContext {
 /// CONNECT-time null character validation — a different code path from PUBLISH topic validation.
 async fn null_char_in_client_id(config: TestConfig<'_>) -> Result<Outcome> {
     connect_bad_utf8_client_id(config, &[0x00]).await
+}
+
+const NULL_IN_WILL_TOPIC: TestContext = TestContext {
+    refs: &["MQTT-1.5.4-2", "MQTT-3.1.3-11"],
+    description: "CONNECT with null character in Will Topic MUST be rejected",
+    compliance: Compliance::Must,
+};
+
+/// A UTF-8 Encoded String MUST NOT include an encoding of the null character U+0000. [MQTT-1.5.4-2]
+///
+/// The Will Topic MUST be a UTF-8 Encoded String. [MQTT-3.1.3-11]
+///
+/// This test sends a CONNECT with Will Flag=1 and a Will Topic containing a direct null byte
+/// (0x00), exercising CONNECT-time null character validation on the Will Topic field — a distinct
+/// code path from PUBLISH topic, Client ID, and SUBSCRIBE filter validation.
+async fn null_char_in_will_topic(config: TestConfig<'_>) -> Result<Outcome> {
+    connect_bad_utf8_will_topic(config, &[0x00]).await
 }
 
 const NULL_IN_SUBSCRIBE_FILTER: TestContext = TestContext {

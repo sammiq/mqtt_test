@@ -77,12 +77,10 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     // MQTT-3.1.2-19 — Password Flag=1 requires a Password in the Payload
     suite.add(PASSWORD_TRUNCATED, password_flag_truncated_payload(config));
 
-    // ── reviewed up to here ─────────────────────────────────────────────────
-
-    // MQTT-3.1 — CONNECT validation
+    // MQTT-3.1.3-3 — ClientID MUST be present in the CONNECT Payload
     suite.add(NO_CLIENT_ID, connect_missing_client_id(config));
-    suite.add(WILL_TOPIC_BAD_UTF8, will_topic_invalid_utf8(config));
-    suite.add(USERNAME_BAD_UTF8, username_invalid_utf8(config));
+
+    // ── reviewed up to here ─────────────────────────────────────────────────
 
     // MQTT-3.3 — PUBLISH validation
     suite.add(EMPTY_TOPIC_NO_ALIAS, publish_empty_topic_no_alias(config));
@@ -474,8 +472,6 @@ async fn unsubscribe_packet_id_zero(config: TestConfig<'_>) -> Result<Outcome> {
     Ok(expect_disconnect(&mut client).await)
 }
 
-// ── reviewed up to here ─────────────────────────────────────────────────────
-
 // ── MQTT-3.1: CONNECT validation ─────────────────────────────────────────────
 
 const CONNECT_FLAGS_RESERVED: TestContext = TestContext {
@@ -799,70 +795,6 @@ async fn password_flag_clear_but_data_present(config: TestConfig<'_>) -> Result<
         0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
         0x00, 0x04, b'u', b's', b'e', b'r',            // username "user"
         0x00, 0x04, b'p', b'a', b's', b's',            // extra data not indicated by flags
-    ];
-    client.send_raw(bad_connect).await?;
-
-    Ok(expect_connect_reject(&mut client).await)
-}
-
-const WILL_TOPIC_BAD_UTF8: TestContext = TestContext {
-    refs: &["MQTT-3.1.3-11"],
-    description: "Will Topic containing ill-formed UTF-8 MUST be rejected",
-    compliance: Compliance::Must,
-};
-
-/// The Will Topic MUST be a UTF-8 Encoded String. [MQTT-3.1.3-11]
-///
-/// This test sends a CONNECT with Will Flag=1 and a will topic containing the surrogate U+D800
-/// (0xED 0xA0 0x80).
-async fn will_topic_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
-    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
-
-    // CONNECT with Will Flag=1, will topic contains surrogate U+D800 (0xED 0xA0 0x80).
-    #[rustfmt::skip]
-    let bad_connect: &[u8] = &[
-        0x10,                                           // CONNECT
-        0x1A,                                           // remaining length = 26
-        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
-        0x05,                                           // protocol version 5
-        0x06,                                           // flags: clean_start=1, will=1
-        0x00, 0x3C,                                     // keep alive = 60
-        0x00,                                           // connect properties length = 0
-        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
-        0x00,                                           // will properties length = 0
-        0x00, 0x03, 0xED, 0xA0, 0x80,                  // will topic: surrogate U+D800
-        0x00, 0x01, b'x',                              // will payload "x"
-    ];
-    client.send_raw(bad_connect).await?;
-
-    Ok(expect_connect_reject(&mut client).await)
-}
-
-const USERNAME_BAD_UTF8: TestContext = TestContext {
-    refs: &["MQTT-3.1.3-12"],
-    description: "Username containing ill-formed UTF-8 MUST be rejected",
-    compliance: Compliance::Must,
-};
-
-/// If the User Name Flag is set to 1, the User Name is the next field in the Payload. The User
-/// Name MUST be a UTF-8 Encoded String. [MQTT-3.1.3-12]
-///
-/// This test sends a CONNECT with a username containing the surrogate U+D800 (0xED 0xA0 0x80).
-async fn username_invalid_utf8(config: TestConfig<'_>) -> Result<Outcome> {
-    let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
-
-    // CONNECT with Username Flag=1, username contains surrogate U+D800.
-    #[rustfmt::skip]
-    let bad_connect: &[u8] = &[
-        0x10,                                           // CONNECT
-        0x16,                                           // remaining length = 22
-        0x00, 0x04, b'M', b'Q', b'T', b'T',            // protocol name
-        0x05,                                           // protocol version 5
-        0x82,                                           // flags: clean_start=1, username=1
-        0x00, 0x3C,                                     // keep alive = 60
-        0x00,                                           // properties length = 0
-        0x00, 0x04, b't', b'e', b's', b't',            // client ID "test"
-        0x00, 0x03, 0xED, 0xA0, 0x80,                  // username: surrogate U+D800
     ];
     client.send_raw(bad_connect).await?;
 

@@ -15,6 +15,12 @@ use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, Te
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("SUBSCRIBE / UNSUBSCRIBE");
 
+    // MQTT-2.2.1-6 — SUBACK/UNSUBACK Packet Identifier echo
+    suite.add(SUBACK_ECHOES_PID, suback_echoes_subscribe_pid(config));
+    suite.add(UNSUBACK_ECHOES_PID, unsuback_echoes_unsubscribe_pid(config));
+
+    // ── reviewed up to here ─────────────────────────────────────────────────
+
     suite.add(BASIC_SUB, basic_subscribe(config));
     suite.add(WILDCARD_PLUS, wildcard_plus(config));
     suite.add(WILDCARD_HASH, wildcard_hash(config));
@@ -59,6 +65,74 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     );
 
     suite
+}
+
+// ── MQTT-2.2.1-6: SUBACK/UNSUBACK Packet Identifier echo ────────────────────
+
+const SUBACK_ECHOES_PID: TestContext = TestContext {
+    refs: &["MQTT-2.2.1-6"],
+    description: "SUBACK MUST contain the Packet Identifier from the originating SUBSCRIBE",
+    compliance: Compliance::Must,
+};
+
+/// A SUBACK and UNSUBACK MUST contain the Packet Identifier that was used in the corresponding
+/// SUBSCRIBE and UNSUBSCRIBE packet respectively. [MQTT-2.2.1-6]
+///
+/// This test sends a SUBSCRIBE with a non-trivial Packet Identifier (0xABCD) and verifies the
+/// SUBACK echoes that exact value.
+async fn suback_echoes_subscribe_pid(config: TestConfig<'_>) -> Result<Outcome> {
+    let params = ConnectParams::new("mqtt-test-suback-echo");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    let pid = 0xABCD;
+    let sub = SubscribeParams::simple(pid, "mqtt/test/sub/suback_echo", QoS::AtMostOnce);
+    client.send_subscribe(&sub).await?;
+
+    match client.recv().await? {
+        Packet::SubAck(ack) if ack.packet_id == pid => Ok(Outcome::Pass),
+        Packet::SubAck(ack) => Ok(Outcome::fail(format!(
+            "SUBACK echoed Packet Identifier 0x{:04X}, expected 0x{:04X}",
+            ack.packet_id, pid
+        ))),
+        other => Ok(Outcome::fail_packet("SUBACK", &other)),
+    }
+}
+
+const UNSUBACK_ECHOES_PID: TestContext = TestContext {
+    refs: &["MQTT-2.2.1-6"],
+    description: "UNSUBACK MUST contain the Packet Identifier from the originating UNSUBSCRIBE",
+    compliance: Compliance::Must,
+};
+
+/// A SUBACK and UNSUBACK MUST contain the Packet Identifier that was used in the corresponding
+/// SUBSCRIBE and UNSUBSCRIBE packet respectively. [MQTT-2.2.1-6]
+///
+/// This test first subscribes to a topic, then sends an UNSUBSCRIBE with a non-trivial Packet
+/// Identifier (0xBEEF) and verifies the UNSUBACK echoes that exact value.
+async fn unsuback_echoes_unsubscribe_pid(config: TestConfig<'_>) -> Result<Outcome> {
+    let params = ConnectParams::new("mqtt-test-unsuback-echo");
+    let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
+
+    let topic = "mqtt/test/sub/unsuback_echo";
+    let sub = SubscribeParams::simple(1, topic, QoS::AtMostOnce);
+    client.send_subscribe(&sub).await?;
+    match client.recv().await? {
+        Packet::SubAck(_) => {}
+        other => return Ok(Outcome::fail_packet("SUBACK", &other)),
+    }
+
+    let pid = 0xBEEF;
+    let unsub = UnsubscribeParams::simple(pid, topic);
+    client.send_unsubscribe(&unsub).await?;
+
+    match client.recv().await? {
+        Packet::UnsubAck(ack) if ack.packet_id == pid => Ok(Outcome::Pass),
+        Packet::UnsubAck(ack) => Ok(Outcome::fail(format!(
+            "UNSUBACK echoed Packet Identifier 0x{:04X}, expected 0x{:04X}",
+            ack.packet_id, pid
+        ))),
+        other => Ok(Outcome::fail_packet("UNSUBACK", &other)),
+    }
 }
 
 // ── MUST ─────────────────────────────────────────────────────────────────────

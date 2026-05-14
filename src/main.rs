@@ -1,3 +1,4 @@
+mod capabilities;
 mod client;
 mod codec;
 mod helpers;
@@ -17,6 +18,7 @@ use tracing_subscriber::filter::LevelFilter;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SuiteName {
     Transport,
+    Encoding,
     Connect,
     Ping,
     Publish,
@@ -34,6 +36,7 @@ impl std::fmt::Display for SuiteName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Transport => write!(f, "transport"),
+            Self::Encoding => write!(f, "encoding"),
             Self::Connect => write!(f, "connect"),
             Self::Ping => write!(f, "ping"),
             Self::Publish => write!(f, "publish"),
@@ -175,6 +178,7 @@ async fn main() {
     // Resolve which suites to run
     let all_suites = vec![
         SuiteName::Transport,
+        SuiteName::Encoding,
         SuiteName::Connect,
         SuiteName::Ping,
         SuiteName::Publish,

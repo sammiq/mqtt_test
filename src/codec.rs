@@ -947,6 +947,13 @@ fn decode_connack(body: &[u8], _flags: u8) -> Result<Packet, DecodeError> {
     if body.len() < 2 {
         return Err(DecodeError::InsufficientData);
     }
+    // MQTT-3.2.2-1: bits 7-1 of Connect Acknowledge Flags are reserved and MUST be 0.
+    if body[0] & 0xFE != 0 {
+        return Err(DecodeError::Protocol(format!(
+            "CONNACK Connect Acknowledge Flags reserved bits 7-1 must be zero (got {:#04x})",
+            body[0]
+        )));
+    }
     let session_present = body[0] & 0x01 != 0;
     let reason_code = body[1];
     let mut pos = 2;
@@ -1758,6 +1765,19 @@ mod tests {
                 assert_eq!(c.reason_code, 0x85);
             }
             other => panic!("expected ConnAck, got {other}"),
+        }
+    }
+
+    #[test]
+    fn connack_decode_rejects_reserved_bits() {
+        // MQTT-3.2.2-1: any of bits 7-1 set in Connect Acknowledge Flags MUST be malformed.
+        // 0x02 sets bit 1; 0x80 sets bit 7; 0x03 sets bit 1 alongside session_present.
+        for ack_flags in [0x02u8, 0x80, 0x03, 0xFE, 0xFF] {
+            let buf = [0x20, 0x02, ack_flags, 0x00];
+            assert!(
+                decode_packet(&buf).is_err(),
+                "expected decode failure for ack_flags={ack_flags:#04x}"
+            );
         }
     }
 

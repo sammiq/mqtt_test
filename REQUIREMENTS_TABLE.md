@@ -1,16 +1,16 @@
 # MQTT v5.0 Normative Requirements — Test Coverage
 
-Generated: 2026-03-24
+Generated: 2026-04-16
 
 ## Summary
 
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested) | 183 |
-| Structural (codec/format, implicitly covered) | 29 |
+| Implemented (tested) | 188 |
+| Structural (codec/format, implicitly covered) | 27 |
 | Client (client-side obligation, not server-testable) | 26 |
-| Not tested (with explanation) | 18 |
+| Not tested (with explanation) | 15 |
 
 ---
 
@@ -20,7 +20,7 @@ Generated: 2026-03-24
 |-------------|-------|--------|-------------|
 | MQTT-1.5.4-1 | MUST | Implemented | UTF-8 strings must not include surrogates U+D800..U+DFFF |
 | MQTT-1.5.4-2 | MUST | Implemented | UTF-8 strings must not include null character U+0000 |
-| MQTT-1.5.4-3 | MUST | Structural | BOM U+FEFF must not be stripped by receiver. Implicitly handled by codec passing bytes through unchanged. |
+| MQTT-1.5.4-3 | MUST | Implemented | BOM U+FEFF must not be stripped by receiver |
 | MQTT-1.5.5-1 | MUST | Implemented | Variable Byte Integer must use minimum bytes |
 | MQTT-1.5.7-1 | MUST | Implemented | String Pair both strings must be valid UTF-8 |
 
@@ -29,11 +29,11 @@ Generated: 2026-03-24
 | Requirement | Level | Status | Description |
 |-------------|-------|--------|-------------|
 | MQTT-2.1.3-1 | MUST | Implemented | Reserved flag bits must be set to specified values |
-| MQTT-2.2.1-2 | MUST | Structural | QoS 0 PUBLISH must not contain Packet Identifier. Enforced by codec. |
+| MQTT-2.2.1-2 | MUST | Implemented | QoS 0 PUBLISH must not contain Packet Identifier |
 | MQTT-2.2.1-3 | MUST | Implemented | Client must assign non-zero unused Packet Identifier for QoS>0 |
 | MQTT-2.2.1-4 | MUST | Implemented | Server must assign non-zero unused Packet Identifier for QoS>0 |
-| MQTT-2.2.1-5 | MUST | Structural | PUBACK/PUBREC/PUBREL/PUBCOMP must echo Packet Identifier. Verified implicitly by all QoS 1/2 tests. |
-| MQTT-2.2.1-6 | MUST | Structural | SUBACK/UNSUBACK must echo Packet Identifier. Verified implicitly by subscribe/unsubscribe tests. |
+| MQTT-2.2.1-5 | MUST | Implemented | PUBACK/PUBREC/PUBREL/PUBCOMP must echo Packet Identifier |
+| MQTT-2.2.1-6 | MUST | Implemented | SUBACK/UNSUBACK must echo Packet Identifier |
 | MQTT-2.2.2-1 | MUST | Structural | Zero Property Length when no properties. Enforced by codec encoding. |
 
 ## Section 3.1 — CONNECT
@@ -42,42 +42,42 @@ Generated: 2026-03-24
 |-------------|-------|--------|-------------|
 | MQTT-3.1.0-1 | MUST | Implemented | First packet from Client must be CONNECT |
 | MQTT-3.1.0-2 | MUST | Implemented | Server must treat second CONNECT as Protocol Error |
-| MQTT-3.1.2-1 | MUST | Implemented | Server may send CONNACK 0x84 for unsupported protocol, must close connection |
-| MQTT-3.1.2-2 | MUST | Implemented | Wrong protocol version: may send CONNACK 0x84, must close connection |
-| MQTT-3.1.2-3 | MUST | Implemented | Server must validate reserved flag in CONNECT is 0 |
-| MQTT-3.1.2-4 | MUST | Implemented | Clean Start=1: discard existing Session, start new |
-| MQTT-3.1.2-5 | MUST | Implemented | Clean Start=0 with existing session: resume |
-| MQTT-3.1.2-6 | MUST | Implemented | Clean Start=0 with no session: create new |
-| MQTT-3.1.2-7 | MUST | Structural | Will Flag=1: Will Message stored on Server. Verified indirectly by will publish and will delay tests. |
-| MQTT-3.1.2-8 | MUST | Implemented | Will Message published after connection closed unexpectedly |
-| MQTT-3.1.2-9 | MUST | Implemented | Will Flag=1: Will fields must be present in Payload |
-| MQTT-3.1.2-10 | MUST | Implemented | Will Message removed once published or on clean DISCONNECT |
-| MQTT-3.1.2-11 | MUST | Implemented | Will Flag=0: Will QoS must be 0 |
-| MQTT-3.1.2-12 | MUST | Implemented | Will QoS=3 is invalid/malformed |
-| MQTT-3.1.2-13 | MUST | Implemented | Will Flag=0: Will Retain must be 0 |
-| MQTT-3.1.2-14 | MUST | Implemented | Will Flag=1, Will Retain=0: publish as non-retained |
-| MQTT-3.1.2-15 | MUST | Implemented | Will Flag=1, Will Retain=1: publish as retained |
-| MQTT-3.1.2-16 | MUST | Implemented | Username Flag=0: Username must not be in Payload |
-| MQTT-3.1.2-17 | MUST | Implemented | Username Flag=1: Username must be in Payload |
-| MQTT-3.1.2-18 | MUST | Implemented | Password Flag=0: Password must not be in Payload |
-| MQTT-3.1.2-19 | MUST | Implemented | Password Flag=1: Password must be in Payload |
-| MQTT-3.1.2-20 | MUST | Client | Client must send PINGREQ within Keep Alive. Client-side obligation. |
-| MQTT-3.1.2-21 | MUST | Client | Client must use Server Keep Alive if returned. Client-side obligation. |
-| MQTT-3.1.2-22 | MUST | Implemented | Server must close connection if no packet within 1.5x Keep Alive |
-| MQTT-3.1.2-23 | MUST | Not tested | Client and Server must store Session State if Session Expiry > 0. Partially covered by session tests but not explicitly verified for both sides. |
-| MQTT-3.1.2-24 | MUST | Implemented | Server must not send packets exceeding client's Maximum Packet Size |
-| MQTT-3.1.2-25 | MUST | Not tested | Server must discard oversized packets silently. Hard to verify discard-and-continue behavior. |
-| MQTT-3.1.2-26 | MUST | Implemented | Server must not send Topic Alias greater than client's Topic Alias Maximum |
-| MQTT-3.1.2-27 | MUST | Implemented | Topic Alias Maximum absent/zero: Server must not send any Topic Aliases |
-| MQTT-3.1.2-28 | MUST | Implemented | Request Response Information=0: Server must not return Response Information |
-| MQTT-3.1.2-29 | MUST | Not tested | Request Problem Information=0: Server must not send Reason String/User Properties except on PUBLISH/CONNACK/DISCONNECT. Complex multi-packet verification needed. |
+| MQTT-3.1.2-1 | MUST | Implemented | Protocol Name MUST be the UTF-8 string "MQTT" |
+| MQTT-3.1.2-2 | MUST | Implemented | Protocol Version MUST be 5 for MQTT v5 |
+| MQTT-3.1.2-3 | MUST | Implemented | Connect Flags reserved bit (bit 0) MUST be 0 |
+| MQTT-3.1.2-4 | MUST | Implemented | Clean Start=1: Server MUST discard any existing Session and start a new one |
+| MQTT-3.1.2-5 | MUST | Implemented | Clean Start=0 with existing Session: Server MUST resume communications |
+| MQTT-3.1.2-6 | MUST | Implemented | Clean Start=0 with no existing Session: Server MUST create a new Session |
+| MQTT-3.1.2-7 | MUST | Structural | Will Flag=1: Will Message stored on Server. Verified indirectly by will publish, removal, and delay tests. |
+| MQTT-3.1.2-8 | MUST | Implemented | Will Flag=1: Server MUST publish the Will Message on Network Connection close (unless delayed or removed) |
+| MQTT-3.1.2-9 | MUST | Implemented | Will Flag=1: Will Properties, Will Topic, and Will Payload MUST be present in the Payload |
+| MQTT-3.1.2-10 | MUST | Implemented | Server MUST remove the Will Message from Session State once published or on receipt of DISCONNECT 0x00 |
+| MQTT-3.1.2-11 | MUST | Implemented | Will Flag=0: Will QoS MUST be 0 |
+| MQTT-3.1.2-12 | MUST | Implemented | Will Flag=1: Will QoS=3 is a Malformed Packet |
+| MQTT-3.1.2-13 | MUST | Implemented | Will Flag=0: Will Retain MUST be 0 |
+| MQTT-3.1.2-14 | MUST | Implemented | Will Retain=0: Server MUST publish the Will Message as non-retained |
+| MQTT-3.1.2-15 | MUST | Implemented | Will Retain=1: Server MUST publish the Will Message as retained |
+| MQTT-3.1.2-16 | MUST | Implemented | User Name Flag=0: a User Name MUST NOT be present in the Payload |
+| MQTT-3.1.2-17 | MUST | Implemented | User Name Flag=1: a User Name MUST be present in the Payload |
+| MQTT-3.1.2-18 | MUST | Implemented | Password Flag=0: a Password MUST NOT be present in the Payload |
+| MQTT-3.1.2-19 | MUST | Implemented | Password Flag=1: a Password MUST be present in the Payload |
+| MQTT-3.1.2-20 | MUST | Client | Client MUST send PINGREQ within Keep Alive (absent other packets). Client-side obligation; broker-side mirror is MQTT-3.1.2-22. |
+| MQTT-3.1.2-21 | MUST | Client | Client MUST use Server Keep Alive value if returned in CONNACK. Client-side obligation. |
+| MQTT-3.1.2-22 | MUST | Implemented | Keep Alive non-zero: Server MUST close Network Connection if no packet received within 1.5 × Keep Alive |
+| MQTT-3.1.2-23 | MUST | Implemented | Client and Server MUST store Session State after Network Connection close when Session Expiry Interval > 0 |
+| MQTT-3.1.2-24 | MUST | Implemented | Server MUST NOT send packets exceeding client's Maximum Packet Size |
+| MQTT-3.1.2-25 | MUST | Implemented | Oversized packet MUST be discarded silently; Server then behaves as if send had completed |
+| MQTT-3.1.2-26 | MUST | Implemented | Server MUST NOT send a Topic Alias greater than client's Topic Alias Maximum |
+| MQTT-3.1.2-27 | MUST | Implemented | Topic Alias Maximum absent or zero: Server MUST NOT send any Topic Aliases |
+| MQTT-3.1.2-28 | MUST | Implemented | Request Response Information=0 or absent: Server MUST NOT return Response Information in CONNACK |
+| MQTT-3.1.2-29 | MUST | Not tested | Request Problem Information=0: Server MUST NOT send Reason String/User Properties on packets other than PUBLISH/CONNACK/DISCONNECT. Would require exhaustive packet-type coverage with a broker-controlled property-emission trigger; spec phrasing is also ambiguous on the CONNACK/DISCONNECT carve-out. |
 | MQTT-3.1.2-30 | MUST | Client | Client must not send non-AUTH/DISCONNECT before CONNACK when Auth Method set. Client-side obligation. |
 | MQTT-3.1.3-1 | MUST | Structural | Payload fields must appear in order. Enforced by codec encoding. |
 | MQTT-3.1.3-2 | MUST | Structural | ClientID identifies Session state. Implicit in all session tests. |
 | MQTT-3.1.3-3 | MUST | Implemented | ClientID must be present and first in CONNECT Payload |
 | MQTT-3.1.3-4 | MUST | Implemented | ClientID must be UTF-8 Encoded String |
 | MQTT-3.1.3-5 | MUST | Implemented | Server must allow ClientIDs 1-23 bytes of [0-9a-zA-Z] |
-| MQTT-3.1.3-6 | MUST | Not tested | Server may allow zero-length ClientID, must treat as special case. Tested via MQTT-3.1.3-7 (Assigned Client Identifier) but not the "special case" aspect. |
+| MQTT-3.1.3-6 | MUST | Implemented | Server may allow zero-length ClientID; MUST assign a unique Client Identifier. Uniqueness verified by two overlapping empty-ClientID sessions receiving distinct Assigned Client Identifiers. |
 | MQTT-3.1.3-7 | MUST | Implemented | Server must return Assigned Client Identifier for zero-length ClientID |
 | MQTT-3.1.3-8 | MUST | Implemented | Server rejecting ClientID: may respond 0x85, must close connection |
 | MQTT-3.1.3-9 | MUST | Implemented | New connection before Will Delay passes: must not send Will Message |
@@ -96,17 +96,17 @@ Generated: 2026-03-24
 | Requirement | Level | Status | Description |
 |-------------|-------|--------|-------------|
 | MQTT-3.2.0-1 | MUST | Implemented | Server must send CONNACK before any other packet (except AUTH) |
-| MQTT-3.2.0-2 | MUST | Not tested | Server must not send more than one CONNACK. Would require monitoring for duplicate CONNACK. |
-| MQTT-3.2.2-1 | MUST | Not tested | CONNACK flags bits 7-1 must be 0. Would require inspecting raw CONNACK bytes. |
+| MQTT-3.2.0-2 | MUST | Implemented | Server must not send more than one CONNACK in a Network Connection |
+| MQTT-3.2.2-1 | MUST | Structural | CONNACK Connect Acknowledge Flags bits 7-1 must be 0. Codec rejects any non-zero reserved bits as malformed; implicitly verified by every CONNACK received in the suite. |
 | MQTT-3.2.2-2 | MUST | Implemented | Clean Start=1 accepted: Session Present must be 0 |
 | MQTT-3.2.2-3 | MUST | Implemented | Session Present must accompany 0x00 Reason Code |
 | MQTT-3.2.2-4 | MUST | Client | Client receiving unexpected Session Present=1 must close connection. Client-side obligation. |
 | MQTT-3.2.2-5 | MUST | Client | Client receiving Session Present=0 with local state must discard state. Client-side obligation. |
 | MQTT-3.2.2-6 | MUST | Implemented | Non-zero CONNACK Reason Code: Session Present must be 0 |
-| MQTT-3.2.2-7 | MUST | Implemented | CONNACK Reason Code >= 128: Server must close connection |
+| MQTT-3.2.2-7 | MUST | Structural | CONNACK Reason Code >= 128: Server must close connection. Implicitly verified by all CONNECT reject tests.  |
 | MQTT-3.2.2-8 | MUST | Structural | CONNACK must use defined Reason Code values. Implicitly verified by all CONNACK parsing. |
-| MQTT-3.2.2-9 | MUST | Implemented | Server not supporting QoS 1/2 must send Maximum QoS in CONNACK |
-| MQTT-3.2.2-10 | MUST | Implemented | Server not supporting QoS 1/2 must still accept SUBSCRIBE with any QoS |
+| MQTT-3.2.2-9 | MUST | Not tested | Server not supporting QoS 1/2 must send Maximum QoS in CONNACK. Conditional MUST only observable on a broker that advertises Maximum QoS < 2; common brokers default to 2. The BROKER CAPABILITIES probe surfaces the property when present. |
+| MQTT-3.2.2-10 | MUST | Not tested | Server not supporting QoS 1/2 must still accept SUBSCRIBE with any QoS. Conditional MUST only observable on a broker that advertises Maximum QoS < 2; common brokers default to 2. |
 | MQTT-3.2.2-11 | MUST | Client | Client must not send PUBLISH exceeding server's Maximum QoS. Client-side obligation. |
 | MQTT-3.2.2-12 | MUST | Implemented | Server receiving QoS exceeding Maximum QoS must close connection |
 | MQTT-3.2.2-13 | MUST | Implemented | Server not supporting retain receiving RETAIN=1 must close connection |

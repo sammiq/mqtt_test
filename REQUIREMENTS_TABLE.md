@@ -7,8 +7,8 @@ Generated: 2026-04-16
 | Category | Count |
 |----------|-------|
 | Total normative requirements | 256 |
-| Implemented (tested) | 190 |
-| Structural (codec/format, implicitly covered) | 25 |
+| Implemented (tested) | 188 |
+| Structural (codec/format, implicitly covered) | 27 |
 | Client (client-side obligation, not server-testable) | 26 |
 | Not tested (with explanation) | 15 |
 
@@ -96,17 +96,17 @@ Generated: 2026-04-16
 | Requirement | Level | Status | Description |
 |-------------|-------|--------|-------------|
 | MQTT-3.2.0-1 | MUST | Implemented | Server must send CONNACK before any other packet (except AUTH) |
-| MQTT-3.2.0-2 | MUST | Not tested | Server must not send more than one CONNACK. Would require monitoring for duplicate CONNACK. |
-| MQTT-3.2.2-1 | MUST | Not tested | CONNACK flags bits 7-1 must be 0. Would require inspecting raw CONNACK bytes. |
+| MQTT-3.2.0-2 | MUST | Implemented | Server must not send more than one CONNACK in a Network Connection |
+| MQTT-3.2.2-1 | MUST | Structural | CONNACK Connect Acknowledge Flags bits 7-1 must be 0. Codec rejects any non-zero reserved bits as malformed; implicitly verified by every CONNACK received in the suite. |
 | MQTT-3.2.2-2 | MUST | Implemented | Clean Start=1 accepted: Session Present must be 0 |
 | MQTT-3.2.2-3 | MUST | Implemented | Session Present must accompany 0x00 Reason Code |
 | MQTT-3.2.2-4 | MUST | Client | Client receiving unexpected Session Present=1 must close connection. Client-side obligation. |
 | MQTT-3.2.2-5 | MUST | Client | Client receiving Session Present=0 with local state must discard state. Client-side obligation. |
 | MQTT-3.2.2-6 | MUST | Implemented | Non-zero CONNACK Reason Code: Session Present must be 0 |
-| MQTT-3.2.2-7 | MUST | Implemented | CONNACK Reason Code >= 128: Server must close connection |
+| MQTT-3.2.2-7 | MUST | Structural | CONNACK Reason Code >= 128: Server must close connection. Implicitly verified by all CONNECT reject tests.  |
 | MQTT-3.2.2-8 | MUST | Structural | CONNACK must use defined Reason Code values. Implicitly verified by all CONNACK parsing. |
-| MQTT-3.2.2-9 | MUST | Implemented | Server not supporting QoS 1/2 must send Maximum QoS in CONNACK |
-| MQTT-3.2.2-10 | MUST | Implemented | Server not supporting QoS 1/2 must still accept SUBSCRIBE with any QoS |
+| MQTT-3.2.2-9 | MUST | Not tested | Server not supporting QoS 1/2 must send Maximum QoS in CONNACK. Conditional MUST only observable on a broker that advertises Maximum QoS < 2; common brokers default to 2. The BROKER CAPABILITIES probe surfaces the property when present. |
+| MQTT-3.2.2-10 | MUST | Not tested | Server not supporting QoS 1/2 must still accept SUBSCRIBE with any QoS. Conditional MUST only observable on a broker that advertises Maximum QoS < 2; common brokers default to 2. |
 | MQTT-3.2.2-11 | MUST | Client | Client must not send PUBLISH exceeding server's Maximum QoS. Client-side obligation. |
 | MQTT-3.2.2-12 | MUST | Implemented | Server receiving QoS exceeding Maximum QoS must close connection |
 | MQTT-3.2.2-13 | MUST | Implemented | Server not supporting retain receiving RETAIN=1 must close connection |

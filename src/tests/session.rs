@@ -26,7 +26,8 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
         clean_start_discards_existing_session(config),
     );
 
-    // MQTT-3.1.2-5 — Clean Start=0 with existing Session MUST resume communications
+    // MQTT-3.1.2-5 / MQTT-3.2.2-3 — Clean Start=0 with existing Session: MUST resume
+    // communications and CONNACK Session Present MUST be 1
     suite.add(SESSION_PRESENT, session_present_on_resume(config));
     suite.add(SUB_PERSISTS, subscription_persists_across_sessions(config));
     suite.add(
@@ -138,8 +139,8 @@ async fn clean_start_discards_existing_session(config: TestConfig<'_>) -> Result
 }
 
 const SESSION_PRESENT: TestContext = TestContext {
-    refs: &["MQTT-3.1.2-5"],
-    description: "Clean Start=0 with existing Session MUST resume communications",
+    refs: &["MQTT-3.1.2-5", "MQTT-3.2.2-3"],
+    description: "Clean Start=0 with existing Session: resume MUST set CONNACK Session Present=1",
     compliance: Compliance::Must,
 };
 
@@ -147,9 +148,18 @@ const SESSION_PRESENT: TestContext = TestContext {
 /// the Client Identifier, the Server MUST resume communications with the Client based on state from
 /// the existing Session. [MQTT-3.1.2-5]
 ///
+/// If the Server accepts a connection with Clean Start set to 0 and the Server has Session State
+/// for the ClientID, it MUST set Session Present to 1 in the CONNACK packet, otherwise it MUST set
+/// Session Present to 0 in the CONNACK packet. In both cases it MUST set a 0x00 (Success) Reason
+/// Code in the CONNACK packet. [MQTT-3.2.2-3]
+///
 /// This test connects with Clean Start=1 + Session Expiry Interval=60 (creating a persistent
 /// session), disconnects gracefully, then reconnects with the same Client ID and Clean Start=0, and
-/// verifies CONNACK session_present=1 — confirming the broker resumed the existing Session.
+/// verifies CONNACK session_present=1 — covering the "Session State exists" branch of -3.2.2-3
+/// and demonstrating the broker resumed the existing Session per -3.1.2-5. The complementary
+/// "no Session State" branch of -3.2.2-3 is covered by `clean_start_false_no_session` in
+/// [connect.rs]. End-to-end resume + queued-delivery is covered by
+/// `session_present_verify_persistence`.
 async fn session_present_on_resume(config: TestConfig<'_>) -> Result<Outcome> {
     let client_id = "mqtt-test-session-present";
 

@@ -18,7 +18,7 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     suite.add(FIRST_PACKET_PINGREQ, first_packet_pingreq_rejected(config));
     suite.add(FIRST_PACKET_AUTH, first_packet_auth_rejected(config));
 
-    // MQTT-3.1.0-2 — second CONNECT is a Protocol Error
+    // MQTT-3.1.0-2 / MQTT-3.2.0-2 — second CONNECT MUST close, MUST NOT trigger a second CONNACK
     suite.add(DUP_CONNECT, duplicate_connect(config));
 
     // MQTT-3.1.2-1 — protocol name MUST be "MQTT"
@@ -26,9 +26,6 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
 
     // MQTT-3.1.2-2 — Protocol Version MUST be 5
     suite.add(INVALID_PROTO_VER, invalid_protocol_version(config));
-
-    // MQTT-3.2.2-3 — Clean Start=0, no prior session: CONNACK Session Present MUST be 0
-    suite.add(CLEAN_START_FALSE, clean_start_false_no_session(config));
 
     // MQTT-3.1.2-8 — Will Message publication on abrupt close
     suite.add(WILL_ON_CLOSE, will_message_on_unexpected_close(config));
@@ -122,15 +119,24 @@ pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     // MQTT-3.1.4-4 / MQTT-3.1.4-5 — Clean Start processing; CONNACK 0x00 acknowledgement
     suite.add(BASIC_CONNECT, basic_connect(config));
 
-    // ── reviewed up to here ─────────────────────────────────────────────────
-
+    // MQTT-3.2.2-2 — Clean Start=1 accepted: CONNACK Session Present MUST be 0
     suite.add(CLEAN_START_TRUE, clean_start_true(config));
-    suite.add(SERVER_MAX_QOS, server_maximum_qos(config));
-    suite.add(SERVER_RECV_MAX, server_receive_maximum(config));
+
+    // MQTT-3.2.2-3 — Clean Start=0, no prior session: CONNACK Session Present MUST be 0
+    suite.add(CLEAN_START_FALSE, clean_start_false_no_session(config));
+
+    // MQTT-3.2.2-6 — Non-zero CONNACK Reason Code MUST have Session Present=0
     suite.add(
         SESSION_PRESENT_ZERO_ON_REJECT,
         session_present_zero_on_reject(config),
     );
+
+    // MQTT-3.2.2-11 — Server MUST reject PUBLISH at QoS exceeding advertised Maximum QoS
+    suite.add(SERVER_MAX_QOS, server_maximum_qos(config));
+
+    // ── reviewed up to here ─────────────────────────────────────────────────
+
+    suite.add(SERVER_RECV_MAX, server_receive_maximum(config));
     suite.add(FLOW_CONTROL, flow_control_receive_maximum(config));
 
     suite
@@ -454,16 +460,22 @@ async fn first_packet_auth_rejected(config: TestConfig<'_>) -> Result<Outcome> {
 // ── Protocol violations ─────────────────────────────────────────────────────
 
 const DUP_CONNECT: TestContext = TestContext {
-    refs: &["MQTT-3.1.0-2"],
-    description: "Server MUST treat a second CONNECT as a Protocol Error and close the connection",
+    refs: &["MQTT-3.1.0-2", "MQTT-3.2.0-2"],
+    description: "Server MUST close on second CONNECT and MUST NOT send a second CONNACK",
     compliance: Compliance::Must,
 };
 
 /// The Server MUST process a second CONNECT Packet sent from a Client as a Protocol Error and
 /// close the Network Connection. [MQTT-3.1.0-2]
 ///
+/// The Server MUST NOT send more than one CONNACK in a Network Connection. [MQTT-3.2.0-2]
+///
 /// This test completes a normal CONNECT/CONNACK handshake, then sends a second CONNECT on the
 /// same connection and verifies the broker closes the connection (with or without a DISCONNECT).
+/// A second CONNACK — even one carrying an error Reason Code — is reported as a -3.2.0-2
+/// violation. -3.2.0-2 is otherwise unobservable in conforming flows: the only way to provoke
+/// the broker into emitting a CONNACK after the first is to drive an error condition that some
+/// implementations might (incorrectly) acknowledge before closing.
 async fn duplicate_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-dup-connect");
     let (mut client, _) = client::connect(config.addr, &params, config.recv_timeout).await?;
@@ -471,8 +483,22 @@ async fn duplicate_connect(config: TestConfig<'_>) -> Result<Outcome> {
     // Send a second CONNECT on the same connection.
     client.send_connect(&params).await?;
 
-    // Broker must either send DISCONNECT or close the connection.
-    Ok(expect_disconnect(&mut client).await)
+    // Broker must either send DISCONNECT or close the connection — never a second CONNACK.
+    match client.recv().await {
+        Err(RecvError::Closed) | Ok(Packet::Disconnect(_)) => Ok(Outcome::Pass),
+        Ok(Packet::ConnAck(ack)) => Ok(Outcome::fail(format!(
+            "broker sent a second CONNACK (reason code 0x{:02X}) — violates MQTT-3.2.0-2",
+            ack.reason_code
+        ))),
+        Ok(other) => Ok(Outcome::fail_packet(
+            "DISCONNECT or connection close",
+            &other,
+        )),
+        Err(RecvError::Timeout) => Ok(Outcome::fail(
+            "broker did not close connection after second CONNECT",
+        )),
+        Err(RecvError::Other(e)) => Ok(Outcome::fail(format!("unexpected error: {e:#}"))),
+    }
 }
 
 const INVALID_PROTO_NAME: TestContext = TestContext {
@@ -555,14 +581,17 @@ async fn invalid_protocol_version(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SESSION_PRESENT_ZERO_ON_REJECT: TestContext = TestContext {
     refs: &["MQTT-3.2.2-6"],
-    description: "Session Present MUST be 0 when CONNACK reason code is non-zero",
+    description: "Session Present MUST be 0 when CONNACK Reason Code is non-zero",
     compliance: Compliance::Must,
 };
 
-/// If a Server sends a CONNACK packet containing a non-zero Reason Code it MUST set Session Present to
-/// 0 [MQTT-3.2.2-6].
+/// If a Server sends a CONNACK packet containing a non-zero Reason Code it MUST set Session Present
+/// to 0. [MQTT-3.2.2-6]
 ///
-/// This test provokes a CONNACK rejection (via invalid protocol version) and verifies session_present=0.
+/// This test sends a CONNECT with protocol version 4 (3.1.1) to provoke a CONNACK rejection from a
+/// v5-only broker, then asserts session_present=0 in the rejected CONNACK. Skips if the broker
+/// accepts the v4 CONNECT or closes without sending a CONNACK — neither path can observe the
+/// requirement.
 async fn session_present_zero_on_reject(config: TestConfig<'_>) -> Result<Outcome> {
     let mut client = RawClient::connect_tcp(config.addr, config.recv_timeout).await?;
 
@@ -974,15 +1003,19 @@ async fn will_retain_flag(config: TestConfig<'_>) -> Result<Outcome> {
 
 const SERVER_MAX_QOS: TestContext = TestContext {
     refs: &["MQTT-3.2.2-11"],
-    description: "Client MUST NOT send QoS exceeding server's Maximum QoS",
+    description: "Server MUST reject PUBLISH at QoS exceeding advertised Maximum QoS",
     compliance: Compliance::Must,
 };
 
-/// If a Client receives a Maximum QoS from a Server, it MUST NOT send PUBLISH packets at a QoS level exceeding the
-/// Maximum QoS level specified [MQTT-3.2.2-11]. It is a Protocol Error if the Server receives a PUBLISH packet with
-/// a QoS greater than the Maximum QoS it specified.
+/// If a Client receives a Maximum QoS from a Server, it MUST NOT send PUBLISH packets at a QoS
+/// level exceeding the Maximum QoS level specified. It is a Protocol Error if the Server receives a
+/// PUBLISH packet with a QoS greater than the Maximum QoS it specified. [MQTT-3.2.2-11]
 ///
-/// This test sends a PUBLISH above the server's advertised Maximum QoS and verifies the server rejects it.
+/// -3.2.2-11 is a client obligation; the broker-side mirror is rejection of an over-QoS PUBLISH.
+/// This test reads the broker's advertised Maximum QoS from CONNACK, then publishes one QoS level
+/// above it and verifies the broker disconnects (DISCONNECT 0x9B QoS not supported, clean close,
+/// or error PUBACK/PUBREC with reason ≥ 0x80). Skips when the broker advertises QoS 2 (the v5
+/// default) — there is no over-QoS to send.
 async fn server_maximum_qos(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-max-qos");
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;

@@ -9,7 +9,9 @@ use crate::codec::{
     ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams, WillParams,
 };
 use crate::helpers::{expect_connack_success, expect_disconnect, expect_suback};
-use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, TestContext};
+use crate::types::{
+    Compliance, FlattenOutcome, IntoOutcome, Outcome, SuiteRunner, TestConfig, TestContext,
+};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
     let mut suite = SuiteRunner::new("CONNECT / CONNACK");
@@ -166,7 +168,7 @@ async fn basic_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-basic-connect");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 const CLEAN_START_TRUE: TestContext = TestContext {
@@ -186,13 +188,15 @@ async fn clean_start_true(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-clean-start");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.session_present {
-        Ok(Outcome::fail(
-            "CONNACK session_present=1 despite Clean Start=1",
-        ))
-    } else {
-        Ok(Outcome::Pass)
-    }
+    Ok(expect_connack_success(&connack)
+        .map(|_| {
+            if connack.session_present {
+                Outcome::fail("CONNACK session_present=1 despite Clean Start=1")
+            } else {
+                Outcome::Pass
+            }
+        })
+        .flatten_outcome())
 }
 
 const CLEAN_START_FALSE: TestContext = TestContext {
@@ -224,13 +228,15 @@ async fn clean_start_false_no_session(config: TestConfig<'_>) -> Result<Outcome>
 
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    if connack.session_present {
-        Ok(Outcome::fail(
-            "CONNACK session_present=1 but no prior session should exist",
-        ))
-    } else {
-        Ok(Outcome::Pass)
-    }
+    Ok(expect_connack_success(&connack)
+        .map(|_| {
+            if connack.session_present {
+                Outcome::fail("CONNACK session_present=1 but no prior session should exist")
+            } else {
+                Outcome::Pass
+            }
+        })
+        .flatten_outcome())
 }
 
 const ZERO_LEN_CLIENT_ID: TestContext = TestContext {
@@ -815,7 +821,11 @@ async fn will_removed_persists_across_resume(config: TestConfig<'_>) -> Result<O
     let mut will_params = ConnectParams::new(client_id);
     will_params.will = Some(WillParams::new(will_topic, b"should-not-arrive"));
     will_params.properties.session_expiry_interval = Some(60);
-    let (will_client, _) = client::connect(config.addr, &will_params, config.recv_timeout).await?;
+    let (will_client, will_ack) =
+        client::connect(config.addr, &will_params, config.recv_timeout).await?;
+    if let Err(e) = expect_connack_success(&will_ack) {
+        return Ok(e);
+    }
     let mut raw1 = will_client.into_raw();
     raw1.send_disconnect(0x00).await?;
     drop(raw1);
@@ -825,7 +835,10 @@ async fn will_removed_persists_across_resume(config: TestConfig<'_>) -> Result<O
     let mut params2 = ConnectParams::new(client_id);
     params2.clean_start = false;
     params2.properties.session_expiry_interval = Some(60);
-    let (c2, _) = client::connect(config.addr, &params2, config.recv_timeout).await?;
+    let (c2, c2ack) = client::connect(config.addr, &params2, config.recv_timeout).await?;
+    if let Err(e) = expect_connack_success(&c2ack) {
+        return Ok(e);
+    }
     drop(c2.into_raw()); // abrupt close — no DISCONNECT
 
     // 3. Subscriber MUST NOT receive any Will publication.
@@ -1415,7 +1428,7 @@ async fn acceptable_client_id_1_byte(config: TestConfig<'_>) -> Result<Outcome> 
     let params = ConnectParams::new("a");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 const ACCEPTABLE_CLIENT_ID_MAX: TestContext = TestContext {
@@ -1436,7 +1449,7 @@ async fn acceptable_client_id_23_bytes(config: TestConfig<'_>) -> Result<Outcome
     let params = ConnectParams::new(client_id);
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 const FLOW_CONTROL: TestContext = TestContext {
@@ -1524,7 +1537,7 @@ async fn username_password_accepted(config: TestConfig<'_>) -> Result<Outcome> {
     params.password = Some(b"testpass".to_vec());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 const PASSWORD_NO_USERNAME: TestContext = TestContext {
@@ -1543,7 +1556,7 @@ async fn password_without_username(config: TestConfig<'_>) -> Result<Outcome> {
     params.password = Some(b"testpass".to_vec());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 const EMPTY_USERNAME: TestContext = TestContext {
@@ -1562,7 +1575,7 @@ async fn empty_username(config: TestConfig<'_>) -> Result<Outcome> {
     params.username = Some(String::new());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 const USERNAME_ONLY: TestContext = TestContext {
@@ -1580,7 +1593,7 @@ async fn username_only(config: TestConfig<'_>) -> Result<Outcome> {
     params.username = Some("testuser".into());
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 // ── Will Retain=0 → non-retained ────────────────────────────────────────

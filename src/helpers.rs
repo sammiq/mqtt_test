@@ -4,7 +4,7 @@
 //! individual test functions only need to handle the success path.
 
 use crate::client::{RawClient, RecvError};
-use crate::codec::{ConnAck, Packet, Publish, PublishParams, SubAck};
+use crate::codec::{ConnAck, Packet, PubAck, Publish, PublishParams, SubAck};
 use crate::types::Outcome;
 
 /// Check that a CONNACK indicates success (reason code 0x00).
@@ -13,9 +13,9 @@ use crate::types::Outcome;
 /// to inspect further properties.  Returns `Err(Outcome)` otherwise.
 ///
 /// This is a pure check — no I/O — unlike the async `expect_*` helpers.
-pub fn expect_connack_success(connack: ConnAck) -> Result<ConnAck, Outcome> {
+pub fn expect_connack_success(connack: &ConnAck) -> Result<(), Outcome> {
     if connack.reason_code == 0x00 {
-        Ok(connack)
+        Ok(())
     } else {
         Err(Outcome::fail(format!(
             "CONNACK reason code {:#04x} (expected 0x00)",
@@ -70,6 +70,35 @@ pub async fn publish_and_expect(
         .await
         .map_err(|e| Outcome::fail(format!("failed to send PUBLISH: {e:#}")))?;
     expect_publish(client, topic).await
+}
+
+/// Receive the next packet and expect a PUBACK with all-success reason codes.
+///
+/// Returns `Ok(suback)` when a PUBACK arrives with every reason code < 0x80.
+/// Returns `Err(Outcome)` for:
+/// - wrong packet type
+/// - any reason code >= 0x80 (subscription rejected)
+/// - `RecvError::Timeout` / `Closed` / `Other`
+///
+/// Callers that need to inspect the PUBACK further (e.g. reason code, properties)
+/// can use the returned [`PubAck`].
+pub async fn expect_puback(client: &mut RawClient) -> Result<PubAck, Outcome> {
+    match client.recv().await {
+        Ok(Packet::PubAck(ack)) => {
+            if ack.reason_code < 0x80 {
+                Ok(ack)
+            } else {
+                Err(Outcome::fail(format!(
+                    "PUBACK reason code indicates failure: {:?}",
+                    ack.reason_code
+                )))
+            }
+        }
+        Ok(other) => Err(Outcome::fail_packet("PUBACK", &other)),
+        Err(RecvError::Timeout) => Err(Outcome::fail("no PUBACK received (timed out)")),
+        Err(RecvError::Closed) => Err(Outcome::fail("no PUBACK received (connection closed)")),
+        Err(RecvError::Other(e)) => Err(Outcome::fail(format!("unexpected error: {e:#}"))),
+    }
 }
 
 /// Receive the next packet and expect a SUBACK with all-success reason codes.

@@ -34,7 +34,7 @@ async fn tcp_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let params = ConnectParams::new("mqtt-test-tcp-transport");
     let (_client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }
 
 const TLS_TRANSPORT: TestContext = TestContext {
@@ -55,5 +55,5 @@ async fn tls_connect(config: TestConfig<'_>) -> Result<Outcome> {
     let (_client, connack) =
         client::connect_tls(tls_addr, &params, tls, config.recv_timeout).await?;
 
-    Ok(expect_connack_success(connack).into_outcome())
+    Ok(expect_connack_success(&connack).into_outcome())
 }

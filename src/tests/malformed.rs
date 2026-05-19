@@ -877,12 +877,13 @@ async fn topic_alias_exceeds_maximum(config: TestConfig<'_>) -> Result<Outcome> 
     let (mut client, connack) = client::connect(config.addr, &params, config.recv_timeout).await?;
 
     let max_alias = connack.properties.topic_alias_maximum.unwrap_or(0);
-    if max_alias == 0 {
-        // Topic aliases not supported — send alias=1 which exceeds max of 0.
-    }
 
     // Send a PUBLISH with Topic Alias = max + 1 (always exceeds the maximum).
     let bad_alias = max_alias.saturating_add(1);
+    if bad_alias == max_alias {
+        // Topic Alias may support all possible values, so saturating_add will return same value
+        return Ok(Outcome::Skip("Topic Alias supports all possible aliases".to_string()));
+    }
     #[rustfmt::skip]
     let bad_publish: &[u8] = &[
         0x30,                                       // PUBLISH | QoS=0

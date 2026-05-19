@@ -6,7 +6,7 @@ use anyhow::Result;
 use indicatif::ProgressBar;
 
 use crate::client::TlsConfig;
-use crate::codec::Packet;
+use crate::codec::{ConnAck, Packet, Publish, SubAck};
 use crate::report::run_test;
 
 /// Shared configuration passed to every test suite and individual test.
@@ -116,8 +116,31 @@ impl Outcome {
     }
 }
 
+mod outcome_success {
+    use crate::codec::{ConnAck, Publish, SubAck};
+
+    pub trait Sealed {}
+
+    impl Sealed for () {}
+    impl Sealed for ConnAck {}
+    impl Sealed for Publish {}
+    impl Sealed for SubAck {}
+}
+
+/// Marker trait for success values that may be discarded by [`IntoOutcome`].
+///
+/// This trait is sealed so `Outcome` itself cannot accidentally be used as the
+/// success type for `into_outcome()`. Use [`FlattenOutcome`] for
+/// `Result<Outcome, Outcome>` instead.
+pub trait IntoOutcomeSuccess: outcome_success::Sealed {}
+
+impl IntoOutcomeSuccess for () {}
+impl IntoOutcomeSuccess for ConnAck {}
+impl IntoOutcomeSuccess for Publish {}
+impl IntoOutcomeSuccess for SubAck {}
+
 /// Extension trait for `Result<T, Outcome>` — collapses a helper result into
-/// a plain `Outcome` when the caller doesn't need the success value.
+/// a plain `Outcome` when the caller doesn't need an approved success value.
 ///
 /// - `Ok(_)` → `Outcome::Pass`
 /// - `Err(outcome)` → `outcome`
@@ -125,7 +148,10 @@ pub trait IntoOutcome {
     fn into_outcome(self) -> Outcome;
 }
 
-impl<T> IntoOutcome for Result<T, Outcome> {
+impl<T> IntoOutcome for Result<T, Outcome>
+where
+    T: IntoOutcomeSuccess,
+{
     fn into_outcome(self) -> Outcome {
         match self {
             Ok(_) => Outcome::Pass,
@@ -145,6 +171,23 @@ pub struct TestResult {
 pub struct Suite {
     pub name: &'static str,
     pub results: Vec<TestResult>,
+}
+
+/// Extension trait for `Result<Outcome, Outcome>` — collapses a helper result into
+/// a plain `Outcome` when the caller maps an Outcome on both sides.
+///
+/// - `Ok(outcome)` → `outcome`
+/// - `Err(outcome)` → `outcome`
+pub trait FlattenOutcome {
+    fn flatten_outcome(self) -> Outcome;
+}
+
+impl FlattenOutcome for Result<Outcome, Outcome> {
+    fn flatten_outcome(self) -> Outcome {
+        match self {
+            Ok(outcome) | Err(outcome) => outcome,
+        }
+    }
 }
 
 /// A boxed, Send-safe test future.
@@ -309,7 +352,7 @@ mod tests {
 
     #[test]
     fn into_outcome_ok_is_pass() {
-        let r: Result<&str, Outcome> = Ok("data");
+        let r: Result<(), Outcome> = Ok(());
         assert!(matches!(r.into_outcome(), Outcome::Pass));
     }
 
@@ -318,6 +361,15 @@ mod tests {
         let r: Result<(), Outcome> = Err(Outcome::fail("broken"));
         match r.into_outcome() {
             Outcome::Fail { message, .. } => assert_eq!(message, "broken"),
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flatten_outcome_preserves_ok_outcome() {
+        let r: Result<Outcome, Outcome> = Ok(Outcome::fail("preserved"));
+        match r.flatten_outcome() {
+            Outcome::Fail { message, .. } => assert_eq!(message, "preserved"),
             other => panic!("expected Fail, got {other:?}"),
         }
     }

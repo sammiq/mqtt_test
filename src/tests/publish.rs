@@ -6,7 +6,9 @@ use anyhow::Result;
 
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, Properties, PublishParams, QoS, SubscribeParams};
-use crate::helpers::{expect_disconnect, expect_publish, expect_suback, publish_and_expect};
+use crate::helpers::{
+    expect_disconnect, expect_puback, expect_publish, expect_suback, publish_and_expect,
+};
 use crate::types::{Compliance, IntoOutcome, Outcome, SuiteRunner, TestConfig, TestContext};
 
 pub fn tests<'a>(config: TestConfig<'a>) -> SuiteRunner<'a> {
@@ -1118,15 +1120,22 @@ async fn max_packet_size_silent_discard(config: TestConfig<'_>) -> Result<Outcom
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"first".to_vec(), 1))
         .await?;
-    let _ = pub_client.recv().await; // PUBACK
+    if let Err(r) = expect_puback(&mut pub_client).await {
+        return Ok(r);
+    }
+
     pub_client
         .send_publish(&PublishParams::qos1(topic, vec![b'X'; 128], 2))
         .await?;
-    let _ = pub_client.recv().await; // PUBACK
+    if let Err(r) = expect_puback(&mut pub_client).await {
+        return Ok(r);
+    }
     pub_client
         .send_publish(&PublishParams::qos1(topic, b"last".to_vec(), 3))
         .await?;
-    let _ = pub_client.recv().await; // PUBACK
+    if let Err(r) = expect_puback(&mut pub_client).await {
+        return Ok(r);
+    }
 
     // Collect subscriber deliveries within a bounded window; ack each one.
     let mut got: Vec<Vec<u8>> = Vec::new();
@@ -1658,12 +1667,11 @@ async fn server_packet_ids_nonzero_and_unique(config: TestConfig<'_>) -> Result<
     let msg_count = 5;
 
     // Set up subscriber at QoS 1 — we need the CONNACK to read Receive Maximum.
-    let sub_params = ConnectParams::new("mqtt-test-srvpid-sub");
-    let (mut sub, connack) = client::connect(config.addr, &sub_params, config.recv_timeout).await?;
+    let mut sub_params = ConnectParams::new("mqtt-test-srvpid-sub");
+    sub_params.properties.receive_maximum = Some(msg_count as u16);
+    let (mut sub, _) = client::connect(config.addr, &sub_params, config.recv_timeout).await?;
 
     // Broker's Receive Maximum defaults to 65535 per spec if absent.
-    let recv_max = connack.properties.receive_maximum.unwrap_or(65535) as usize;
-
     let sub_opts = SubscribeParams::simple(1, topic, QoS::AtLeastOnce);
     sub.send_subscribe(&sub_opts).await?;
     match sub.recv().await? {
@@ -1677,8 +1685,8 @@ async fn server_packet_ids_nonzero_and_unique(config: TestConfig<'_>) -> Result<
     let (mut pub_client, _) =
         client::connect(config.addr, &pub_params, config.recv_timeout).await?;
 
-    // Send up to recv_max messages (capped at msg_count) so we don't exceed the broker's limit.
-    let to_send = msg_count.min(recv_max);
+    // Send up to recv_max messages so we don't exceed the requested limit.
+    let to_send = msg_count;
     for i in 0..to_send {
         let payload = format!("msg-{i}");
         pub_client
@@ -1689,9 +1697,8 @@ async fn server_packet_ids_nonzero_and_unique(config: TestConfig<'_>) -> Result<
             ))
             .await?;
         // Consume PUBACK from broker for each publish.
-        match pub_client.recv().await? {
-            Packet::PubAck(_) => {}
-            other => return Ok(Outcome::fail_packet("PUBACK", &other)),
+        if let Err(r) = expect_puback(&mut pub_client).await {
+            return Ok(r);
         }
     }
 
@@ -1709,7 +1716,15 @@ async fn server_packet_ids_nonzero_and_unique(config: TestConfig<'_>) -> Result<
                 }
             }
             Ok(other) => return Ok(Outcome::fail_packet("PUBLISH", &other)),
-            Err(_) => break, // timeout — broker may have capped delivery
+            Err(RecvError::Timeout) => break, // timeout — broker may have capped delivery
+            Err(RecvError::Closed) => {
+                return Ok(Outcome::fail(
+                    "broker closed subscriber connection while collecting in-flight QoS 1 messages",
+                ));
+            }
+            Err(RecvError::Other(e)) => {
+                return Ok(Outcome::fail(format!("subscriber recv error: {e:#}")));
+            }
         }
     }
 

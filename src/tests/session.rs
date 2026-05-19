@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use crate::client::{self, RecvError};
 use crate::codec::{ConnectParams, Packet, PublishParams, QoS, SubscribeParams};
-use crate::helpers::expect_suback;
+use crate::helpers::{expect_connack_success, expect_suback};
 use crate::types::{Compliance, Outcome, SuiteRunner, TestConfig, TestContext};
 
 /// Clean up a persistent session by reconnecting with clean_start=true.
@@ -102,6 +102,9 @@ async fn clean_start_discards_existing_session(config: TestConfig<'_>) -> Result
     params2.properties.session_expiry_interval = Some(60);
     let (mut c2, connack) = client::connect(config.addr, &params2, config.recv_timeout).await?;
 
+    if let Err(r) = expect_connack_success(&connack) {
+        return Ok(r);
+    }
     if connack.session_present {
         cleanup_session(config.addr, sub_id, config.recv_timeout).await;
         return Ok(Outcome::fail(
